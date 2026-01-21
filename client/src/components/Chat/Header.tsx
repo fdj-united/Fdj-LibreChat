@@ -7,6 +7,7 @@ import {
   PermissionTypes,
   Permissions,
 } from 'librechat-data-provider';
+import { FeedbackButton } from './FeedbackButton'; // we add our custom widget
 import { OpenSidebar, PresetsMenu, NewChat, HeaderMenu } from './Menus';
 import { TemporaryChat, TemporaryChatIndicator } from './TemporaryChat';
 import ModelSelector from './Menus/Endpoints/ModelSelector';
@@ -113,6 +114,7 @@ function Header({
 
       <div className={cn('flex flex-shrink-0 items-center gap-2', hiddenBehindNav)}>
         {hasAccessToTemporaryChat === true && <TemporaryChatIndicator />}
+        <FeedbackButton />
         {!isNewChat && <NewChat className="md:hidden" />}
         {!isNewChat && parentConversationId == null && (
           <BackgroundTasksButton
