@@ -12,6 +12,7 @@ import AddMultiConvo from './AddMultiConvo';
 import { useHasAccess } from '~/hooks';
 import { cn } from '~/utils';
 import store from '~/store';
+import { FeedbackButton } from './FeedbackButton'; // we add our custom widget
 
 const defaultInterface = getConfigDefaults().interface;
 
@@ -63,6 +64,7 @@ function Header() {
                     isSharedButtonEnabled={startupConfig?.sharedLinksEnabled ?? false}
                   />
                   {hasAccessToTemporaryChat === true && <TemporaryChat />}
+                  <FeedbackButton />
                 </>
               )}
             </div>
@@ -75,6 +77,7 @@ function Header() {
               isSharedButtonEnabled={startupConfig?.sharedLinksEnabled ?? false}
             />
             {hasAccessToTemporaryChat === true && <TemporaryChat />}
+            <FeedbackButton />
           </div>
         )}
       </div>
