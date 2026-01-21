@@ -2,6 +2,7 @@ const express = require('express');
 const { generateCheckAccess } = require('@librechat/api');
 const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
 const { requireJwtAuth, configMiddleware, canAccessAgentResource } = require('~/server/middleware');
+const { getAgent, updateAgent } = require('~/models/Agent');
 const v1 = require('~/server/controllers/agents/v1');
 const { getRoleByName } = require('~/models');
 const actions = require('./actions');
@@ -146,6 +147,43 @@ router.post(
   }),
   v1.revertAgentVersion,
 );
+
+/**
+ * Updates agent verification/review metadata.
+ * @route POST /agents/:id/verify
+ * @param {string} req.params.id - Agent identifier.
+ * @param {boolean} req.body.verified - Verification status.
+ * @param {string} req.body.comments - Review comments.
+ * @returns {Agent} 200 - success response - application/json
+ */
+router.post('/:id/verify', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { verified, comments } = req.body;
+    const existingAgent = await getAgent({ id });
+    if (!existingAgent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const review_metadata = {
+      verified: !!verified,
+      comments: comments || '',
+      reviewed_by: req.user.id,
+      reviewed_by_name: req.user.name || req.user.username || req.user.email,
+      reviewed_at: new Date(),
+    };
+    const updatedAgent = await updateAgent(
+      { id },
+      { review_metadata },
+      { updatingUserId: req.user.id, skipVersioning: true },
+    );
+    if (updatedAgent.author) {
+      updatedAgent.author = updatedAgent.author.toString();
+    }
+    return res.json(updatedAgent);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 /**
  * Returns a list of agents.
