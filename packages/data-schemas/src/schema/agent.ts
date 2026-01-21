@@ -118,6 +118,11 @@ const agentSchema = new Schema<IAgent>(
       default: [],
       index: true,
     },
+    /** Review/verification metadata */
+    review_metadata: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
   },
   {
     timestamps: true,
