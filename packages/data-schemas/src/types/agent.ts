@@ -14,6 +14,14 @@ export interface ISupportContact {
   email?: string;
 }
 
+export interface IReviewMetadata {
+  verified?: boolean;
+  comments?: string;
+  reviewed_by?: string;
+  reviewed_by_name?: string;
+  reviewed_at?: Date;
+}
+
 export interface IAgent extends Omit<Document, 'model'> {
   id: string;
   name?: string;
@@ -64,4 +72,6 @@ export interface IAgent extends Omit<Document, 'model'> {
   /** Memory partition: 'agent' isolates memories per (user, agent); default shared pool */
   memory_scope?: MemoryScope;
   tenantId?: string;
+  /** Review/verification metadata */
+  review_metadata?: IReviewMetadata;
 }
