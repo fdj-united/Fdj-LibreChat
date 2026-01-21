@@ -477,6 +477,8 @@ const updateAgent = async (searchParameter, updateData, options = {}) => {
         ...($push || {}),
         versions: versionEntry,
       };
+      // Reset verification when agent is modified
+      updateData['review_metadata.verified'] = false;
     }
   }
 
@@ -696,6 +698,7 @@ const getListAgentsByAccess = async ({
     category: 1,
     support_contact: 1,
     is_promoted: 1,
+    review_metadata: 1,
   }).sort({ updatedAt: -1, _id: 1 });
 
   // Only apply limit if pagination is requested
