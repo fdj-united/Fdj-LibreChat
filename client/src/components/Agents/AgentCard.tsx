@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { BadgeCheck } from 'lucide-react';
 import { Label, OGDialog, OGDialogTrigger } from '@librechat/client';
 import type t from 'librechat-data-provider';
 import Description, { getPlainDescription } from '~/components/ui/Description';
@@ -36,6 +37,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
     return agent.category.charAt(0).toUpperCase() + agent.category.slice(1);
   }, [agent.category, categories, localize]);
 
+  const isVerified = agent.review_metadata?.verified === true;
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
     if (open && onSelect) {
@@ -69,12 +71,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
             }
           }}
         >
-          {/* Category badge - top right */}
-          {categoryLabel && (
-            <span className="absolute right-4 top-3 rounded-md bg-surface-hover px-2 py-0.5 text-xs text-text-secondary">
-              {categoryLabel}
-            </span>
-          )}
+          {/* Category and Verified badges - top right */}
+          <div className="absolute right-4 top-3 flex items-center gap-2">
+            {isVerified && (
+              <span className="flex items-center gap-1 rounded-md bg-blue-500 px-2 py-0.5 text-xs font-medium text-white">
+                <BadgeCheck className="h-3 w-3" aria-hidden="true" />
+                {localize('com_agents_verified_badge')}
+              </span>
+            )}
+            {categoryLabel && (
+              <span className="rounded-md bg-surface-hover px-2 py-0.5 text-xs text-text-secondary">
+                {categoryLabel}
+              </span>
+            )}
+          </div>
 
           {/* Avatar */}
           <div className="flex-shrink-0 self-center">
