@@ -110,6 +110,11 @@ router.get('/', async function (req, res) {
       conversationImportMaxFileSize: process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES
         ? parseInt(process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES, 10)
         : 0,
+      tableSasToken: process.env.TABLE_SAS_TOKEN, // add the azure storage sas token
+      blobSasToken: process.env.BLOB_SAS_TOKEN, // add the azure blob sas token
+      SAS_STORAGE_ACCOUNT: process.env.SAS_STORAGE_ACCOUNT, // add the azure storage account name
+      SAS_TABLE_NAME: process.env.SAS_TABLE_NAME, // add the azure table name
+      SAS_CONTAINER_NAME: process.env.SAS_CONTAINER_NAME, // add the azure container name
     };
 
     const minPasswordLength = parseInt(process.env.MIN_PASSWORD_LENGTH, 10);
