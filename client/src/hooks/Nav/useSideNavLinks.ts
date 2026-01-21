@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { MCPIcon, AttachmentIcon, OpenAIMinimalIcon } from '@librechat/client';
 import {
   Bot,
+  Eye,
   Brain,
   Bookmark,
   NotebookPen,
@@ -25,6 +26,7 @@ import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
+import ReviewAgentPanel from '~/components/SidePanel/Agents/ReviewAgentPanel';
 import { useHasAccess, useMCPServerManager } from '~/hooks';
 import { PromptsAccordion } from '~/components/Prompts';
 
@@ -76,6 +78,10 @@ export default function useSideNavLinks({
   const hasAccessToCreateMCP = useHasAccess({
     permissionType: PermissionTypes.MCP_SERVERS,
     permission: Permissions.CREATE,
+  });
+  const hasAccessToMarketplace = useHasAccess({
+    permissionType: PermissionTypes.MARKETPLACE,
+    permission: Permissions.USE,
   });
   const { availableMCPServers } = useMCPServerManager();
 
@@ -182,6 +188,16 @@ export default function useSideNavLinks({
       });
     }
 
+    if (isAgentsEndpoint(endpoint) && hasAccessToAgents && hasAccessToMarketplace) {
+      links.push({
+        title: 'com_ui_manage' as any,
+        label: 'Review',
+        icon: Eye,
+        id: 'review-agent',
+        Component: ReviewAgentPanel,
+      });
+    }
+
     if (includeHidePanel && hidePanel) {
       links.push({
         title: 'com_sidepanel_hide_panel',
@@ -209,6 +225,7 @@ export default function useSideNavLinks({
     hasAccessToUseMCPSettings,
     hasAccessToCreateMCP,
     includeHidePanel,
+    hasAccessToMarketplace,
     hidePanel,
   ]);
 
