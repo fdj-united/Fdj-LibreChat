@@ -6,6 +6,14 @@ export interface ISupportContact {
   email?: string;
 }
 
+export interface IReviewMetadata {
+  verified?: boolean;
+  comments?: string;
+  reviewed_by?: string;
+  reviewed_by_name?: string;
+  reviewed_at?: Date;
+}
+
 export interface IAgent extends Omit<Document, 'model'> {
   id: string;
   name?: string;
@@ -44,4 +52,6 @@ export interface IAgent extends Omit<Document, 'model'> {
   mcpServerNames?: string[];
   /** Per-tool configuration (defer_loading, allowed_callers) */
   tool_options?: AgentToolOptions;
+  /** Review/verification metadata */
+  review_metadata?: IReviewMetadata;
 }
