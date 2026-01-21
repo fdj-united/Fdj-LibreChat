@@ -7,6 +7,7 @@ import './mobile.css';
 import { ApiErrorBoundaryProvider } from './hooks/ApiErrorBoundaryContext';
 import 'katex/dist/katex.min.css';
 import 'katex/dist/contrib/copy-tex.js';
+import './feedback-widget'; 
 
 const container = document.getElementById('root');
 const root = createRoot(container);
