@@ -581,7 +581,7 @@
         const timestamp = Date.now();
         const date = new Date();
         const partitionKey = date.toISOString().split('T')[0]; // YYYY-MM-DD format
-        const rowKey = `${timestamp}_${Math.random().toString(36).substr(2, 9)}`; // Unique row key
+        const rowKey = `${timestamp}_${Math.random().toString(36).substring(2, 11)}`; // Unique row key
 
         let feedbackEntity = {
           PartitionKey: partitionKey,
