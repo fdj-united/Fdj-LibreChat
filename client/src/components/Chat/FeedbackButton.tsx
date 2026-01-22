@@ -25,7 +25,7 @@ export function FeedbackButton() {
 
     const bridge = (window as any).feedbackBridge;
     if (bridge && typeof bridge.openModal === 'function') {
-      console.log('[FeedbackButton] Opening modal from bridge')
+      console.log('[FeedbackButton] Opening modal from bridge');
       bridge.openModal(feedbackData);
     } else {
       console.log('[FeedbackButton] No bridge found, dispatching event');
