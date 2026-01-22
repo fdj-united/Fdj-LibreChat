@@ -1,6 +1,13 @@
 import { useMemo } from 'react';
 import { Blocks, MCPIcon, AttachmentIcon } from '@librechat/client';
-import { Database, Bookmark, Settings2, ArrowRightToLine, MessageSquareQuote } from 'lucide-react';
+import {
+  Database,
+  Bookmark,
+  Settings2,
+  ArrowRightToLine,
+  MessageSquareQuote,
+  Eye,
+} from 'lucide-react';
 import {
   Permissions,
   EModelEndpoint,
@@ -19,6 +26,7 @@ import PromptsAccordion from '~/components/Prompts/PromptsAccordion';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
+import ReviewAgentPanel from '~/components/SidePanel/Agents/ReviewAgentPanel';
 import { useHasAccess, useMCPServerManager } from '~/hooks';
 
 export default function useSideNavLinks({
@@ -67,6 +75,10 @@ export default function useSideNavLinks({
   const hasAccessToCreateMCP = useHasAccess({
     permissionType: PermissionTypes.MCP_SERVERS,
     permission: Permissions.CREATE,
+  });
+  const hasAccessToMarketplace = useHasAccess({
+    permissionType: PermissionTypes.MARKETPLACE,
+    permission: Permissions.USE,
   });
   const { availableMCPServers } = useMCPServerManager();
 
@@ -172,6 +184,16 @@ export default function useSideNavLinks({
       });
     }
 
+    if (isAgentsEndpoint(endpoint) && hasAccessToAgents && hasAccessToMarketplace) {
+      links.push({
+        title: 'com_ui_manage' as any,
+        label: 'Review',
+        icon: Eye,
+        id: 'review-agent',
+        Component: ReviewAgentPanel,
+      });
+    }
+
     links.push({
       title: 'com_sidepanel_hide_panel',
       label: '',
@@ -196,6 +218,7 @@ export default function useSideNavLinks({
     availableMCPServers,
     hasAccessToUseMCPSettings,
     hasAccessToCreateMCP,
+    hasAccessToMarketplace,
     hidePanel,
   ]);
 

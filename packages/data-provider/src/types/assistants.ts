@@ -241,6 +241,13 @@ export type Agent = {
   version?: number;
   category?: string;
   support_contact?: SupportContact;
+  review_metadata?: {
+    verified?: boolean;
+    comments?: string;
+    reviewed_by?: string;
+    reviewed_by_name?: string;
+    reviewed_at?: Date | string;
+  };
 };
 
 export type TAgentsMap = Record<string, Agent | undefined>;
