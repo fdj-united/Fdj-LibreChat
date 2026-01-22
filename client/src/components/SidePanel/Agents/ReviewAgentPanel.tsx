@@ -26,12 +26,14 @@ export default function ReviewAgentPanel() {
 
   const [comments, setComments] = useState('');
   const [isVerified, setIsVerified] = useState(false);
+  const [originalVerified, setOriginalVerified] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (agent?.review_metadata?.verified !== undefined) {
       setIsVerified(agent.review_metadata.verified);
+      setOriginalVerified(agent.review_metadata.verified);
     }
   }, [agent]);
 
@@ -39,14 +41,6 @@ export default function ReviewAgentPanel() {
     if (!agent_id) {
       showToast({
         message: localize('com_agents_review_no_agent_selected'),
-        status: 'error',
-      });
-      return;
-    }
-
-    if (!comments.trim()) {
-      showToast({
-        message: localize('com_agents_review_no_comments'),
         status: 'error',
       });
       return;
@@ -136,7 +130,7 @@ export default function ReviewAgentPanel() {
       <div className="mt-auto flex flex-col gap-2">
         <Button
           onClick={handleSubmitClick}
-          disabled={isSubmitting || !comments.trim()}
+          disabled={isSubmitting || isVerified === originalVerified}
           className="w-full"
         >
           {isSubmitting
