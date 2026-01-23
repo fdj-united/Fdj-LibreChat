@@ -1858,6 +1858,8 @@
   "com_ui_upload_invalid_var": "Invalid file for upload. Must be an image not exceeding {{0}} MB",
   "com_ui_upload_ocr_text": "Upload as Text",
   "com_ui_upload_provider": "Upload to Provider",
+  "com_ui_upload_file": "Upload File (in context)",
+  "com_ui_recent_files": "Recently Uploaded",
   "com_ui_upload_success": "Successfully uploaded file",
   "com_ui_upload_type": "Select Upload Type",
   "com_ui_usage": "Usage",
