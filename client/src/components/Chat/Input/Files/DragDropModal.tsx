@@ -65,7 +65,7 @@ const DragDropModal = () => {
         };
       case EToolResources.context:
         return {
-          label: localize('com_ui_upload_ocr_text'),
+          label: localize('com_ui_upload_file'),
           icon: <FileType2Icon className="icon-md" />,
         };
       default:
