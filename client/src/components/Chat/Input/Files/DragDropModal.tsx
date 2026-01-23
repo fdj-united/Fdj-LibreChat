@@ -107,7 +107,8 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         icon: <FileImageIcon className="icon-md" />,
         condition: validFileTypes,
       });
-    } else {
+    }
+    /*else {
       // Only show image upload option if all files are images and provider doesn't support documents
       _options.push({
         label: localize('com_ui_upload_image_input'),
@@ -115,7 +116,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         icon: <ImageUpIcon className="icon-md" />,
         condition: files.every((file) => getFileType(file)?.startsWith('image/')),
       });
-    }
+    }*/
     if (capabilities.fileSearchEnabled && fileSearchAllowedByAgent) {
       _options.push({
         label: localize('com_ui_upload_file_search'),
@@ -132,8 +133,10 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
     }
     if (capabilities.contextEnabled) {
       _options.push({
-        label: localize('com_ui_upload_ocr_text'),
-        value: EToolResources.context,
+        label: localize('com_ui_upload_file'),
+        value: files.every((file) => file.type?.startsWith('image/'))
+          ? undefined
+          : EToolResources.context,
         icon: <FileType2Icon className="icon-md" />,
       });
     }
