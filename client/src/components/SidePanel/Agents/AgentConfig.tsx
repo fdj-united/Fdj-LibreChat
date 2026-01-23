@@ -61,6 +61,16 @@ export default function AgentConfig() {
   } = methods;
   const provider = useWatch({ control, name: 'provider' });
   const model = useWatch({ control, name: 'model' });
+  const getModelDisplayName = (modelId: string) => {
+    if (modelId.includes('claude-sonnet-4-5')) {
+      return 'Claude Sonnet 4.5';
+    } else if (modelId.includes('claude-opus-4-5')) {
+      return 'Claude Opus 4.5';
+    } else if (modelId.includes('claude-haiku-4-5')) {
+      return 'Claude Haiku 4.5';
+    }
+    return modelId;
+  };
   const agent = useWatch({ control, name: 'agent' });
   const tools = useWatch({ control, name: 'tools' });
   const agent_id = useWatch({ control, name: 'id' });
@@ -209,7 +219,6 @@ export default function AgentConfig() {
                     'mt-1 w-56 text-sm text-red-500',
                     errors.name ? 'visible h-auto' : 'invisible h-0',
                   )}
-                  role="alert"
                 >
                   {errors.name ? errors.name.message : ' '}
                 </div>
@@ -280,7 +289,7 @@ export default function AgentConfig() {
                   />
                 </div>
               )}
-              <span>{model != null && model ? model : localize('com_ui_select_model')}</span>
+              <span>{model != null && model ? getModelDisplayName(model) : localize('com_ui_select_model')}</span>
             </div>
           </button>
         </div>
@@ -394,7 +403,7 @@ export default function AgentConfig() {
           <div className="mb-1.5 flex items-center gap-2">
             <span>
               <label className="text-token-text-primary block font-medium">
-                {localize('com_ui_support_contact')}
+                {localize('com_ui_support_contact')} <span className="text-red-500">*</span>
               </label>
             </span>
           </div>
@@ -411,6 +420,10 @@ export default function AgentConfig() {
                 name="support_contact.name"
                 control={control}
                 rules={{
+                  required: {
+                    value: true,
+                    message: 'Support contact name is required',
+                  },
                   minLength: {
                     value: 3,
                     message: localize('com_ui_support_contact_name_min_length', { minLength: 3 }),
@@ -455,6 +468,10 @@ export default function AgentConfig() {
                 name="support_contact.email"
                 control={control}
                 rules={{
+                  required: {
+                    value: true,
+                    message: 'Support contact email is required',
+                  },
                   validate: (value) =>
                     validateEmail(value ?? '', localize('com_ui_support_contact_email_invalid')),
                 }}
