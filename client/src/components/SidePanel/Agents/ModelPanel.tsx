@@ -5,12 +5,13 @@ import { ChevronLeft, RotateCcw } from 'lucide-react';
 import { useFormContext, useWatch, Controller } from 'react-hook-form';
 import { componentMapping } from '~/components/SidePanel/Parameters/components';
 import {
-  alternateName,
+  alternateName as baseAlternateName,
   getSettingsKeys,
   getEndpointField,
   LocalStorageKeys,
   SettingDefinition,
   agentParamSettings,
+  EModelEndpoint,
 } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
 import type { AgentForm, AgentModelPanelProps, StringOption } from '~/common';
@@ -19,6 +20,12 @@ import { useLiveAnnouncer } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { Panel } from '~/common';
 import { cn } from '~/utils';
+
+const alternateName = {
+  ...baseAlternateName,
+  [EModelEndpoint.bedrock]: 'Anthropic',
+  [EModelEndpoint.azureOpenAI]: 'OpenAI',
+};
 
 export default function ModelPanel({
   providers,
@@ -148,10 +155,14 @@ export default function ModelPanel({
                     selectPlaceholder={localize('com_ui_select_provider')}
                     searchPlaceholder={localize('com_ui_select_search_provider')}
                     setValue={field.onChange}
-                    items={providers.map((provider) => ({
-                      label: typeof provider === 'string' ? provider : provider.label,
-                      value: typeof provider === 'string' ? provider : provider.value,
-                    }))}
+                    items={providers.map((provider) => {
+                      const _providedValue = typeof provider === 'string' ? provider : provider.value;
+                      const _providedLabel = typeof provider === 'string' ? provider : provider.label;
+                      return {
+                        label: alternateName[_providedValue as EModelEndpoint] ?? _providedLabel,
+                        value: _providedValue,
+                      }
+                    })}
                     className={cn(error ? 'border-2 border-red-500' : '')}
                     ariaLabel={localize('com_ui_provider')}
                     isCollapsed={false}
@@ -184,10 +195,21 @@ export default function ModelPanel({
             control={control}
             rules={{ required: true, minLength: 1 }}
             render={({ field, fieldState: { error } }) => {
+              const getModelDisplayName = (model: string) => {
+                if (model.includes('claude-sonnet-4-5')) {
+                  return 'Claude Sonnet 4.5';
+                } else if (model.includes('claude-opus-4-5')) {
+                  return 'Claude Opus 4.5';
+                } else if (model.includes('claude-haiku-4-5')) {
+                  return 'Claude Haiku 4.5';
+                }
+                return model;
+              };
               return (
                 <>
                   <ControlCombobox
                     selectedValue={field.value || ''}
+                    displayValue={getModelDisplayName(field.value || '')}
                     selectPlaceholder={
                       provider
                         ? localize('com_ui_select_model')
@@ -196,7 +218,7 @@ export default function ModelPanel({
                     searchPlaceholder={localize('com_ui_select_model')}
                     setValue={field.onChange}
                     items={models.map((model) => ({
-                      label: model,
+                      label: getModelDisplayName(model),
                       value: model,
                     }))}
                     disabled={!provider}
