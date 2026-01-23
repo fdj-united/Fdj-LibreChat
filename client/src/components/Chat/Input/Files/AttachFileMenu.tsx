@@ -196,6 +196,49 @@ const AttachFileMenu = ({
     inputRef.current.click();
   }, [handleFileChange, setToolResource]);
 
+  // Smart upload handler that routes based on file type
+  const handleSmartUpload = useCallback(() => {
+    if (!inputRef.current) {
+      return;
+    }
+
+    // Clear input and accept filter
+    inputRef.current.value = '';
+    inputRef.current.accept = '';
+
+    // Remove any existing listener to prevent duplicates
+    const existingListener = (inputRef.current as any)._smartUploadHandler;
+    if (existingListener) {
+      inputRef.current.removeEventListener('change', existingListener);
+    }
+
+    // Create handler to detect file type after selection
+    const smartUploadHandler = (event: Event) => {
+      const input = event.target as HTMLInputElement;
+      const file = input.files?.[0];
+
+      if (!file) {
+        return;
+      }
+
+      // Check if file is an image by checking if mimetype starts with 'image'
+      const isImage = file.type.startsWith('image');
+      setToolResource(isImage ? undefined : EToolResources.context);
+
+      // Trigger file change handler
+      handleFileChange(event as any, isImage ? undefined : EToolResources.context);
+      input.removeEventListener('change', smartUploadHandler);
+      delete (input as any)._smartUploadHandler;
+    };
+
+    // Store reference for cleanup
+    (inputRef.current as any)._smartUploadHandler = smartUploadHandler;
+    inputRef.current.addEventListener('change', smartUploadHandler);
+
+    // Trigger file picker
+    inputRef.current.click();
+  }, [handleFileChange, setToolResource]);
+
   const dropdownItems = useMemo(() => {
     const handleAttachExistingFile = (file: TFile) => {
       // Basic validation: Check if file exists in fileMap
