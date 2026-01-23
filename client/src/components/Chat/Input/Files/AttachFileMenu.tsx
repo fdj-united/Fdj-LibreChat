@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useCallback } from 'react';
 import { useRecoilState } from 'recoil';
 import * as Ariakit from '@ariakit/react';
 import {
@@ -7,6 +7,8 @@ import {
   FileType2Icon,
   FileImageIcon,
   TerminalSquareIcon,
+  FileUp,
+  Clock,
 } from 'lucide-react';
 import {
   Providers,
@@ -14,6 +16,7 @@ import {
   EModelEndpoint,
   defaultAgentCapabilities,
   isDocumentSupportedProvider,
+  type TFile,
 } from 'librechat-data-provider';
 import {
   FileUpload,
@@ -21,6 +24,7 @@ import {
   DropdownPopup,
   AttachmentIcon,
   SharePointIcon,
+  useToastContext,
 } from '@librechat/client';
 import type { EndpointFileConfig } from 'librechat-data-provider';
 import {
@@ -29,13 +33,15 @@ import {
   useGetAgentsConfig,
   useFileHandling,
   useLocalize,
+  useUpdateFiles,
 } from '~/hooks';
 import useSharePointFileHandling from '~/hooks/Files/useSharePointFileHandling';
 import { SharePointPickerDialog } from '~/components/SharePoint';
-import { useGetStartupConfig } from '~/data-provider';
+import { useGetFiles, useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
 import { cn } from '~/utils';
+import { useChatContext, useFileMapContext } from '~/Providers';
 
 type FileUploadType = 'image' | 'document' | 'image_document' | 'image_document_video_audio';
 
@@ -75,6 +81,12 @@ const AttachFileMenu = ({
   const { data: startupConfig } = useGetStartupConfig();
   const sharePointEnabled = startupConfig?.sharePointFilePickerEnabled;
 
+  const { data: allFiles = [] } = useGetFiles();
+  const { setFiles } = useChatContext();
+  const { addFile } = useUpdateFiles(setFiles);
+  const fileMap = useFileMapContext();
+  const { showToast } = useToastContext();
+
   const [isSharePointDialogOpen, setIsSharePointDialogOpen] = useState(false);
 
   /** TODO: Ephemeral Agent Capabilities
@@ -108,7 +120,101 @@ const AttachFileMenu = ({
     inputRef.current.accept = '';
   };
 
+  // Smart upload handler that routes based on file type
+  const handleSmartUpload = useCallback(() => {
+    if (!inputRef.current) {
+      return;
+    }
+
+    // Clear input and accept filter
+    inputRef.current.value = '';
+    inputRef.current.accept = '';
+
+    // Remove any existing listener to prevent duplicates
+    const existingListener = (inputRef.current as any)._smartUploadHandler;
+    if (existingListener) {
+      inputRef.current.removeEventListener('change', existingListener);
+    }
+
+    // Create handler to detect file type after selection
+    const smartUploadHandler = (event: Event) => {
+      const input = event.target as HTMLInputElement;
+      const file = input.files?.[0];
+
+      if (!file) {
+        return;
+      }
+
+      // Check if file is an image by checking if mimetype starts with 'image'
+      const isImage = file.type.startsWith('image');
+      setToolResource(isImage ? undefined : EToolResources.context);
+
+      // Trigger file change handler
+      handleFileChange(event as any, isImage ? undefined : EToolResources.context);
+      input.removeEventListener('change', smartUploadHandler);
+      delete (input as any)._smartUploadHandler;
+    };
+
+    // Store reference for cleanup
+    (inputRef.current as any)._smartUploadHandler = smartUploadHandler;
+    inputRef.current.addEventListener('change', smartUploadHandler);
+
+    // Trigger file picker
+    inputRef.current.click();
+  }, [handleFileChange, setToolResource]);
+
   const dropdownItems = useMemo(() => {
+    const handleAttachExistingFile = (file: TFile) => {
+      // Basic validation: Check if file exists in fileMap
+      if (!fileMap?.[file.file_id]) {
+        showToast({
+          message: localize('com_ui_attach_error'),
+          status: 'error',
+        });
+        return;
+      }
+
+      const fileData = fileMap[file.file_id];
+
+      // Determine tool resource based on file type
+      const isImage = file.type.startsWith('image');
+      const toolRes = isImage ? undefined : EToolResources.context;
+
+      // Set the tool resource
+      setToolResource(toolRes);
+
+      // Add the file to the conversation
+      addFile({
+        progress: 1,
+        attached: true,
+        file_id: fileData.file_id,
+        filepath: fileData.filepath,
+        preview: fileData.filepath,
+        type: fileData.type,
+        height: fileData.height,
+        width: fileData.width,
+        filename: fileData.filename,
+        source: fileData.source,
+        size: fileData.bytes,
+        metadata: fileData.metadata,
+      });
+
+      // Close the menu
+      setIsPopoverActive(false);
+    };
+
+    // Get recent files (last 10, sorted by createdAt)
+    const recentFiles = Array.isArray(allFiles)
+      ? [...allFiles]
+          .filter((file) => file.createdAt)
+          .sort((a, b) => {
+            const dateA = new Date(a.createdAt!).getTime();
+            const dateB = new Date(b.createdAt!).getTime();
+            return dateB - dateA; // Most recent first
+          })
+          .slice(0, 10)
+      : [];
+
     const createMenuItems = (onAction: (fileType?: FileUploadType) => void) => {
       const items: MenuItemProps[] = [];
 
@@ -139,7 +245,8 @@ const AttachFileMenu = ({
           },
           icon: <FileImageIcon className="icon-md" />,
         });
-      } else {
+      }
+      /*else {
         items.push({
           label: localize('com_ui_upload_image_input'),
           onClick: () => {
@@ -148,15 +255,12 @@ const AttachFileMenu = ({
           },
           icon: <ImageUpIcon className="icon-md" />,
         });
-      }
+      }*/
 
       if (capabilities.contextEnabled) {
         items.push({
-          label: localize('com_ui_upload_ocr_text'),
-          onClick: () => {
-            setToolResource(EToolResources.context);
-            onAction();
-          },
+          label: localize('com_ui_upload_file'),
+          onClick: handleSmartUpload,
           icon: <FileType2Icon className="icon-md" />,
         });
       }
@@ -188,6 +292,26 @@ const AttachFileMenu = ({
             onAction();
           },
           icon: <TerminalSquareIcon className="icon-md" />,
+        });
+      }
+
+      // Recent files submenu
+      if (recentFiles.length > 0) {
+        const recentFilesItems: MenuItemProps[] = recentFiles.map((file) => ({
+          label: file.filename,
+          onClick: () => handleAttachExistingFile(file),
+          icon: file.type.startsWith('image') ? (
+            <ImageUpIcon className="icon-sm" />
+          ) : (
+            <FileUp className="icon-sm" />
+          ),
+        }));
+
+        items.push({
+          label: localize('com_ui_recent_files'),
+          onClick: () => {},
+          icon: <Clock className="icon-md" />,
+          subItems: recentFilesItems,
         });
       }
 
@@ -224,6 +348,12 @@ const AttachFileMenu = ({
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
     setIsSharePointDialogOpen,
+    handleSmartUpload,
+    allFiles,
+    fileMap,
+    showToast,
+    addFile,
+    setIsPopoverActive,
   ]);
 
   const menuTrigger = (
