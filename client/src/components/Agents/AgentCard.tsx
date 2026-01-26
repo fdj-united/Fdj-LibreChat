@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { BadgeCheck } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { dataService } from 'librechat-data-provider';
 import { Label, OGDialog, OGDialogTrigger } from '@librechat/client';
 import type t from 'librechat-data-provider';
 import Description, { getPlainDescription } from '~/components/ui/Description';
@@ -37,7 +39,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
     return agent.category.charAt(0).toUpperCase() + agent.category.slice(1);
   }, [agent.category, categories, localize]);
 
-  const isVerified = agent.review_metadata?.verified === true;
+  const { data: latestReview } = useQuery({
+    queryKey: ['agentReview', agent.id],
+    queryFn: () => dataService.getAgentLatestReview(agent.id),
+    enabled: !!agent.id,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const isVerified = latestReview?.verified === true;
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
     if (open && onSelect) {
