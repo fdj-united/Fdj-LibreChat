@@ -19,6 +19,7 @@
   "com_agents_no_access": "Du har ikke adgang til at redigere denne agent.",
   "com_agents_not_available": "Agent ikke tilgængelig",
   "com_agents_review_agent_id_label": "Agent-ID",
+  "com_agents_review_agent_name_label": "Agentnavn",
   "com_agents_review_cancel": "Annuller",
   "com_agents_review_characters": "tegn",
   "com_agents_review_comments_label": "Kommentarer",

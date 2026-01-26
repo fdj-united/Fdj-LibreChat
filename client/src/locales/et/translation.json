@@ -19,6 +19,7 @@
   "com_agents_no_access": "Sul pole õigust seda agenti muuta.",
   "com_agents_not_available": "Agent pole saadaval",
   "com_agents_review_agent_id_label": "Agendi ID",
+  "com_agents_review_agent_name_label": "Agendi nimi",
   "com_agents_review_cancel": "Tühista",
   "com_agents_review_characters": "tähemärki",
   "com_agents_review_comments_label": "Kommentaarid",

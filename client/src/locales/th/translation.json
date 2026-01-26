@@ -30,6 +30,7 @@
   "com_agents_no_agent_id_error": "ไม่พบรหัสเอเจนต์ (Agent ID) กรุณาสร้างเอเจนต์ก่อน",
   "com_agents_not_available": "ไม่มีเอเจนต์ให้บริการ",
   "com_agents_review_agent_id_label": "รหัสเอเจนต์",
+  "com_agents_review_agent_name_label": "ชื่อเอเจนต์",
   "com_agents_review_cancel": "ยกเลิก",
   "com_agents_review_characters": "ตัวอักษร",
   "com_agents_review_comments_label": "ความคิดเห็น",
