@@ -581,6 +581,87 @@ export const revertAgentVersion = ({
   version_index: number;
 }): Promise<a.Agent> => request.post(endpoints.revertAgentVersion(agent_id), { version_index });
 
+/* Agent Reviews */
+
+export interface AgentReviewEntry {
+  _id?: string;
+  verified: boolean;
+  comment: string;
+  reviewed_by: string;
+  reviewed_by_name: string;
+  reviewed_at: string;
+}
+
+export interface AgentReviewDocument {
+  id: string;
+  agent_id: string;
+  /** Current verification status (can be reset by system when agent is updated) */
+  verified: boolean;
+  /** Timestamp of last verification status change */
+  verified_at?: string;
+  reviews: AgentReviewEntry[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Response from getAgentLatestReview - includes current verification status */
+export interface AgentLatestReviewResponse {
+  /** Current verification status (from top-level, can be reset by system) */
+  verified: boolean;
+  /** Timestamp of last verification status change */
+  verified_at?: string;
+  /** Fields from the latest review entry (if any) */
+  _id?: string;
+  comment?: string;
+  reviewed_by?: string;
+  reviewed_by_name?: string;
+  reviewed_at?: string;
+}
+
+/**
+ * Get the latest review for an agent (includes current verification status)
+ */
+export const getAgentLatestReview = (
+  agent_id: string,
+): Promise<AgentLatestReviewResponse | null> => {
+  return request.get(
+    endpoints.agents({
+      path: `${agent_id}/review`,
+    }),
+  );
+};
+
+/**
+ * Get all reviews for an agent
+ */
+export const getAgentReviews = (agent_id: string): Promise<AgentReviewEntry[]> => {
+  return request.get(
+    endpoints.agents({
+      path: `${agent_id}/reviews`,
+    }),
+  );
+};
+
+/**
+ * Submit a review for an agent
+ */
+export const submitAgentReview = ({
+  agent_id,
+  verified,
+  comment,
+}: {
+  agent_id: string;
+  verified: boolean;
+  comment: string;
+}): Promise<AgentReviewEntry> => {
+  return request.post(
+    endpoints.agents({
+      path: `${agent_id}/review`,
+    }),
+    { verified, comment },
+  );
+};
+
 /* Marketplace */
 
 /**

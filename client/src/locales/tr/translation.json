@@ -90,6 +90,7 @@
   "com_agents_recommended": "Önerilen ajanlarımız",
   "com_agents_results_for": "'{{query}}' için sonuçlar",
   "com_agents_review_agent_id_label": "Ajan Kimliği",
+  "com_agents_review_agent_name_label": "Ajan Adı",
   "com_agents_review_cancel": "İptal",
   "com_agents_review_characters": "karakter",
   "com_agents_review_comments_label": "Yorumlar",

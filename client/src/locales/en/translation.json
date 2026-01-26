@@ -1936,6 +1936,7 @@
   "com_agents_review_verified_label": "Verified Agent",
   "com_agents_review_verified_description": "Mark this agent as verified in the marketplace",
   "com_agents_review_agent_id_label": "Agent ID",
+  "com_agents_review_agent_name_label": "Agent Name",
   "com_agents_review_submitting": "Submitting...",
   "com_agents_review_submit": "Submit Review",
   "com_agents_review_view_marketplace": "View in Marketplace",

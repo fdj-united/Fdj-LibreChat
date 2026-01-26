@@ -21,6 +21,7 @@
   "com_agents_no_access": "ليس لديك صلاحية تعديل هذا الوكيل.",
   "com_agents_not_available": "المساعد غير متوفر",
   "com_agents_review_agent_id_label": "معرّف الوكيل",
+  "com_agents_review_agent_name_label": "اسم الوكيل",
   "com_agents_review_cancel": "إلغاء",
   "com_agents_review_characters": "حرف",
   "com_agents_review_comments_label": "التعليقات",

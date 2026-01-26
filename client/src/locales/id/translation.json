@@ -268,5 +268,6 @@
   "com_ui_upload": "Unggah",
   "com_ui_upload_error": "Ada kesalahan saat mengunggah file Anda",
   "com_ui_upload_success": "Berhasil mengunggah file",
-  "com_user_message": "Kamu"
+  "com_user_message": "Kamu",
+  "com_agents_review_agent_name_label": "Nama Agent"
 }

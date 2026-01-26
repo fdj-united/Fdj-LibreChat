@@ -2,7 +2,8 @@ const express = require('express');
 const { generateCheckAccess } = require('@librechat/api');
 const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
 const { requireJwtAuth, configMiddleware, canAccessAgentResource } = require('~/server/middleware');
-const { getAgent, updateAgent } = require('~/models/Agent');
+const { getAgent } = require('~/models/Agent');
+const { addOrUpdateReview, getLatestReview, getAllReviews } = require('~/models/AgentReview');
 const v1 = require('~/server/controllers/agents/v1');
 const { getRoleByName } = require('~/models');
 const actions = require('./actions');
@@ -149,37 +150,71 @@ router.post(
 );
 
 /**
- * Updates agent verification/review metadata.
- * @route POST /agents/:id/verify
+ * Gets the latest review for an agent.
+ * @route GET /agents/:id/review
  * @param {string} req.params.id - Agent identifier.
- * @param {boolean} req.body.verified - Verification status.
- * @param {string} req.body.comments - Review comments.
- * @returns {Agent} 200 - success response - application/json
+ * @returns {Object} 200 - Latest review or null - application/json
  */
-router.post('/:id/verify', async (req, res) => {
+router.get('/:id/review', async (req, res) => {
   try {
     const { id } = req.params;
-    const { verified, comments } = req.body;
     const existingAgent = await getAgent({ id });
     if (!existingAgent) {
       return res.status(404).json({ error: 'Agent not found' });
     }
-    const review_metadata = {
+    const latestReview = await getLatestReview(id);
+    return res.json(latestReview);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Gets all reviews for an agent.
+ * @route GET /agents/:id/reviews
+ * @param {string} req.params.id - Agent identifier.
+ * @returns {Array} 200 - Array of reviews - application/json
+ */
+router.get('/:id/reviews', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existingAgent = await getAgent({ id });
+    if (!existingAgent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const reviews = await getAllReviews(id);
+    return res.json(reviews);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Adds a review for an agent.
+ * @route POST /agents/:id/review
+ * @param {string} req.params.id - Agent identifier.
+ * @param {boolean} req.body.verified - Verification status.
+ * @param {string} req.body.comment - Review comment.
+ * @returns {Object} 200 - The new review - application/json
+ */
+router.post('/:id/review', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { verified, comment } = req.body;
+    const existingAgent = await getAgent({ id });
+    if (!existingAgent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const reviewData = {
       verified: !!verified,
-      comments: comments || '',
+      comment: comment || '',
       reviewed_by: req.user.id,
       reviewed_by_name: req.user.name || req.user.username || req.user.email,
-      reviewed_at: new Date(),
     };
-    const updatedAgent = await updateAgent(
-      { id },
-      { review_metadata },
-      { updatingUserId: req.user.id, skipVersioning: true },
-    );
-    if (updatedAgent.author) {
-      updatedAgent.author = updatedAgent.author.toString();
-    }
-    return res.json(updatedAgent);
+    const agentReview = await addOrUpdateReview(id, reviewData);
+    // Return the latest review
+    const latestReview = agentReview.reviews[agentReview.reviews.length - 1];
+    return res.json(latestReview);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

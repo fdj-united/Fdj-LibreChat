@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Label, OGDialog, OGDialogTrigger } from '@librechat/client';
+import { dataService } from 'librechat-data-provider';
 import type t from 'librechat-data-provider';
 import { BadgeCheck } from 'lucide-react';
 import { useLocalize, TranslationKeys, useAgentCategories } from '~/hooks';
@@ -36,7 +38,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
 
   const displayName = getContactDisplayName(agent);
 
-  const isVerified = agent.review_metadata?.verified === true;
+  // Fetch the latest review status from the new endpoint
+  const { data: latestReview } = useQuery({
+    queryKey: ['agentReview', agent.id],
+    queryFn: () => dataService.getAgentLatestReview(agent.id),
+    enabled: !!agent.id,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes to reduce API calls
+  });
+
+  const isVerified = latestReview?.verified === true;
+  console.log('latestReview', latestReview);
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
     if (open && onSelect) {

@@ -64,6 +64,7 @@
   "com_agents_no_access": "Bạn không có quyền chỉnh sửa agent này.",
   "com_agents_not_available": "Agent không có sẵn",
   "com_agents_review_agent_id_label": "ID Agent",
+  "com_agents_review_agent_name_label": "Tên Agent",
   "com_agents_review_cancel": "Hủy",
   "com_agents_review_characters": "ký tự",
   "com_agents_review_comments_label": "Nhận xét",
