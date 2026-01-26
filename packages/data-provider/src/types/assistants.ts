@@ -272,13 +272,6 @@ export type Agent = {
   support_contact?: SupportContact;
   /** Per-tool configuration options (deferred loading, allowed callers, etc.) */
   tool_options?: AgentToolOptions;
-  review_metadata?: {
-    verified?: boolean;
-    comments?: string;
-    reviewed_by?: string;
-    reviewed_by_name?: string;
-    reviewed_at?: Date | string;
-  };
 };
 
 export type TAgentsMap = Record<string, Agent | undefined>;
