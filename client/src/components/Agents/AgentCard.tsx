@@ -61,7 +61,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
         <div
           className={cn(
             'group relative flex h-32 gap-5 overflow-hidden rounded-xl',
-            'cursor-pointer select-none px-6 py-4',
+            'cursor-pointer select-none px-6 pb-4 pt-8',
             'bg-surface-tertiary transition-colors duration-150 hover:bg-surface-hover',
             'md:h-36 lg:h-40',
             '[&_*]:cursor-pointer',
