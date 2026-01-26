@@ -31,5 +31,6 @@
   "com_ui_scope": "Obseg",
   "com_ui_sign_in_to_domain": "Prijava v {{0}}",
   "com_ui_token_exchange_method": "Metoda izmenjave žetonov",
-  "com_ui_token_url": "URL žetona"
+  "com_ui_token_url": "URL žetona",
+  "com_agents_review_agent_name_label": "Ime agenta"
 }
