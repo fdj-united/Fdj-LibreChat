@@ -20,6 +20,7 @@
   "com_agents_no_access": "Nemáte oprávnění upravovat tohoto agenta.",
   "com_agents_not_available": "Agent není k dispozici",
   "com_agents_review_agent_id_label": "ID agenta",
+  "com_agents_review_agent_name_label": "Název agenta",
   "com_agents_review_cancel": "Zrušit",
   "com_agents_review_characters": "znaků",
   "com_agents_review_comments_label": "Komentáře",

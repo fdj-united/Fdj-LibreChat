@@ -25,6 +25,7 @@
   "com_agents_no_access": "No tens accés per editar aquest agent.",
   "com_agents_not_available": "Agent no disponible",
   "com_agents_review_agent_id_label": "ID de l'agent",
+  "com_agents_review_agent_name_label": "Nom de l'agent",
   "com_agents_review_cancel": "Cancel·la",
   "com_agents_review_characters": "caràcters",
   "com_agents_review_comments_label": "Comentaris",

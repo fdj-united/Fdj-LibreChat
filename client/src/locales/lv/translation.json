@@ -90,6 +90,7 @@
   "com_agents_recommended": "Mūsu rekomendētie aģenti",
   "com_agents_results_for": "Rezultāti par '{{query}}'",
   "com_agents_review_agent_id_label": "Aģenta ID",
+  "com_agents_review_agent_name_label": "Aģenta nosaukums",
   "com_agents_review_cancel": "Atcelt",
   "com_agents_review_characters": "rakstzīmes",
   "com_agents_review_comments_label": "Komentāri",

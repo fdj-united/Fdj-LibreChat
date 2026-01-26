@@ -19,6 +19,7 @@
   "com_agents_no_access": "Nincs jogosultsága ennek az ügynöknek a szerkesztéséhez.",
   "com_agents_not_available": "Az ügynök nem érhető el",
   "com_agents_review_agent_id_label": "Ügynök azonosító",
+  "com_agents_review_agent_name_label": "Ügynök neve",
   "com_agents_review_cancel": "Mégse",
   "com_agents_review_characters": "karakter",
   "com_agents_review_comments_label": "Megjegyzések",
