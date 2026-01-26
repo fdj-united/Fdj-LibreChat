@@ -84,6 +84,7 @@
   "com_agents_recommended": "Наші рекомендовані агенти",
   "com_agents_results_for": "Результати для '{{query}}'",
   "com_agents_review_agent_id_label": "ID агента",
+  "com_agents_review_agent_name_label": "Ім'я агента",
   "com_agents_review_cancel": "Скасувати",
   "com_agents_review_characters": "символів",
   "com_agents_review_comments_label": "Коментарі",

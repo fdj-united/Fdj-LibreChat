@@ -87,6 +87,7 @@
   "com_agents_recommended": "הסוכנים המומלצים שלנו",
   "com_agents_results_for": "תוצאות עבור '{{query}}'",
   "com_agents_review_agent_id_label": "מזהה סוכן",
+  "com_agents_review_agent_name_label": "שם סוכן",
   "com_agents_review_cancel": "ביטול",
   "com_agents_review_characters": "תווים",
   "com_agents_review_comments_label": "הערות",

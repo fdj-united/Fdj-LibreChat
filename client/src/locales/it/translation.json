@@ -82,6 +82,7 @@
   "com_agents_recommended": "I nostri agenti consigliati",
   "com_agents_results_for": "Risultati per '{{query}}'",
   "com_agents_review_agent_id_label": "ID Agente",
+  "com_agents_review_agent_name_label": "Nome Agente",
   "com_agents_review_cancel": "Annulla",
   "com_agents_review_characters": "caratteri",
   "com_agents_review_comments_label": "Commenti",
