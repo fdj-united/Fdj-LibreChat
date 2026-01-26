@@ -90,6 +90,7 @@
   "com_agents_recommended": "Våre anbefalte agenter",
   "com_agents_results_for": "Resultater for «{{query}}»",
   "com_agents_review_agent_id_label": "Agent-ID",
+  "com_agents_review_agent_name_label": "Agentnavn",
   "com_agents_review_cancel": "Avbryt",
   "com_agents_review_characters": "tegn",
   "com_agents_review_comments_label": "Kommentarer",

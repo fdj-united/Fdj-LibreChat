@@ -87,6 +87,7 @@
   "com_agents_recommended": "我们推荐的智能体",
   "com_agents_results_for": "'{{query}}' 的结果",
   "com_agents_review_agent_id_label": "智能体 ID",
+  "com_agents_review_agent_name_label": "智能体名称",
   "com_agents_review_cancel": "取消",
   "com_agents_review_characters": "字符",
   "com_agents_review_comments_label": "评论",

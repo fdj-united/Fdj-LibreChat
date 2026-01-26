@@ -6,12 +6,25 @@ export interface ISupportContact {
   email?: string;
 }
 
-export interface IReviewMetadata {
-  verified?: boolean;
-  comments?: string;
-  reviewed_by?: string;
-  reviewed_by_name?: string;
-  reviewed_at?: Date;
+export interface IReviewEntry {
+  _id?: Types.ObjectId;
+  verified: boolean;
+  comment: string;
+  reviewed_by: Types.ObjectId;
+  reviewed_by_name: string;
+  reviewed_at: Date;
+}
+
+export interface IAgentReview extends Document {
+  id: string;
+  agent_id: string;
+  /** Current verification status (can be reset by system when agent is updated) */
+  verified: boolean;
+  /** Timestamp of last verification status change */
+  verified_at?: Date;
+  reviews: IReviewEntry[];
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export interface IAgent extends Omit<Document, 'model'> {
@@ -52,6 +65,4 @@ export interface IAgent extends Omit<Document, 'model'> {
   mcpServerNames?: string[];
   /** Per-tool configuration (defer_loading, allowed_callers) */
   tool_options?: AgentToolOptions;
-  /** Review/verification metadata */
-  review_metadata?: IReviewMetadata;
 }

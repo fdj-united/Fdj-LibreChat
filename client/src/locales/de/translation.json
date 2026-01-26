@@ -90,6 +90,7 @@
   "com_agents_recommended": "Unsere empfohlenen Agenten",
   "com_agents_results_for": "Ergebnisse für '{{query}}'",
   "com_agents_review_agent_id_label": "Agenten-ID",
+  "com_agents_review_agent_name_label": "Agentenname",
   "com_agents_review_cancel": "Abbrechen",
   "com_agents_review_characters": "Zeichen",
   "com_agents_review_comments_label": "Kommentare",

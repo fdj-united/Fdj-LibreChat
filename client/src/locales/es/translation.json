@@ -73,6 +73,7 @@
   "com_agents_no_access": "No tiene acceso para editar este agente",
   "com_agents_not_available": "Agente no disponible",
   "com_agents_review_agent_id_label": "ID del Agente",
+  "com_agents_review_agent_name_label": "Nombre del Agente",
   "com_agents_review_cancel": "Cancelar",
   "com_agents_review_characters": "caracteres",
   "com_agents_review_comments_label": "Comentarios",

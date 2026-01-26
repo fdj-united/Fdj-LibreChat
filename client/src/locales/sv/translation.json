@@ -78,6 +78,7 @@
   "com_agents_recommended": "Våra rekommenderade agenter",
   "com_agents_results_for": "Resultat för \"{{query}}\"",
   "com_agents_review_agent_id_label": "Agent-ID",
+  "com_agents_review_agent_name_label": "Agentnamn",
   "com_agents_review_cancel": "Avbryt",
   "com_agents_review_characters": "tecken",
   "com_agents_review_comments_label": "Kommentarer",
