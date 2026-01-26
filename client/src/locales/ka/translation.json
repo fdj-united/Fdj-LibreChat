@@ -57,5 +57,6 @@
   "com_nav_lang_traditional_chinese": "ჩინური ტრადიციული",
   "com_nav_lang_turkish": "თურქული",
   "com_nav_lang_vietnamese": "ვიეტნამური",
-  "com_nav_language": "ენა"
+  "com_nav_language": "ენა",
+  "com_agents_review_agent_name_label": "აგენტის სახელი"
 }
