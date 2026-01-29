@@ -1,7 +1,7 @@
 const { logger } = require('@librechat/data-schemas');
 const { CacheKeys, Constants } = require('librechat-data-provider');
 const { findToken, createToken, updateToken, deleteTokens } = require('~/models');
-const { getMCPManager, getFlowStateManager } = require('~/config');
+const { getMCPManager, getFlowStateManager, getMCPServersRegistry } = require('~/config');
 const { updateMCPServerTools } = require('~/server/services/Config');
 const { getLogStores } = require('~/cache');
 
@@ -36,6 +36,7 @@ async function reinitMCPServer({
   let tools = null;
   let oauthRequired = false;
   let oauthUrl = null;
+  let externalOAuth = false;
   try {
     const customUserVars = userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
     const flowManager = _flowManager ?? getFlowStateManager(getLogStores(CacheKeys.FLOWS));
@@ -75,23 +76,44 @@ async function reinitMCPServer({
         `[MCP Reinitialize] OAuth state - oauthRequired: ${oauthRequired}, oauthUrl: ${oauthUrl ? 'present' : 'null'}`,
       );
 
-      const isOAuthError =
-        err.message?.includes('OAuth') ||
-        err.message?.includes('authentication') ||
-        err.message?.includes('401');
-
-      const isOAuthFlowInitiated = err.message === 'OAuth flow initiated - return early';
-
-      if (isOAuthError || oauthRequired || isOAuthFlowInitiated) {
-        logger.info(
-          `[MCP Reinitialize] OAuth required for ${serverName} (isOAuthError: ${isOAuthError}, oauthRequired: ${oauthRequired}, isOAuthFlowInitiated: ${isOAuthFlowInitiated})`,
-        );
+      // Check for external OAuth (oauthConnectUrl) — any connection failure
+      // for a server with oauthConnectUrl means the user needs to consent
+      const registry = getMCPServersRegistry();
+      const rawConfig = await registry.getServerConfig(serverName, user?.id);
+      if (rawConfig?.oauthConnectUrl) {
         oauthRequired = true;
+        externalOAuth = true;
+        let connectUrl = rawConfig.oauthConnectUrl;
+        if (user?.email) {
+          connectUrl = connectUrl.replace(
+            '{{LIBRECHAT_USER_EMAIL}}',
+            encodeURIComponent(user.email),
+          );
+        }
+        if (user?.id) {
+          connectUrl = connectUrl.replace('{{LIBRECHAT_USER_ID}}', user.id);
+        }
+        oauthUrl = connectUrl;
+        logger.info(`[MCP Reinitialize] External OAuth required for ${serverName}: ${oauthUrl}`);
       } else {
-        logger.error(
-          `[MCP Reinitialize] Error initializing MCP server ${serverName} for user:`,
-          err,
-        );
+        const isOAuthError =
+          err.message?.includes('OAuth') ||
+          err.message?.includes('authentication') ||
+          err.message?.includes('401');
+
+        const isOAuthFlowInitiated = err.message === 'OAuth flow initiated - return early';
+
+        if (isOAuthError || oauthRequired || isOAuthFlowInitiated) {
+          logger.info(
+            `[MCP Reinitialize] OAuth required for ${serverName} (isOAuthError: ${isOAuthError}, oauthRequired: ${oauthRequired}, isOAuthFlowInitiated: ${isOAuthFlowInitiated})`,
+          );
+          oauthRequired = true;
+        } else {
+          logger.error(
+            `[MCP Reinitialize] Error initializing MCP server ${serverName} for user:`,
+            err,
+          );
+        }
       }
     }
 
@@ -123,6 +145,7 @@ async function reinitMCPServer({
       success: Boolean((connection && !oauthRequired) || (oauthRequired && oauthUrl)),
       message: getResponseMessage(),
       oauthRequired,
+      externalOAuth,
       serverName,
       oauthUrl,
       tools,

@@ -335,6 +335,7 @@ export const useReinitializeMCPServerMutation = (): UseMutationResult<
     serverName: string;
     oauthRequired?: boolean;
     oauthUrl?: string;
+    externalOAuth?: boolean;
   },
   unknown,
   string,

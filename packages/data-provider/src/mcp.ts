@@ -20,6 +20,13 @@ const BaseOptionsSchema = z.object({
   iconPath: z.string().optional(),
   timeout: z.number().optional(),
   initTimeout: z.number().optional(),
+  /**
+   * External OAuth consent URL for stdio servers that manage their own OAuth flow.
+   * When set, LibreChat will open this URL in a new tab if the server fails to connect,
+   * and poll until the connection succeeds.
+   * Supports template variables: {{LIBRECHAT_USER_EMAIL}}, {{LIBRECHAT_USER_ID}}
+   */
+  oauthConnectUrl: z.string().optional(),
   /** Controls visibility in chat dropdown menu (MCPSelect) */
   chatMenu: z.boolean().optional(),
   /**
@@ -218,6 +225,7 @@ const omitServerManagedFields = <T extends z.ZodObject<z.ZodRawShape>>(schema: T
     requiresOAuth: true,
     customUserVars: true,
     oauth_headers: true,
+    oauthConnectUrl: true,
   });
 
 /**

@@ -419,7 +419,7 @@ router.post('/:serverName/reinitialize', requireJwtAuth, async (req, res) => {
       return res.status(500).json({ error: 'Failed to reinitialize MCP server for user' });
     }
 
-    const { success, message, oauthRequired, oauthUrl } = result;
+    const { success, message, oauthRequired, oauthUrl, externalOAuth } = result;
 
     res.json({
       success,
@@ -427,6 +427,7 @@ router.post('/:serverName/reinitialize', requireJwtAuth, async (req, res) => {
       oauthUrl,
       serverName,
       oauthRequired,
+      externalOAuth,
     });
   } catch (error) {
     logger.error('[MCP Reinitialize] Unexpected error', error);

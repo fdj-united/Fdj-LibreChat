@@ -2,7 +2,7 @@ import { useCallback, useState, useMemo, useRef, useEffect } from 'react';
 import { useAtom } from 'jotai';
 import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
-import { Constants, QueryKeys, MCPOptions, ResourceType } from 'librechat-data-provider';
+import { Constants, QueryKeys, MCPOptions, ResourceType, dataService } from 'librechat-data-provider';
 import {
   useCancelMCPOAuthMutation,
   useUpdateUserPluginsMutation,
@@ -131,6 +131,8 @@ export function useMCPServerManager({ conversationId }: { conversationId?: strin
 
   // Poll intervals are kept local (not serializable)
   const pollIntervalsRef = useRef<PollIntervals>({});
+  // Separate retry intervals for external OAuth (stdio servers with oauthConnectUrl)
+  const retryIntervalsRef = useRef<PollIntervals>({});
 
   const { connectionStatus } = useMCPConnectionStatus({
     enabled: !isLoading && availableMCPServers.length > 0,
@@ -156,6 +158,12 @@ export function useMCPServerManager({ conversationId }: { conversationId?: strin
       if (pollInterval) {
         clearTimeout(pollInterval);
         pollIntervalsRef.current[serverName] = null;
+      }
+      // Clear retry interval for external OAuth
+      const retryInterval = retryIntervalsRef.current[serverName];
+      if (retryInterval) {
+        clearInterval(retryInterval);
+        retryIntervalsRef.current[serverName] = null;
       }
       // Reset global init state
       updateServerInitState(serverName, {
@@ -331,6 +339,58 @@ export function useMCPServerManager({ conversationId }: { conversationId?: strin
           }
 
           startServerPolling(serverName);
+
+          // For stdio servers with external OAuth (oauthConnectUrl), the process
+          // exits on failure. Status polling alone won't reconnect — we need to
+          // periodically call reinitialize to spawn a new wrapper process.
+          // Only enabled for externalOAuth servers to avoid unnecessary calls
+          // for standard SSE/HTTP OAuth servers that handle reconnection internally.
+          if (response.externalOAuth) {
+          const retryId = setInterval(async () => {
+            try {
+              console.debug(
+                `[MCP Manager] Attempting reinitialize retry for ${serverName}`,
+              );
+              const retryResult = await dataService.reinitializeMCPServer(serverName);
+              console.debug(
+                `[MCP Manager] Reinitialize retry result:`,
+                retryResult,
+              );
+              if (retryResult?.success && !retryResult?.oauthRequired) {
+                showToast({
+                  message: localize('com_ui_mcp_authenticated_success', { 0: serverName }),
+                  status: 'success',
+                });
+                const currentValues = mcpValuesRef.current ?? [];
+                if (!currentValues.includes(serverName)) {
+                  setMCPValues([...currentValues, serverName]);
+                }
+                await Promise.all([
+                  queryClient.invalidateQueries([QueryKeys.mcpServers]),
+                  queryClient.invalidateQueries([QueryKeys.mcpTools]),
+                  queryClient.invalidateQueries([QueryKeys.mcpAuthValues]),
+                  queryClient.invalidateQueries([QueryKeys.mcpConnectionStatus]),
+                ]);
+                setTimeout(() => cleanupServerState(serverName), 1000);
+              }
+            } catch (retryError) {
+              console.debug(
+                `[MCP Manager] Reinitialize retry error for ${serverName}:`,
+                retryError,
+              );
+            }
+          }, 10000); // Retry every 10 seconds
+          retryIntervalsRef.current[serverName] = retryId;
+
+          // Auto-stop retries after 3 minutes
+          setTimeout(() => {
+            const interval = retryIntervalsRef.current[serverName];
+            if (interval) {
+              clearInterval(interval);
+              retryIntervalsRef.current[serverName] = null;
+            }
+          }, 180000);
+          }
         } else {
           await Promise.all([
             queryClient.invalidateQueries([QueryKeys.mcpServers]),
