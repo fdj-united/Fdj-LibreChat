@@ -405,6 +405,11 @@ const loadTools = async ({
         if (files?.length) {
           primedCodeFiles = files;
         }
+        // Get conversation_id for session isolation
+        let conversationId = options.req?.body?.conversationId;
+        if (!conversationId || conversationId === 'new') {
+          conversationId = options.req?._resumableStreamId || null;
+        }
         return createCodeExecutionTool({
           user_id: user,
           files,
@@ -414,6 +419,8 @@ const loadTools = async ({
               codeExecutionContext,
             ),
           ...codeExecutionContext,
+          conversation_id: conversationId,
+          entity_id: agent?.id || null,
         });
       };
       continue;
