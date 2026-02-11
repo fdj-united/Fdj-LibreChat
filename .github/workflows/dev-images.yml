@@ -28,6 +28,10 @@ permissions:
   contents: read
   packages: write
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   publish:
     uses: ./.github/workflows/docker-publish.yml

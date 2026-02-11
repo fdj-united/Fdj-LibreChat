@@ -9,6 +9,10 @@ permissions:
   contents: read
   packages: write
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   # Validates the release tag and resolves which tags the images should carry.
   # `latest` is only applied when this tag is both stable and the newest stable
