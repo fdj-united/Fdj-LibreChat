@@ -60,7 +60,15 @@ async function getCodeOutputDownloadStream(fileIdentifier, apiKey) {
  * @returns {Promise<string>}
  * @throws {Error} If there's an error during the upload process.
  */
-async function uploadCodeEnvFile({ req, stream, filename, apiKey, entity_id = '', session_id = '', conversation_id = '' }) {
+async function uploadCodeEnvFile({
+  req,
+  stream,
+  filename,
+  apiKey,
+  entity_id = '',
+  session_id = '',
+  conversation_id = '',
+}) {
   try {
     const form = new FormData();
     if (entity_id.length > 0) {
