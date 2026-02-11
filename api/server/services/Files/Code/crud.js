@@ -55,14 +55,22 @@ async function getCodeOutputDownloadStream(fileIdentifier, apiKey) {
  * @param {string} params.filename - The name of the file.
  * @param {string} params.apiKey - The API key for authentication.
  * @param {string} [params.entity_id] - Optional entity ID for the file.
+ * @param {string} [params.session_id] - Optional session ID to reuse (prevents multi-session fragmentation).
+ * @param {string} [params.conversation_id] - Optional conversation ID for session isolation.
  * @returns {Promise<string>}
  * @throws {Error} If there's an error during the upload process.
  */
-async function uploadCodeEnvFile({ req, stream, filename, apiKey, entity_id = '' }) {
+async function uploadCodeEnvFile({ req, stream, filename, apiKey, entity_id = '', session_id = '', conversation_id = '' }) {
   try {
     const form = new FormData();
     if (entity_id.length > 0) {
       form.append('entity_id', entity_id);
+    }
+    if (session_id.length > 0) {
+      form.append('session_id', session_id);
+    }
+    if (conversation_id.length > 0) {
+      form.append('conversation_id', conversation_id);
     }
     form.append('file', stream, filename);
 

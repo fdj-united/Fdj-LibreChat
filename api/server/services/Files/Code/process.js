@@ -364,6 +364,13 @@ const primeFiles = async (options, apiKey) => {
   const files = [];
   const sessions = new Map();
   let toolContext = '';
+  let sharedSessionId = null; // Reuse session across uploads to prevent file fragmentation
+
+  // Extract conversation_id for session isolation (same conversation → same session)
+  let conversationId = req?.body?.conversationId;
+  if (!conversationId || conversationId === 'new') {
+    conversationId = req?._resumableStreamId || null;
+  }
 
   for (let i = 0; i < dbFiles.length; i++) {
     const file = dbFiles[i];
@@ -418,8 +425,19 @@ const primeFiles = async (options, apiKey) => {
             stream,
             filename: file.filename,
             entity_id: queryParams.entity_id,
+            session_id: sharedSessionId || '',
+            conversation_id: conversationId || '',
             apiKey,
           });
+
+          // Extract NEW session_id and fileId from returned fileIdentifier
+          const [identPath] = fileIdentifier.split('?');
+          const [newSessionId, newFileId] = identPath.split('/');
+
+          // Track session for reuse by subsequent file uploads
+          if (!sharedSessionId && newSessionId) {
+            sharedSessionId = newSessionId;
+          }
 
           // Preserve existing metadata when adding fileIdentifier
           const updatedMetadata = {
@@ -431,8 +449,20 @@ const primeFiles = async (options, apiKey) => {
             file_id: file.file_id,
             metadata: updatedMetadata,
           });
-          sessions.set(session_id, true);
-          pushFile();
+
+          // Use NEW session_id and fileId (not the old expired ones from closure)
+          sessions.set(newSessionId, true);
+          if (!toolContext) {
+            toolContext = `- Note: The following files are available in the "${Tools.execute_code}" tool environment:`;
+          }
+          toolContext += `\n\t- /mnt/data/${file.filename}${
+            agentResourceIds.has(file.file_id) ? '' : ' (just attached by user)'
+          }`;
+          files.push({
+            id: newFileId,
+            session_id: newSessionId,
+            name: file.filename,
+          });
         } catch (error) {
           logger.error(
             `Error re-uploading file ${id} in session ${session_id}: ${error.message}`,
