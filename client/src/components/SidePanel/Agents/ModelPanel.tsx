@@ -202,6 +202,8 @@ export default function ModelPanel({
                   return 'Claude Opus 4.5';
                 } else if (model.includes('claude-haiku-4-5')) {
                   return 'Claude Haiku 4.5';
+                } else if (model.includes('claude-opus-4-6')) {
+                  return 'Claude Opus 4.6'
                 }
                 return model;
               };
