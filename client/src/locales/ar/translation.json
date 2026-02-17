@@ -28,6 +28,7 @@
   "com_agents_review_confirm_title": "تأكيد إرسال المراجعة",
   "com_agents_review_description": "قدم ملاحظاتك وحدد حالة التحقق لهذا الوكيل.",
   "com_agents_review_no_agent_selected": "لم يتم تحديد وكيل",
+  "com_agents_review_no_comments": "يرجى إضافة تعليقات قبل الإرسال",
   "com_agents_review_submit": "إرسال المراجعة",
   "com_agents_review_submit_error": "فشل إرسال المراجعة",
   "com_agents_review_submit_success": "تم إرسال المراجعة بنجاح",

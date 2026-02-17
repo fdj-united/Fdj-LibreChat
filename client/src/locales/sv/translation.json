@@ -87,6 +87,7 @@
   "com_agents_review_confirm_title": "Bekräfta inskick av granskning",
   "com_agents_review_description": "Ge feedback och ange verifieringsstatus för denna agent.",
   "com_agents_review_no_agent_selected": "Ingen agent vald",
+  "com_agents_review_no_comments": "Vänligen lägg till kommentarer innan du skickar",
   "com_agents_review_submit": "Skicka granskning",
   "com_agents_review_submit_error": "Kunde inte skicka granskning",
   "com_agents_review_submit_success": "Granskning skickad",

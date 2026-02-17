@@ -87,6 +87,7 @@
   "com_agents_review_confirm_title": "Confirmer la soumission de la révision",
   "com_agents_review_description": "Fournissez des commentaires et définissez le statut de vérification pour cet agent.",
   "com_agents_review_no_agent_selected": "Aucun agent sélectionné",
+  "com_agents_review_no_comments": "Veuillez ajouter des commentaires avant de soumettre",
   "com_agents_review_submit": "Soumettre la révision",
   "com_agents_review_submit_error": "Échec de la soumission de la révision",
   "com_agents_review_submit_success": "Révision soumise avec succès",

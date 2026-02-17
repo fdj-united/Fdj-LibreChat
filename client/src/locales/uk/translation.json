@@ -93,6 +93,7 @@
   "com_agents_review_confirm_title": "Підтвердити надсилання огляду",
   "com_agents_review_description": "Надайте відгук та встановіть статус верифікації для цього агента.",
   "com_agents_review_no_agent_selected": "Агент не вибраний",
+  "com_agents_review_no_comments": "Будь ласка, додайте коментарі перед надсиланням",
   "com_agents_review_submit": "Надіслати огляд",
   "com_agents_review_submit_error": "Не вдалося надіслати огляд",
   "com_agents_review_submit_success": "Огляд успішно надіслано",

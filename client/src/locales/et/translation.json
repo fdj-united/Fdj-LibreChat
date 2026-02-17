@@ -28,6 +28,7 @@
   "com_agents_review_confirm_title": "Kinnita arvustuse saatmine",
   "com_agents_review_description": "Anna tagasisidet ja määra selle agendi kinnituse olek.",
   "com_agents_review_no_agent_selected": "Agenti pole valitud",
+  "com_agents_review_no_comments": "Palun lisa kommentaarid enne saatmist",
   "com_agents_review_submit": "Saada arvustus",
   "com_agents_review_submit_error": "Arvustuse saatmine ebaõnnestus",
   "com_agents_review_submit_success": "Arvustus edukalt saadetud",
