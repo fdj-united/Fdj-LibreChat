@@ -1474,7 +1474,6 @@
   "com_agents_review_cancel": "Cancel",
   "com_agents_review_confirm_submit": "Confirm & Submit",
   "com_agents_review_no_agent_selected": "No agent selected",
-  "com_agents_review_no_comments": "Please add comments before submitting",
   "com_agents_review_submit_success": "Review submitted successfully",
   "com_agents_review_submit_error": "Failed to submit review",
   "com_agents_verified_badge": "Verified"

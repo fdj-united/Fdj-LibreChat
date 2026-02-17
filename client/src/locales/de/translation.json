@@ -98,7 +98,6 @@
   "com_agents_review_confirm_title": "Bewertungsabgabe bestätigen",
   "com_agents_review_description": "Geben Sie Feedback und legen Sie den Verifizierungsstatus für diesen Agenten fest.",
   "com_agents_review_no_agent_selected": "Kein Agent ausgewählt",
-  "com_agents_review_no_comments": "Bitte fügen Sie Kommentare hinzu, bevor Sie absenden",
   "com_agents_review_submit": "Bewertung absenden",
   "com_agents_review_submit_error": "Bewertung konnte nicht abgesendet werden",
   "com_agents_review_submit_success": "Bewertung erfolgreich abgesendet",

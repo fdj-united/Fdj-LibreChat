@@ -37,7 +37,6 @@
   "com_agents_review_confirm_title": "리뷰 제출 확인",
   "com_agents_review_description": "이 에이전트에 대한 피드백을 제공하고 인증 상태를 설정하세요.",
   "com_agents_review_no_agent_selected": "선택된 에이전트 없음",
-  "com_agents_review_no_comments": "제출 전에 의견을 추가해 주세요",
   "com_agents_review_submit": "리뷰 제출",
   "com_agents_review_submit_error": "리뷰 제출 실패",
   "com_agents_review_submit_success": "리뷰가 성공적으로 제출되었습니다",

@@ -28,7 +28,6 @@
   "com_agents_review_confirm_title": "Xác nhận Gửi Đánh giá",
   "com_agents_review_description": "Cung cấp phản hồi và đặt trạng thái xác minh cho agent này.",
   "com_agents_review_no_agent_selected": "Chưa chọn agent",
-  "com_agents_review_no_comments": "Vui lòng thêm nhận xét trước khi gửi",
   "com_agents_review_submit": "Gửi Đánh giá",
   "com_agents_review_submit_error": "Gửi đánh giá thất bại",
   "com_agents_review_submit_success": "Đánh giá đã được gửi thành công",

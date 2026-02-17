@@ -28,7 +28,6 @@
   "com_agents_review_confirm_title": "İnceleme Gönderimini Onayla",
   "com_agents_review_description": "Bu ajan için geri bildirim sağlayın ve doğrulama durumunu ayarlayın.",
   "com_agents_review_no_agent_selected": "Ajan seçilmedi",
-  "com_agents_review_no_comments": "Göndermeden önce lütfen yorum ekleyin",
   "com_agents_review_submit": "İncelemeyi Gönder",
   "com_agents_review_submit_error": "İnceleme gönderilemedi",
   "com_agents_review_submit_success": "İnceleme başarıyla gönderildi",

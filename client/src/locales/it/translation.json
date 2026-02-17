@@ -91,7 +91,6 @@
   "com_agents_review_confirm_title": "Conferma Invio Revisione",
   "com_agents_review_description": "Fornisci feedback e imposta lo stato di verifica per questo agente.",
   "com_agents_review_no_agent_selected": "Nessun agente selezionato",
-  "com_agents_review_no_comments": "Aggiungi commenti prima di inviare",
   "com_agents_review_submit": "Invia Revisione",
   "com_agents_review_submit_error": "Impossibile inviare la revisione",
   "com_agents_review_submit_success": "Revisione inviata con successo",

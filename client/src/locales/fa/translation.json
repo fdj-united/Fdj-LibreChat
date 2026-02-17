@@ -28,7 +28,6 @@
   "com_agents_review_confirm_title": "تأیید ارسال بررسی",
   "com_agents_review_description": "بازخورد ارائه دهید و وضعیت تأیید این کارگزار را تنظیم کنید.",
   "com_agents_review_no_agent_selected": "کارگزاری انتخاب نشده است",
-  "com_agents_review_no_comments": "لطفاً قبل از ارسال نظرات را اضافه کنید",
   "com_agents_review_submit": "ارسال بررسی",
   "com_agents_review_submit_error": "ارسال بررسی ناموفق بود",
   "com_agents_review_submit_success": "بررسی با موفقیت ارسال شد",

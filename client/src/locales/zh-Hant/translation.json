@@ -87,7 +87,6 @@
   "com_agents_review_confirm_title": "確認提交審核",
   "com_agents_review_description": "提供回饋並為此代理設定驗證狀態。",
   "com_agents_review_no_agent_selected": "未選擇代理",
-  "com_agents_review_no_comments": "請在提交前新增評論",
   "com_agents_review_submit": "提交審核",
   "com_agents_review_submit_error": "提交審核失敗",
   "com_agents_review_submit_success": "審核提交成功",

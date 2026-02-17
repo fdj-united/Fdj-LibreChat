@@ -98,7 +98,6 @@
   "com_agents_review_confirm_title": "レビュー送信の確認",
   "com_agents_review_description": "このエージェントにフィードバックを提供し、検証ステータスを設定します。",
   "com_agents_review_no_agent_selected": "エージェントが選択されていません",
-  "com_agents_review_no_comments": "送信前にコメントを追加してください",
   "com_agents_review_submit": "レビューを送信",
   "com_agents_review_submit_error": "レビューの送信に失敗しました",
   "com_agents_review_submit_success": "レビューが正常に送信されました",

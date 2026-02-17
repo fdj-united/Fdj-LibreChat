@@ -85,7 +85,6 @@
   "com_agents_review_confirm_title": "Beoordelingsverzending bevestigen",
   "com_agents_review_description": "Geef feedback en stel de verificatiestatus voor deze agent in.",
   "com_agents_review_no_agent_selected": "Geen agent geselecteerd",
-  "com_agents_review_no_comments": "Voeg opmerkingen toe voordat u verzendt",
   "com_agents_review_submit": "Beoordeling verzenden",
   "com_agents_review_submit_error": "Beoordeling verzenden mislukt",
   "com_agents_review_submit_success": "Beoordeling succesvol verzonden",

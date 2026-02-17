@@ -93,7 +93,6 @@
   "com_agents_review_confirm_title": "Bekreft innsending av vurdering",
   "com_agents_review_description": "Gi tilbakemelding og angi verifiseringsstatus for denne agenten.",
   "com_agents_review_no_agent_selected": "Ingen agent valgt",
-  "com_agents_review_no_comments": "Vennligst legg til kommentarer før innsending",
   "com_agents_review_submit": "Send vurdering",
   "com_agents_review_submit_error": "Kunne ikke sende vurdering",
   "com_agents_review_submit_success": "Vurdering sendt",
