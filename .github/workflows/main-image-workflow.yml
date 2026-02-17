@@ -52,6 +52,7 @@ jobs:
       tag_suffixes: |
         ${{ needs.resolve-tag.outputs.latest_tag }}
         latest
+      arches: '["amd64"]'
       checkout_ref: ${{ needs.resolve-tag.outputs.sha }}
       build_branch: main
     secrets:
