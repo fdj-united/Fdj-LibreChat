@@ -17,6 +17,7 @@ jobs:
       tag_suffixes: |
         ${{ github.sha }}
         latest
+      arches: '["amd64"]'
       build_branch: ${{ github.ref_name }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
