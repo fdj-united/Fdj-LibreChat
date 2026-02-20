@@ -76,6 +76,7 @@
   "com_agents_recommended": "Onze aanbevolen agenten",
   "com_agents_results_for": "Resultaten voor '{{query}}'",
   "com_agents_review_agent_id_label": "Agent-ID",
+  "com_agents_review_agent_name_label": "Agentnaam",
   "com_agents_review_cancel": "Annuleren",
   "com_agents_review_characters": "tekens",
   "com_agents_review_comments_label": "Opmerkingen",

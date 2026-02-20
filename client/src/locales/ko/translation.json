@@ -28,6 +28,7 @@
   "com_agents_no_agent_id_error": "에이전트 ID를 찾을 수 없습니다. 먼저 에이전트가 생성되었는지 확인하세요.",
   "com_agents_not_available": "에이전트를 사용할 수 없음",
   "com_agents_review_agent_id_label": "에이전트 ID",
+  "com_agents_review_agent_name_label": "에이전트 이름",
   "com_agents_review_cancel": "취소",
   "com_agents_review_characters": "자",
   "com_agents_review_comments_label": "의견",
