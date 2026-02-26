@@ -14,7 +14,7 @@ import { MCPServersInitializer } from './registry/MCPServersInitializer';
 import { MCPServersRegistry } from './registry/MCPServersRegistry';
 import { formatToolContent } from './parsers';
 import { MCPConnection } from './connection';
-import { processMCPEnv } from '~/utils/env';
+import { processMCPEnv, encodeHeaderValue } from '~/utils/env';
 
 /**
  * Centralized manager for MCP server connections and tool execution.
@@ -226,9 +226,14 @@ Please follow these instructions when using tools from the respective MCP server
         customUserVars: customUserVars,
         body: requestBody,
       });
-      if ('headers' in currentOptions) {
-        connection.setRequestHeaders(currentOptions.headers || {});
+      const headers: Record<string, string> = {
+        ...('headers' in currentOptions ? currentOptions.headers : {}),
+      };
+      const username = user?.username || user?.name;
+      if (username && !headers['x-librechat-username']) {
+        headers['x-librechat-username'] = encodeHeaderValue(username);
       }
+      connection.setRequestHeaders(headers);
 
       const result = await connection.client.request(
         {
