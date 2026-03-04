@@ -1,9 +1,15 @@
 const express = require('express');
-const { generateCheckAccess } = require('@librechat/api');
+const { generateCheckAccess, checkAccess } = require('@librechat/api');
 const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
 const { requireJwtAuth, configMiddleware, canAccessAgentResource } = require('~/server/middleware');
 const { getAgent } = require('~/models/Agent');
-const { addOrUpdateReview, getLatestReview, getAllReviews } = require('~/models/AgentReview');
+const {
+  addOrUpdateReview,
+  getAgentReview,
+  getLatestReview,
+  getAllReviews,
+  deleteReview,
+} = require('~/models/AgentReview');
 const v1 = require('~/server/controllers/agents/v1');
 const { getRoleByName } = require('~/models');
 const actions = require('./actions');
@@ -215,6 +221,51 @@ router.post('/:id/review', async (req, res) => {
     // Return the latest review
     const latestReview = agentReview.reviews[agentReview.reviews.length - 1];
     return res.json(latestReview);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Deletes a single review entry for an agent.
+ * @route DELETE /agents/:id/reviews/:reviewId
+ * @param {string} req.params.id - Agent identifier.
+ * @param {string} req.params.reviewId - Review subdocument _id.
+ * @returns {void} 204 - No content
+ */
+router.delete('/:id/reviews/:reviewId', async (req, res) => {
+  try {
+    const { id, reviewId } = req.params;
+    const existingAgent = await getAgent({ id });
+    if (!existingAgent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const agentReview = await getAgentReview(id);
+    if (!agentReview?.reviews?.length) {
+      return res.status(404).json({ error: 'Agent review not found' });
+    }
+    const entry = agentReview.reviews.find((r) => r._id?.toString() === reviewId);
+    if (!entry) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+    const isAuthor = entry.reviewed_by?.toString() === req.user.id;
+    if (!isAuthor) {
+      const canManageReviews = await checkAccess({
+        req,
+        user: req.user,
+        permissionType: PermissionTypes.MARKETPLACE,
+        permissions: [Permissions.USE],
+        getRoleByName,
+      });
+      if (!canManageReviews) {
+        return res.status(403).json({ error: 'You can only delete your own comment' });
+      }
+    }
+    const updated = await deleteReview(id, reviewId);
+    if (!updated) {
+      return res.status(404).json({ error: 'Agent review not found' });
+    }
+    return res.status(204).send();
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
