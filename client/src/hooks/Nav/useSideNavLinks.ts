@@ -26,7 +26,7 @@ import PromptsAccordion from '~/components/Prompts/PromptsAccordion';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
-import ReviewAgentPanel from '~/components/SidePanel/Agents/ReviewAgentPanel';
+import { ReviewPanel, ReviewVerificationIcon } from '~/components/SidePanel/Review';
 import { useHasAccess, useMCPServerManager } from '~/hooks';
 
 export default function useSideNavLinks({
@@ -184,13 +184,14 @@ export default function useSideNavLinks({
       });
     }
 
-    if (isAgentsEndpoint(endpoint) && hasAccessToAgents && hasAccessToMarketplace) {
+    if (isAgentsEndpoint(endpoint) && hasAccessToAgents) {
       links.push({
-        title: 'com_ui_manage' as any,
-        label: 'Review',
+        title: 'com_agents_review_section' as any,
+        label: '',
         icon: Eye,
         id: 'review-agent',
-        Component: ReviewAgentPanel,
+        Component: ReviewPanel,
+        endAdornment: ReviewVerificationIcon,
       });
     }
 
@@ -218,7 +219,6 @@ export default function useSideNavLinks({
     availableMCPServers,
     hasAccessToUseMCPSettings,
     hasAccessToCreateMCP,
-    hasAccessToMarketplace,
     hidePanel,
   ]);
 
