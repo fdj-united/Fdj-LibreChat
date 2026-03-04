@@ -103,6 +103,7 @@
   "com_agents_review_submitting": "送信中...",
   "com_agents_review_verified_description": "マーケットプレイスでこのエージェントを検証済みとしてマークする",
   "com_agents_review_verified_label": "検証済みエージェント",
+  "com_agents_verified_badge": "検証済み",
   "com_agents_review_view_marketplace": "マーケットプレイスで表示",
   "com_agents_search_aria": "エージェントを検索",
   "com_agents_search_empty_heading": "検索結果なし",

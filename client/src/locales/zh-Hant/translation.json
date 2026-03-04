@@ -92,6 +92,7 @@
   "com_agents_review_submitting": "提交中...",
   "com_agents_review_verified_description": "在市場中將此代理標記為已驗證",
   "com_agents_review_verified_label": "已驗證代理",
+  "com_agents_verified_badge": "已驗證",
   "com_agents_review_view_marketplace": "在市場中檢視",
   "com_agents_search_info": "啟用後，允許您的 Agent 搜尋網路以取得最新資訊。需要有效的 API 金鑰。",
   "com_agents_search_instructions": "輸入名稱或描述來搜尋agents",

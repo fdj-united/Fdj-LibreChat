@@ -33,6 +33,7 @@
   "com_agents_review_submitting": "Saatmine...",
   "com_agents_review_verified_description": "Märgi see agent turuplatsi kinnitatud agendiks",
   "com_agents_review_verified_label": "Kinnitatud agent",
+  "com_agents_verified_badge": "Kinnitatud",
   "com_agents_review_view_marketplace": "Vaata turuplatsi",
   "com_agents_search_info": "Kui see on lubatud, saab sinu agent otsida veebist ajakohast teavet. Vajalik on kehtiv API võti.",
   "com_agents_search_name": "Otsi agente nime järgi",

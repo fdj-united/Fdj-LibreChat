@@ -32,6 +32,7 @@
   "com_agents_review_submitting": "Lähetetään...",
   "com_agents_review_verified_description": "Merkitse tämä agentti vahvistetuksi markkinapaikalla",
   "com_agents_review_verified_label": "Vahvistettu agentti",
+  "com_agents_verified_badge": "Vahvistettu",
   "com_agents_review_view_marketplace": "Näytä markkinapaikalla",
   "com_agents_search_info": "Asetuksen ollessa päällä agentti voi tehdä verkkohakuja ajantasaisen tiedon hakemista varten. Vaatii voimassaolevan API-avaimen.",
   "com_agents_search_name": "Etsi agentteja nimen perusteella",
