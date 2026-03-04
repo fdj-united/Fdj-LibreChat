@@ -6,6 +6,7 @@
   "com_agents_review_comments_placeholder": "Enter your review comments here...",
   "com_agents_review_characters": "characters",
   "com_agents_review_verified_label": "Verified Agent",
+  "com_agents_verified_badge": "Verified",
   "com_agents_review_verified_description": "Mark this agent as verified in the marketplace",
   "com_agents_review_agent_id_label": "Agent ID",
   "com_agents_review_agent_name_label": "Agent Name",
