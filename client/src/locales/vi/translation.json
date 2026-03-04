@@ -78,6 +78,7 @@
   "com_agents_review_submitting": "Đang gửi...",
   "com_agents_review_verified_description": "Đánh dấu agent này là đã xác minh trên marketplace",
   "com_agents_review_verified_label": "Agent Đã Xác Minh",
+  "com_agents_verified_badge": "Đã xác minh",
   "com_agents_review_view_marketplace": "Xem trên Marketplace",
   "com_agents_search_info": "Khi được bật, cho phép agent của bạn tìm kiếm thông tin mới nhất trên web. Yêu cầu khóa API hợp lệ.",
   "com_assistants_file_search": "Tìm kiếm Tập tin",
