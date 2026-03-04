@@ -87,6 +87,7 @@
   "com_agents_review_submitting": "Enviando...",
   "com_agents_review_verified_description": "Marcar este agente como verificado en el marketplace",
   "com_agents_review_verified_label": "Agente Verificado",
+  "com_agents_verified_badge": "Verificado",
   "com_agents_review_view_marketplace": "Ver en Marketplace",
   "com_agents_search_name": "Buscar agentes por nombre",
   "com_agents_update_error": "Hubo un error al actualizar su agente.",
