@@ -42,6 +42,7 @@
   "com_agents_review_submitting": "제출 중...",
   "com_agents_review_verified_description": "마켓플레이스에서 이 에이전트를 인증됨으로 표시",
   "com_agents_review_verified_label": "인증된 에이전트",
+  "com_agents_verified_badge": "인증됨",
   "com_agents_review_view_marketplace": "마켓플레이스에서 보기",
   "com_agents_search_info": "활성화하면 에이전트가 최신 정보를 검색할 수 있도록 허용합니다. 유효한 API 키가 필요합니다.",
   "com_agents_search_name": "이름으로 에이전트 검색",

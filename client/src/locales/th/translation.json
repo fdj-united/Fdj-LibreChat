@@ -44,6 +44,7 @@
   "com_agents_review_submitting": "กำลังส่ง...",
   "com_agents_review_verified_description": "ทำเครื่องหมายเอเจนต์นี้ว่าได้รับการยืนยันในตลาด",
   "com_agents_review_verified_label": "เอเจนต์ที่ได้รับการยืนยัน",
+  "com_agents_verified_badge": "ยืนยันแล้ว",
   "com_agents_review_view_marketplace": "ดูในตลาด",
   "com_agents_search_info": "เมื่อเปิดใช้งานแล้ว เอเจนต์องคุณจะสามารถค้นหาข้อมูลล่าสุดบนเว็บได้ ต้องมีรหัส API ที่ถูกต้อง",
   "com_agents_search_name": "ค้นหาเอเจนต์ตามชื่อ",
