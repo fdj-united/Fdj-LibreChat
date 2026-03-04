@@ -129,6 +129,8 @@ export type NavLink = {
   label?: string;
   icon: LucideIcon | React.FC;
   Component?: React.ComponentType;
+  /** Optional component rendered on the right side of the button (e.g. verification status icon) */
+  endAdornment?: React.ComponentType;
   onClick?: (e?: React.MouseEvent) => void;
   variant?: 'default' | 'ghost';
   id: string;
