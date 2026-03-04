@@ -74,18 +74,19 @@ function NavContent({ links, isCollapsed, resize }: Omit<NavProps, 'defaultActiv
                                 }
                               }}
                             >
-                              <link.icon className="mr-2 h-4 w-4" aria-hidden="true" />
+                              <link.icon className="mr-2 h-4 w-4 shrink-0" aria-hidden="true" />
                               {localize(link.title)}
-                              {link.label != null && link.label && (
+                              {(link.label != null && link.label) || link.endAdornment ? (
                                 <span
                                   className={cn(
-                                    'ml-auto opacity-100 transition-all duration-300 ease-in-out',
+                                    'ml-auto flex items-center gap-1 opacity-100 transition-all duration-300 ease-in-out',
                                     variant === 'default' ? 'text-text-primary' : '',
                                   )}
                                 >
                                   {link.label}
+                                  {link.endAdornment && <link.endAdornment />}
                                 </span>
-                              )}
+                              ) : null}
                             </Button>
                           </AccordionPrimitive.Trigger>
                         </AccordionPrimitive.Header>

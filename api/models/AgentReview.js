@@ -133,6 +133,30 @@ async function getAllReviews(agentId) {
 }
 
 /**
+ * Delete a single review entry by its _id
+ * @param {string} agentId - The agent ID
+ * @param {string} reviewId - The review subdocument _id (string or ObjectId)
+ * @returns {Promise<Object|null>} The updated document or null if agent or review not found
+ */
+async function deleteReview(agentId, reviewId) {
+  const doc = await AgentReview.findOne({ agent_id: agentId }).lean();
+  if (!doc || !doc.reviews?.length) {
+    return null;
+  }
+  const hasReview = doc.reviews.some((r) => r._id?.toString() === reviewId);
+  if (!hasReview) {
+    return null;
+  }
+  const id = mongoose.Types.ObjectId.isValid(reviewId) ? new mongoose.Types.ObjectId(reviewId) : reviewId;
+  const result = await AgentReview.findOneAndUpdate(
+    { agent_id: agentId },
+    { $pull: { reviews: { _id: id } } },
+    { new: true },
+  ).lean();
+  return result;
+}
+
+/**
  * Delete all reviews for an agent
  * @param {string} agentId - The agent ID
  * @returns {Promise<Object|null>} The deleted document or null
@@ -147,5 +171,6 @@ module.exports = {
   addOrUpdateReview,
   getLatestReview,
   getAllReviews,
+  deleteReview,
   deleteAgentReviews,
 };
