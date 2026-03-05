@@ -40,7 +40,7 @@ const {
   grantPermission,
 } = require('~/server/services/PermissionService');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-const { getCategoriesWithCounts, deleteFileByFilter } = require('~/models');
+const { getCategoriesWithCounts, deleteFileByFilter, getVerifiedAgentIds } = require('~/models');
 const { resizeAvatar } = require('~/server/services/Files/images/avatar');
 const { getFileStrategy } = require('~/server/utils/getFileStrategy');
 const { refreshS3Url } = require('~/server/services/Files/S3/crud');
@@ -461,7 +461,7 @@ const deleteAgentHandler = async (req, res) => {
 const getListAgentsHandler = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { category, search, limit, cursor, promoted } = req.query;
+    const { category, search, limit, cursor, promoted, verified } = req.query;
     let requiredPermission = req.query.requiredPermission;
     if (typeof requiredPermission === 'string') {
       requiredPermission = parseInt(requiredPermission, 10);
@@ -484,6 +484,12 @@ const getListAgentsHandler = async (req, res) => {
       filter.is_promoted = true;
     } else if (promoted === '0') {
       filter.is_promoted = { $ne: true };
+    }
+
+    // Handle verification filter - only agents with latest review verified=true
+    if (verified === '1') {
+      const verifiedAgentIds = await getVerifiedAgentIds();
+      filter.id = { $in: verifiedAgentIds };
     }
 
     // Handle search filter (escape regex and cap length)
