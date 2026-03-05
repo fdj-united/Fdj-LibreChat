@@ -18,6 +18,7 @@ const {
   getAgentReview,
   addOrUpdateReview,
   getLatestReview,
+  getVerifiedAgentIds,
   getAllReviews,
   deleteAgentReviews,
 } = require('./AgentReview');
@@ -56,6 +57,7 @@ module.exports = {
   getAgentReview,
   addOrUpdateReview,
   getLatestReview,
+  getVerifiedAgentIds,
   getAllReviews,
   deleteAgentReviews,
 
