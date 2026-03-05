@@ -12,6 +12,7 @@ import AgentCard from './AgentCard';
 interface AgentGridProps {
   category: string;
   searchQuery: string;
+  verifiedOnly?: boolean;
   onSelectAgent: (agent: t.Agent) => void;
   scrollElementRef?: React.RefObject<HTMLElement>;
 }
@@ -22,6 +23,7 @@ interface AgentGridProps {
 const AgentGrid: React.FC<AgentGridProps> = ({
   category,
   searchQuery,
+  verifiedOnly = false,
   onSelectAgent,
   scrollElementRef,
 }) => {
@@ -38,6 +40,7 @@ const AgentGrid: React.FC<AgentGridProps> = ({
       search?: string;
       limit: number;
       promoted?: 0 | 1;
+      verified?: 0 | 1;
     } = {
       requiredPermission: PermissionBits.VIEW, // View permission for marketplace viewing
       limit: 6,
@@ -60,8 +63,12 @@ const AgentGrid: React.FC<AgentGridProps> = ({
       // For 'all' category, no additional filters needed
     }
 
+    if (verifiedOnly) {
+      params.verified = 1;
+    }
+
     return params;
-  }, [category, searchQuery]);
+  }, [category, searchQuery, verifiedOnly]);
 
   // Use infinite query for marketplace agents
   const {
