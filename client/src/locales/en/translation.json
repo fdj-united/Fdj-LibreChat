@@ -1957,5 +1957,6 @@
   "com_agents_review_delete_success": "Comment deleted",
   "com_agents_review_delete_error": "Failed to delete comment",
   "com_agents_review_status_verified": "Verified",
-  "com_agents_review_status_not_verified": "Not verified"
+  "com_agents_filter_all": "All",
+  "com_agents_filter_verified_only": "Verified"
 }

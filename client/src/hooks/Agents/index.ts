@@ -8,4 +8,5 @@ export { default as useAgentDefaultPermissionLevel } from './useAgentDefaultPerm
 export { default as useAgentFileConfig } from './useAgentFileConfig';
 export { default as useAgentToolPermissions } from './useAgentToolPermissions';
 export { default as useMCPToolOptions } from './useMCPToolOptions';
+export { default as useVerifiedFilter } from './useVerifiedFilter';
 export * from './useApplyModelSpecAgents';
