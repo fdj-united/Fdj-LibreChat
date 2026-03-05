@@ -19,4 +19,5 @@ export type {
   CodeWorkspaceTransition,
 } from './useCodeWorkspace';
 export { default as useMCPToolOptions } from './useMCPToolOptions';
+export { default as useVerifiedFilter } from './useVerifiedFilter';
 export * from './useApplyModelSpecAgents';
