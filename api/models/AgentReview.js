@@ -118,6 +118,23 @@ async function getLatestReview(agentId) {
 }
 
 /**
+ * Get agent IDs that have verified=true in their latest review.
+ * Used for marketplace "verified only" filter.
+ * @returns {Promise<string[]>} Array of agent_id strings
+ */
+async function getVerifiedAgentIds() {
+  const docs = await AgentReview.aggregate([
+    {
+      $match: {
+        $expr: { $eq: [{ $arrayElemAt: ['$reviews.verified', -1] }, true] },
+      },
+    },
+    { $project: { agent_id: 1 } },
+  ]).exec();
+  return docs.map((d) => d.agent_id);
+}
+
+/**
  * Get all reviews for an agent
  * @param {string} agentId - The agent ID
  * @returns {Promise<Array>} Array of reviews
@@ -170,6 +187,7 @@ module.exports = {
   getAgentReview,
   addOrUpdateReview,
   getLatestReview,
+  getVerifiedAgentIds,
   getAllReviews,
   deleteReview,
   deleteAgentReviews,
