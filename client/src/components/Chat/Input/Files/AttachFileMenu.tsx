@@ -244,15 +244,13 @@ const AttachFileMenu = ({
     const localItems = createMenuItems(handleUploadClick);
 
     if (sharePointEnabled) {
-      const sharePointItems = createMenuItems(() => {
-        setIsSharePointDialogOpen(true);
-        // Note: toolResource will be set by the specific item clicked
-      });
       localItems.push({
         label: localize('com_files_upload_sharepoint'),
-        onClick: () => {},
+        onClick: () => {
+          setToolResource(EToolResources.context);
+          setIsSharePointDialogOpen(true);
+        },
         icon: <SharePointIcon className="icon-md" />,
-        subItems: sharePointItems,
       });
       return localItems;
     }
