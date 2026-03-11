@@ -490,7 +490,8 @@ const setOpenIDAuthTokens = (tokenset, req, res, userId, existingRefreshToken) =
         sameSite: 'strict',
       });
     }
-    return tokenset.access_token;
+    //return tokenset.access_token;
+    return tokenset.id_token || tokenset.access_token;
   } catch (error) {
     logger.error('[setOpenIDAuthTokens] Error in setting authentication tokens:', error);
     throw error;
