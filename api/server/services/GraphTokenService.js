@@ -73,9 +73,11 @@ async function getGraphApiToken(user, accessToken, scopes, fromCache = true) {
     );
     return tokenResponse;
   } catch (error) {
+    const detail = error?.cause ?? error?.body ?? error;
+    const code = detail?.error ?? error?.error;
+    const description = detail?.error_description ?? error?.error_description ?? error?.message;
     logger.error(
-      `[GraphTokenService] Failed to acquire Graph API token for user ${user.openidId}:`,
-      error,
+      `[GraphTokenService] Failed to acquire Graph API token for user [${code}] [${user.openidId}]: ${description}`,
     );
     throw new Error(`Graph token acquisition failed: ${error.message}`);
   }
