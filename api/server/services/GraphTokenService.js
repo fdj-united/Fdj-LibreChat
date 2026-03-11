@@ -76,9 +76,10 @@ async function getGraphApiToken(user, accessToken, scopes, fromCache = true) {
     const detail = error?.cause ?? error?.body ?? error;
     const code = detail?.error ?? error?.error;
     const description = detail?.error_description ?? error?.error_description ?? error?.message;
-    logger.error(
-      `[GraphTokenService] Failed Graph API [${code}] [${user.openidId}]: ${description}`,
-    );
+    const mid = Math.floor((description?.length ?? 0) / 2);
+    logger.error(`[GraphTokenService] Error code: ${code}`);
+    logger.error(`[Error] (1/2): ${description?.slice(0, mid)}`);
+    logger.error(`[Error] (2/2): ${description?.slice(mid)}`);
     throw new Error(`Graph token acquisition failed: ${error.message}`);
   }
 }
