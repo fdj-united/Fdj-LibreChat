@@ -203,14 +203,6 @@ const graphTokenController = async (req, res) => {
       });
     }
 
-    // Extract access token from Authorization header
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        message: 'Valid authorization token required',
-      });
-    }
-
     // Get scopes from query parameters
     const scopes = req.query.scopes;
     if (!scopes) {
@@ -219,7 +211,14 @@ const graphTokenController = async (req, res) => {
       });
     }
 
-    const accessToken = authHeader.substring(7); // Remove 'Bearer ' prefix
+    // Use the Microsoft access token stored in session (not the LibreChat JWT)
+    const accessToken = req.session?.openidTokens?.accessToken;
+    if (!accessToken) {
+      return res.status(401).json({
+        message: 'Microsoft access token not available. Please log out and log back in.',
+      });
+    }
+
     const tokenResponse = await getGraphApiToken(req.user, accessToken, scopes);
 
     res.json(tokenResponse);
