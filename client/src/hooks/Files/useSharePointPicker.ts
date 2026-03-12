@@ -41,6 +41,7 @@ export default function useSharePointPicker({
   const { data: startupConfig } = useGetStartupConfig();
 
   const sharePointBaseUrl = startupConfig?.sharePointBaseUrl;
+  const sharePointSitePath = startupConfig?.sharePointSitePath;
   const isEntraIdUser = user?.provider === 'openid';
 
   const {
@@ -263,7 +264,7 @@ export default function useSharePointPicker({
       const pickerOptions: SPPickerConfig = {
         sdk: '8.0',
         entry: {
-          sharePoint: {},
+          sharePoint: sharePointSitePath ? { byPath: { web: sharePointSitePath } } : {},
         },
         messaging: {
           origin: window.location.origin,
