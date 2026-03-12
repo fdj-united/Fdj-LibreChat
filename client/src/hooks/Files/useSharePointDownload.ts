@@ -26,7 +26,7 @@ export default function useSharePointDownload({
 
   const { token, refetch: refetchToken } = useSharePointToken({
     enabled: false,
-    purpose: 'Download',
+    purpose: 'Pick',
   });
 
   const batchDownloadMutation = useSharePointBatchDownload();
