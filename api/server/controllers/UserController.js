@@ -14,6 +14,7 @@ const {
   deleteMessages,
   deletePresets,
   deleteUserKey,
+  getUserById,
   deleteConvos,
   deleteFiles,
   updateUser,
@@ -22,6 +23,7 @@ const {
 } = require('~/models');
 const {
   ConversationTag,
+  AgentApiKey,
   Transaction,
   MemoryEntry,
   Assistant,
@@ -33,8 +35,10 @@ const {
   User,
 } = require('~/db/models');
 const { updateUserPluginAuth, deleteUserPluginAuth } = require('~/server/services/PluginService');
+const { verifyOTPOrBackupCode } = require('~/server/services/twoFactorService');
 const { verifyEmail, resendVerificationEmail } = require('~/server/services/AuthService');
 const { getMCPManager, getFlowStateManager, getMCPServersRegistry } = require('~/config');
+const { invalidateCachedTools } = require('~/server/services/Config/getCachedTools');
 const { needsRefresh, getNewS3URL } = require('~/server/services/Files/S3/crud');
 const { processDeleteRequest } = require('~/server/services/Files/process');
 const { getAppConfig } = require('~/server/services/Config');
@@ -214,6 +218,7 @@ const updateUserPluginsController = async (req, res) => {
               `[updateUserPluginsController] Attempting disconnect of MCP server "${serverName}" for user ${user.id} after plugin auth update.`,
             );
             await mcpManager.disconnectUserConnection(user.id, serverName);
+            await invalidateCachedTools({ userId: user.id, serverName });
           }
         } catch (disconnectError) {
           logger.error(
@@ -238,6 +243,22 @@ const deleteUserController = async (req, res) => {
   const { user } = req;
 
   try {
+    const existingUser = await getUserById(
+      user.id,
+      '+totpSecret +backupCodes _id twoFactorEnabled',
+    );
+    if (existingUser && existingUser.twoFactorEnabled) {
+      const { token, backupCode } = req.body;
+      const result = await verifyOTPOrBackupCode({ user: existingUser, token, backupCode });
+
+      if (!result.verified) {
+        const msg =
+          result.message ??
+          'TOTP token or backup code is required to delete account with 2FA enabled';
+        return res.status(result.status ?? 400).json({ message: msg });
+      }
+    }
+
     await deleteMessages({ user: user.id }); // delete user messages
     await deleteAllUserSessions({ userId: user.id }); // delete user sessions
     await Transaction.deleteMany({ user: user.id }); // delete user transactions
@@ -256,6 +277,7 @@ const deleteUserController = async (req, res) => {
     await deleteFiles(null, user.id); // delete database files in case of orphaned files from previous steps
     await deleteToolCalls(user.id); // delete user tool calls
     await deleteUserAgents(user.id); // delete user agents
+    await AgentApiKey.deleteMany({ user: user._id }); // delete user agent API keys
     await Assistant.deleteMany({ user: user.id }); // delete user assistants
     await ConversationTag.deleteMany({ user: user.id }); // delete user conversation tags
     await MemoryEntry.deleteMany({ userId: user.id }); // delete user memory entries
@@ -348,6 +370,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
     serverConfig.oauth?.revocation_endpoint_auth_methods_supported ??
     clientMetadata.revocation_endpoint_auth_methods_supported;
   const oauthHeaders = serverConfig.oauth_headers ?? {};
+  const allowedDomains = getMCPServersRegistry().getAllowedDomains();
 
   if (tokens?.access_token) {
     try {
@@ -363,6 +386,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
           revocationEndpointAuthMethodsSupported,
         },
         oauthHeaders,
+        allowedDomains,
       );
     } catch (error) {
       logger.error(`Error revoking OAuth access token for ${serverName}:`, error);
@@ -383,6 +407,7 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
           revocationEndpointAuthMethodsSupported,
         },
         oauthHeaders,
+        allowedDomains,
       );
     } catch (error) {
       logger.error(`Error revoking OAuth refresh token for ${serverName}:`, error);

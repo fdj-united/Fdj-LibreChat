@@ -11,14 +11,6 @@ import {
   Clock,
 } from 'lucide-react';
 import {
-  Providers,
-  EToolResources,
-  EModelEndpoint,
-  defaultAgentCapabilities,
-  isDocumentSupportedProvider,
-  type TFile,
-} from 'librechat-data-provider';
-import {
   FileUpload,
   TooltipAnchor,
   DropdownPopup,
@@ -26,7 +18,15 @@ import {
   SharePointIcon,
   useToastContext,
 } from '@librechat/client';
-import type { EndpointFileConfig } from 'librechat-data-provider';
+import {
+  Providers,
+  EToolResources,
+  EModelEndpoint,
+  defaultAgentCapabilities,
+  bedrockDocumentExtensions,
+  isDocumentSupportedProvider,
+} from 'librechat-data-provider';
+import type { EndpointFileConfig, TFile } from 'librechat-data-provider';
 import {
   useAgentToolPermissions,
   useAgentCapabilities,
@@ -43,14 +43,19 @@ import { MenuItemProps } from '~/common';
 import { cn } from '~/utils';
 import { useChatContext, useFileMapContext } from '~/Providers';
 
-type FileUploadType = 'image' | 'document' | 'image_document' | 'image_document_video_audio';
+type FileUploadType =
+  | 'image'
+  | 'document'
+  | 'image_document'
+  | 'image_document_extended'
+  | 'image_document_video_audio';
 
 interface AttachFileMenuProps {
   agentId?: string | null;
   endpoint?: string | null;
   disabled?: boolean | null;
   conversationId: string;
-  endpointType?: EModelEndpoint;
+  endpointType?: EModelEndpoint | string;
   endpointFileConfig?: EndpointFileConfig;
   useResponsesApi?: boolean;
 }
@@ -111,6 +116,8 @@ const AttachFileMenu = ({
       inputRef.current.accept = '.pdf,application/pdf';
     } else if (fileType === 'image_document') {
       inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf';
+    } else if (fileType === 'image_document_extended') {
+      inputRef.current.accept = `image/*,.heif,.heic,${bedrockDocumentExtensions}`;
     } else if (fileType === 'image_document_video_audio') {
       inputRef.current.accept = 'image/*,.heif,.heic,.pdf,application/pdf,video/*,audio/*';
     } else {
@@ -240,6 +247,11 @@ const AttachFileMenu = ({
             let fileType: Exclude<FileUploadType, 'image' | 'document'> = 'image_document';
             if (currentProvider === Providers.GOOGLE || currentProvider === Providers.OPENROUTER) {
               fileType = 'image_document_video_audio';
+            } else if (
+              currentProvider === Providers.BEDROCK ||
+              endpointType === EModelEndpoint.bedrock
+            ) {
+              fileType = 'image_document_extended';
             }
             onAction(fileType);
           },
