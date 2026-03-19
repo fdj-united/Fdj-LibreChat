@@ -42,6 +42,7 @@ const { getGraphApiToken } = require('./GraphTokenService');
 const { exchangeOboToken } = require('./OboTokenService');
 const { createOboTrustChecker } = require('./OboPolicyService');
 const { reinitMCPServer } = require('./Tools/mcp');
+const { getGraphApiToken } = require('./GraphTokenService');
 const { getAppConfig } = require('./Config');
 const { getLogStores } = require('~/cache');
 
@@ -831,6 +832,7 @@ function createToolInstance({
         requestScopedConnections:
           config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
         customUserVars,
+        graphTokenResolver: getGraphApiToken,
         flowManager,
         tokenMethods: {
           findToken,
