@@ -156,12 +156,14 @@ export default function ModelPanel({
                     searchPlaceholder={localize('com_ui_select_search_provider')}
                     setValue={field.onChange}
                     items={providers.map((provider) => {
-                      const _providedValue = typeof provider === 'string' ? provider : provider.value;
-                      const _providedLabel = typeof provider === 'string' ? provider : provider.label;
+                      const _providedValue =
+                        typeof provider === 'string' ? provider : provider.value;
+                      const _providedLabel =
+                        typeof provider === 'string' ? provider : provider.label;
                       return {
                         label: alternateName[_providedValue as EModelEndpoint] ?? _providedLabel,
                         value: _providedValue,
-                      }
+                      };
                     })}
                     className={cn(error ? 'border-2 border-red-500' : '')}
                     ariaLabel={localize('com_ui_provider')}
@@ -203,7 +205,7 @@ export default function ModelPanel({
                 } else if (model.includes('claude-haiku-4-5')) {
                   return 'Claude Haiku 4.5';
                 } else if (model.includes('claude-opus-4-6')) {
-                  return 'Claude Opus 4.6'
+                  return 'Claude Opus 4.6';
                 }
                 return model;
               };

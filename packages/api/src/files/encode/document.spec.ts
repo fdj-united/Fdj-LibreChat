@@ -88,11 +88,7 @@ describe('encodeAndFormatDocuments - fileConfig integration', () => {
       updatedAt: new Date(),
     }) as unknown as IMongoFile;
 
-  const createMockDocFile = (
-    sizeInMB: number,
-    mimeType: string,
-    filename: string,
-  ): IMongoFile =>
+  const createMockDocFile = (sizeInMB: number, mimeType: string, filename: string): IMongoFile =>
     ({
       _id: new Types.ObjectId(),
       user: new Types.ObjectId(),

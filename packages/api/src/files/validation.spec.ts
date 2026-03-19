@@ -229,7 +229,12 @@ describe('PDF Validation with fileConfig.endpoints.*.fileSizeLimit', () => {
     it('should clamp to 4.5MB even when config is higher for non-PDF', async () => {
       const fileSize = 5 * 1024 * 1024;
       const configuredLimit = mbToBytes(512);
-      const result = await validateBedrockDocument(fileSize, 'text/html', undefined, configuredLimit);
+      const result = await validateBedrockDocument(
+        fileSize,
+        'text/html',
+        undefined,
+        configuredLimit,
+      );
 
       expect(result.isValid).toBe(false);
       expect(result.error).toContain('4.5MB');
@@ -238,7 +243,12 @@ describe('PDF Validation with fileConfig.endpoints.*.fileSizeLimit', () => {
     it('should use configured limit when lower than provider limit for non-PDF', async () => {
       const fileSize = 3 * 1024 * 1024;
       const configuredLimit = mbToBytes(2);
-      const result = await validateBedrockDocument(fileSize, 'text/markdown', undefined, configuredLimit);
+      const result = await validateBedrockDocument(
+        fileSize,
+        'text/markdown',
+        undefined,
+        configuredLimit,
+      );
 
       expect(result.isValid).toBe(false);
       expect(result.error).toContain('2.0MB');

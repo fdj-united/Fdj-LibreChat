@@ -800,9 +800,8 @@ describe('GenerationJobManager Integration Tests', () => {
       GenerationJobManager.initialize();
 
       const received: unknown[] = [];
-      const subscription = await GenerationJobManager.subscribe(
-        streamId,
-        (event) => received.push(event),
+      const subscription = await GenerationJobManager.subscribe(streamId, (event) =>
+        received.push(event),
       );
 
       expect(subscription).not.toBeNull();
@@ -839,9 +838,8 @@ describe('GenerationJobManager Integration Tests', () => {
       GenerationJobManager.initialize();
 
       const received: unknown[] = [];
-      const subscription = await GenerationJobManager.subscribe(
-        streamId,
-        (event) => received.push(event),
+      const subscription = await GenerationJobManager.subscribe(streamId, (event) =>
+        received.push(event),
       );
 
       expect(subscription).not.toBeNull();
