@@ -31,9 +31,13 @@ function resolveAnthropicIntegrationKey() {
   }
   if (raw === 'user_provided') {
     const integration = process.env.ANTHROPIC_API_KEY_INTEGRATION;
-    return integration != null && String(integration).trim() !== '' ? String(integration).trim() : null;
+    if (integration != null && String(integration).trim() !== '') {
+      return String(integration).trim();
+    }
+    return null;
   }
-  return String(raw).trim() !== '' ? String(raw).trim() : null;
+  const trimmed = String(raw).trim();
+  return trimmed !== '' ? trimmed : null;
 }
 
 const anthropicKeyForIntegration = resolveAnthropicIntegrationKey();
