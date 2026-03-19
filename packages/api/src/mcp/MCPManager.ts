@@ -15,6 +15,8 @@ import { MCPServersRegistry } from './registry/MCPServersRegistry';
 import { formatToolContent } from './parsers';
 import { MCPConnection } from './connection';
 import { processMCPEnv, encodeHeaderValue } from '~/utils/env';
+import type { GraphTokenResolver } from '~/utils/graph';
+import { preProcessGraphTokens } from '~/utils/graph';
 
 /**
  * Centralized manager for MCP server connections and tool execution.
@@ -174,6 +176,7 @@ Please follow these instructions when using tools from the respective MCP server
     oauthStart,
     oauthEnd,
     customUserVars,
+    graphTokenResolver,
   }: {
     user?: IUser;
     serverName: string;
@@ -184,6 +187,8 @@ Please follow these instructions when using tools from the respective MCP server
     requestBody?: RequestBody;
     tokenMethods?: TokenMethods;
     customUserVars?: Record<string, string>;
+    /** Optional resolver for Microsoft Graph API tokens via OBO flow. */
+    graphTokenResolver?: GraphTokenResolver;
     flowManager: FlowStateManager<MCPOAuthTokens | null>;
     oauthStart?: (authURL: string) => Promise<void>;
     oauthEnd?: () => Promise<void>;
@@ -220,9 +225,14 @@ Please follow these instructions when using tools from the respective MCP server
         serverName,
         userId,
       )) as t.MCPOptions;
+      const graphProcessedConfig = await preProcessGraphTokens(rawConfig, {
+        user,
+        graphTokenResolver,
+        scopes: process.env.GRAPH_API_SCOPES,
+      });
       const currentOptions = processMCPEnv({
         user,
-        options: rawConfig,
+        options: graphProcessedConfig,
         customUserVars: customUserVars,
         body: requestBody,
       });
