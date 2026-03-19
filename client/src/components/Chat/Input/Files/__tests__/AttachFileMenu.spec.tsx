@@ -11,6 +11,12 @@ jest.mock('~/hooks', () => ({
   useGetAgentsConfig: jest.fn(),
   useFileHandling: jest.fn(),
   useLocalize: jest.fn(),
+  useUpdateFiles: jest.fn(() => ({
+    addFile: jest.fn(),
+    replaceFile: jest.fn(),
+    updateFileById: jest.fn(),
+    deleteFileById: jest.fn(),
+  })),
 }));
 
 jest.mock('~/hooks/Files/useSharePointFileHandling', () => ({
@@ -19,6 +25,7 @@ jest.mock('~/hooks/Files/useSharePointFileHandling', () => ({
 }));
 
 jest.mock('~/data-provider', () => ({
+  useGetFiles: jest.fn(() => ({ data: [] })),
   useGetStartupConfig: jest.fn(),
 }));
 
@@ -30,6 +37,7 @@ jest.mock('@librechat/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const R = require('react');
   return {
+    useToastContext: () => ({ showToast: jest.fn() }),
     FileUpload: (props) => R.createElement('div', { 'data-testid': 'file-upload' }, props.children),
     TooltipAnchor: (props) => props.render,
     DropdownPopup: (props) =>
@@ -79,6 +87,7 @@ function setupMocks(overrides: { provider?: string } = {}) {
   const translations: Record<string, string> = {
     com_ui_upload_provider: 'Upload to Provider',
     com_ui_upload_image_input: 'Upload Image',
+    com_ui_upload_file: 'Upload File (in context)',
     com_ui_upload_ocr_text: 'Upload as Text',
     com_ui_upload_file_search: 'Upload for File Search',
     com_ui_upload_code_files: 'Upload Code Files',
@@ -226,7 +235,7 @@ describe('AttachFileMenu', () => {
   });
 
   describe('Agent Capabilities', () => {
-    it('shows OCR Text option when context is enabled', () => {
+    it('shows context file upload when context is enabled', () => {
       setupMocks();
       mockUseAgentCapabilities.mockReturnValue({
         contextEnabled: true,
@@ -235,7 +244,7 @@ describe('AttachFileMenu', () => {
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
-      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
+      expect(screen.getByText('Upload File (in context)')).toBeInTheDocument();
     });
 
     it('shows File Search option when enabled and allowed by agent', () => {
@@ -299,7 +308,7 @@ describe('AttachFileMenu', () => {
       renderMenu({ endpointType: EModelEndpoint.openAI });
       openMenu();
       expect(screen.getByText('Upload to Provider')).toBeInTheDocument();
-      expect(screen.getByText('Upload as Text')).toBeInTheDocument();
+      expect(screen.getByText('Upload File (in context)')).toBeInTheDocument();
       expect(screen.getByText('Upload for File Search')).toBeInTheDocument();
       expect(screen.getByText('Upload Code Files')).toBeInTheDocument();
     });

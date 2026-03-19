@@ -19,10 +19,34 @@ const originalEnv = {
 process.env.CREDS_KEY = '0123456789abcdef0123456789abcdef';
 process.env.CREDS_IV = '0123456789abcdef';
 
-/** Skip tests if ANTHROPIC_API_KEY is not available */
-const SKIP_INTEGRATION_TESTS = !process.env.ANTHROPIC_API_KEY;
+/**
+ * When ANTHROPIC_API_KEY is `user_provided`, initializeAnthropic loads the key via getUserKey().
+ * These tests use API-key auth only (no per-user Key document), so getUserKey throws NO_USER_KEY.
+ * Supply ANTHROPIC_API_KEY_INTEGRATION with a real key in that case, or use a literal API key in ANTHROPIC_API_KEY.
+ */
+function resolveAnthropicIntegrationKey() {
+  const raw = process.env.ANTHROPIC_API_KEY;
+  if (raw == null || String(raw).trim() === '') {
+    return null;
+  }
+  if (raw === 'user_provided') {
+    const integration = process.env.ANTHROPIC_API_KEY_INTEGRATION;
+    return integration != null && String(integration).trim() !== '' ? String(integration).trim() : null;
+  }
+  return String(raw).trim() !== '' ? String(raw).trim() : null;
+}
+
+const anthropicKeyForIntegration = resolveAnthropicIntegrationKey();
+const SKIP_INTEGRATION_TESTS = !anthropicKeyForIntegration;
+
+if (!SKIP_INTEGRATION_TESTS && process.env.ANTHROPIC_API_KEY === 'user_provided') {
+  process.env.ANTHROPIC_API_KEY = anthropicKeyForIntegration;
+}
+
 if (SKIP_INTEGRATION_TESTS) {
-  console.warn('ANTHROPIC_API_KEY not found - skipping integration tests');
+  console.warn(
+    'Skipping Open Responses integration tests: set ANTHROPIC_API_KEY to your key, or with user_provided set ANTHROPIC_API_KEY_INTEGRATION.',
+  );
 }
 
 jest.mock('meilisearch', () => ({

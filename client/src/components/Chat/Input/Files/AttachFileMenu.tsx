@@ -257,8 +257,7 @@ const AttachFileMenu = ({
           },
           icon: <FileImageIcon className="icon-md" />,
         });
-      }
-      /*else {
+      } else {
         items.push({
           label: localize('com_ui_upload_image_input'),
           onClick: () => {
@@ -267,7 +266,7 @@ const AttachFileMenu = ({
           },
           icon: <ImageUpIcon className="icon-md" />,
         });
-      }*/
+      }
 
       if (capabilities.contextEnabled) {
         items.push({
