@@ -318,7 +318,7 @@ export default function AgentPanel() {
             !isAssistantsEndpoint(key) &&
             (allowedProviders.size > 0 ? allowedProviders.has(key) : true) &&
             key !== EModelEndpoint.agents &&
-            (isAdmin || !['AI Studio', 'Text to SQL'].includes(key))
+            (isAdmin || !['AI Studio', 'Text to SQL'].includes(key)),
         )
         .map((provider) => createProviderOption(provider)),
     [endpointsConfig, allowedProviders],
