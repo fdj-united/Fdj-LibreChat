@@ -20,9 +20,7 @@ export default function ReviewCommentHistory({
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
   const newestFirst = useMemo(() => [...reviewHistory].reverse(), [reviewHistory]);
-  const visibleComments = historyExpanded
-    ? newestFirst
-    : newestFirst.slice(0, initialVisibleCount);
+  const visibleComments = historyExpanded ? newestFirst : newestFirst.slice(0, initialVisibleCount);
   const hasMoreComments = reviewHistory.length > initialVisibleCount;
 
   return (
@@ -56,7 +54,10 @@ export default function ReviewCommentHistory({
                 <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm text-text-primary">
                   {entry.comment || '—'}
                 </p>
-                {(canManageVerification || (user?.id && entry.reviewed_by && String(entry.reviewed_by) === String(user.id))) && (
+                {(canManageVerification ||
+                  (user?.id &&
+                    entry.reviewed_by &&
+                    String(entry.reviewed_by) === String(user.id))) && (
                   <Button
                     type="button"
                     variant="ghost"

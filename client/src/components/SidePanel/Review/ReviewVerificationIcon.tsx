@@ -19,7 +19,7 @@ export default function ReviewVerificationIcon({
     enabled: verifiedProp === undefined && !!agent_id,
   });
 
-  const verified = verifiedProp ?? (latestReview?.verified === true);
+  const verified = verifiedProp ?? latestReview?.verified === true;
   const showIcon = verifiedProp !== undefined || (!!agent_id && latestReview !== undefined);
 
   if (!showIcon) {

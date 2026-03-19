@@ -7,7 +7,13 @@ import { TooltipAnchor, Button, NewChatIcon, useMediaQuery } from '@librechat/cl
 import { PermissionTypes, Permissions, QueryKeys } from 'librechat-data-provider';
 import type t from 'librechat-data-provider';
 import type { ContextType } from '~/common';
-import { useDocumentTitle, useHasAccess, useLocalize, useVerifiedFilter, TranslationKeys } from '~/hooks';
+import {
+  useDocumentTitle,
+  useHasAccess,
+  useLocalize,
+  useVerifiedFilter,
+  TranslationKeys,
+} from '~/hooks';
 import { useGetEndpointsQuery, useGetAgentCategoriesQuery } from '~/data-provider';
 import MarketplaceAdminSettings from './MarketplaceAdminSettings';
 import { SidePanelProvider, useChatContext } from '~/Providers';
@@ -310,7 +316,11 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                 <div className="container mx-auto max-w-4xl px-4">
                   {/* Search bar + verification filter */}
                   <div className="mx-auto flex max-w-2xl flex-wrap items-center gap-2 pb-6">
-                    <SearchBar value={searchQuery} onSearch={handleSearch} className="min-w-0 flex-1" />
+                    <SearchBar
+                      value={searchQuery}
+                      onSearch={handleSearch}
+                      className="min-w-0 flex-1"
+                    />
                     <VerificationFilterToggle
                       verifiedOnly={verifiedOnly}
                       onVerifiedFilter={handleVerifiedFilter}

@@ -164,7 +164,9 @@ async function deleteReview(agentId, reviewId) {
   if (!hasReview) {
     return null;
   }
-  const id = mongoose.Types.ObjectId.isValid(reviewId) ? new mongoose.Types.ObjectId(reviewId) : reviewId;
+  const id = mongoose.Types.ObjectId.isValid(reviewId)
+    ? new mongoose.Types.ObjectId(reviewId)
+    : reviewId;
   const result = await AgentReview.findOneAndUpdate(
     { agent_id: agentId },
     { $pull: { reviews: { _id: id } } },
