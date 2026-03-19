@@ -57,7 +57,12 @@ export default function ReviewAgentPanel() {
       verified: boolean;
       comment: string;
       navigateOnSuccess?: boolean;
-    }) => dataService.submitAgentReview({ agent_id: data.agent_id, verified: data.verified, comment: data.comment }),
+    }) =>
+      dataService.submitAgentReview({
+        agent_id: data.agent_id,
+        verified: data.verified,
+        comment: data.comment,
+      }),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['agentReview', agent_id] });
       queryClient.invalidateQueries({ queryKey: ['agentReviews', agent_id] });
@@ -153,7 +158,6 @@ export default function ReviewAgentPanel() {
 
   return (
     <div className="flex h-full flex-col gap-4 py-4">
-
       {/* Part 1: Comment history — visible to everyone (read-only for non-admins) */}
       <ReviewCommentHistory
         reviewHistory={reviewHistory}

@@ -65,9 +65,7 @@ export default function ReviewCommentForm({
 
   return (
     <>
-      <p className="text-sm text-text-secondary">
-        {localize('com_agents_review_description')}
-      </p>
+      <p className="text-sm text-text-secondary">{localize('com_agents_review_description')}</p>
       {commentInputBlock}
       <div className="flex items-center justify-between rounded-md border border-border-medium bg-surface-secondary p-3">
         <div className="flex flex-col gap-1">
