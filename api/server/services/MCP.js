@@ -31,7 +31,6 @@ const {
 const { findToken, createToken, updateToken } = require('~/models');
 const { getGraphApiToken } = require('./GraphTokenService');
 const { reinitMCPServer } = require('./Tools/mcp');
-const { getGraphApiToken } = require('./GraphTokenService');
 const { getAppConfig } = require('./Config');
 const { getLogStores } = require('~/cache');
 
@@ -592,7 +591,6 @@ function createToolInstance({
         user: config?.configurable?.user,
         requestBody: config?.configurable?.requestBody,
         customUserVars,
-        graphTokenResolver: getGraphApiToken,
         flowManager,
         tokenMethods: {
           findToken,
