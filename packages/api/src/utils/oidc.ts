@@ -1,10 +1,6 @@
 import { logger } from '@librechat/data-schemas';
 import type { IUser, OIDCTokens } from '@librechat/data-schemas';
 
-export const GRAPH_TOKEN_PLACEHOLDER = '{{LIBRECHAT_GRAPH_ACCESS_TOKEN}}';
-
-export const DEFAULT_GRAPH_SCOPES = 'https://graph.microsoft.com/.default';
-
 export interface OpenIDTokenInfo {
   accessToken?: string;
   idToken?: string;
