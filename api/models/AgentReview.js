@@ -118,6 +118,23 @@ async function getLatestReview(agentId) {
 }
 
 /**
+ * Get agent IDs that have verified=true in their latest review.
+ * Used for marketplace "verified only" filter.
+ * @returns {Promise<string[]>} Array of agent_id strings
+ */
+async function getVerifiedAgentIds() {
+  const docs = await AgentReview.aggregate([
+    {
+      $match: {
+        $expr: { $eq: [{ $arrayElemAt: ['$reviews.verified', -1] }, true] },
+      },
+    },
+    { $project: { agent_id: 1 } },
+  ]).exec();
+  return docs.map((d) => d.agent_id);
+}
+
+/**
  * Get all reviews for an agent
  * @param {string} agentId - The agent ID
  * @returns {Promise<Array>} Array of reviews
@@ -130,6 +147,32 @@ async function getAllReviews(agentId) {
   }
 
   return agentReview.reviews;
+}
+
+/**
+ * Delete a single review entry by its _id
+ * @param {string} agentId - The agent ID
+ * @param {string} reviewId - The review subdocument _id (string or ObjectId)
+ * @returns {Promise<Object|null>} The updated document or null if agent or review not found
+ */
+async function deleteReview(agentId, reviewId) {
+  const doc = await AgentReview.findOne({ agent_id: agentId }).lean();
+  if (!doc || !doc.reviews?.length) {
+    return null;
+  }
+  const hasReview = doc.reviews.some((r) => r._id?.toString() === reviewId);
+  if (!hasReview) {
+    return null;
+  }
+  const id = mongoose.Types.ObjectId.isValid(reviewId)
+    ? new mongoose.Types.ObjectId(reviewId)
+    : reviewId;
+  const result = await AgentReview.findOneAndUpdate(
+    { agent_id: agentId },
+    { $pull: { reviews: { _id: id } } },
+    { new: true },
+  ).lean();
+  return result;
 }
 
 /**
@@ -146,6 +189,8 @@ module.exports = {
   getAgentReview,
   addOrUpdateReview,
   getLatestReview,
+  getVerifiedAgentIds,
   getAllReviews,
+  deleteReview,
   deleteAgentReviews,
 };

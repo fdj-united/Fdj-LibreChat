@@ -7,7 +7,13 @@ import { TooltipAnchor, Button, NewChatIcon, useMediaQuery } from '@librechat/cl
 import { PermissionTypes, Permissions, QueryKeys } from 'librechat-data-provider';
 import type t from 'librechat-data-provider';
 import type { ContextType } from '~/common';
-import { useDocumentTitle, useHasAccess, useLocalize, TranslationKeys } from '~/hooks';
+import {
+  useDocumentTitle,
+  useHasAccess,
+  useLocalize,
+  useVerifiedFilter,
+  TranslationKeys,
+} from '~/hooks';
 import { useGetEndpointsQuery, useGetAgentCategoriesQuery } from '~/data-provider';
 import MarketplaceAdminSettings from './MarketplaceAdminSettings';
 import { SidePanelProvider, useChatContext } from '~/Providers';
@@ -16,6 +22,7 @@ import { OpenSidebar } from '~/components/Chat/Menus';
 import { cn, clearMessagesCache } from '~/utils';
 import CategoryTabs from './CategoryTabs';
 import SearchBar from './SearchBar';
+import VerificationFilterToggle from './VerificationFilterToggle';
 import AgentGrid from './AgentGrid';
 import store from '~/store';
 
@@ -44,6 +51,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
 
   // Get URL parameters
   const searchQuery = searchParams.get('q') || '';
+  const verifiedOnly = searchParams.get('verified') === '1';
 
   // Animation state
   type Direction = 'left' | 'right';
@@ -193,6 +201,8 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
     }
   };
 
+  const handleVerifiedFilter = useVerifiedFilter();
+
   /**
    * Handle new chat button click
    */
@@ -304,9 +314,17 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                 )}
               >
                 <div className="container mx-auto max-w-4xl px-4">
-                  {/* Search bar */}
-                  <div className="mx-auto flex max-w-2xl gap-2 pb-6">
-                    <SearchBar value={searchQuery} onSearch={handleSearch} />
+                  {/* Search bar + verification filter */}
+                  <div className="mx-auto flex max-w-2xl flex-wrap items-center gap-2 pb-6">
+                    <SearchBar
+                      value={searchQuery}
+                      onSearch={handleSearch}
+                      className="min-w-0 flex-1"
+                    />
+                    <VerificationFilterToggle
+                      verifiedOnly={verifiedOnly}
+                      onVerifiedFilter={handleVerifiedFilter}
+                    />
                     {/* TODO: Remove this once we have a better way to handle admin settings */}
                     {/* Admin Settings */}
                     <MarketplaceAdminSettings />
@@ -396,6 +414,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                       key={`grid-${displayCategory}`}
                       category={displayCategory}
                       searchQuery={searchQuery}
+                      verifiedOnly={verifiedOnly}
                       onSelectAgent={handleAgentSelect}
                       scrollElementRef={scrollContainerRef}
                     />
@@ -476,6 +495,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                         key={`grid-${nextCategory}`}
                         category={nextCategory}
                         searchQuery={searchQuery}
+                        verifiedOnly={verifiedOnly}
                         onSelectAgent={handleAgentSelect}
                         scrollElementRef={scrollContainerRef}
                       />

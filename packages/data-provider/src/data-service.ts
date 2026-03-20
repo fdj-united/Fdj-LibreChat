@@ -594,6 +594,23 @@ export const submitAgentReview = ({
   );
 };
 
+/**
+ * Delete a single review entry for an agent
+ */
+export const deleteAgentReview = ({
+  agent_id,
+  review_id,
+}: {
+  agent_id: string;
+  review_id: string;
+}): Promise<void> => {
+  return request.delete(
+    endpoints.agents({
+      path: `${agent_id}/reviews/${review_id}`,
+    }),
+  );
+};
+
 /* Marketplace */
 
 /**
@@ -613,6 +630,7 @@ export const getMarketplaceAgents = (params: {
   limit?: number;
   cursor?: string;
   promoted?: 0 | 1;
+  verified?: 0 | 1;
 }): Promise<a.AgentListResponse> => {
   return request.get(
     endpoints.agents({
