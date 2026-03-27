@@ -68,7 +68,7 @@ const AgentCategorySelector: React.FC<{ className?: string }> = ({ className }) 
     <Controller
       name="category"
       control={formContext.control}
-      defaultValue="general"
+      defaultValue="General productivity"
       render={({ field }) => {
         // Sync category if needed (without using useEffect in render)
         syncCategory(field);
