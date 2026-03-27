@@ -165,6 +165,9 @@
     "url": "https://github.com/LibreChat-AI/LibreChat/issues"
   },
   "homepage": "https://librechat.ai/",
+  "dependencies": {
+    "patch-package": "^8.0.1"
+  },
   "devDependencies": {
     "@antithesishq/bombadil": "0.6.1",
     "@axe-core/playwright": "^4.10.1",
@@ -193,7 +196,6 @@
     "jest": "^30.2.0",
     "lighthouse": "13.4.1",
     "lint-staged": "^15.4.3",
-    "patch-package": "^8.0.1",
     "prettier": "^3.5.0",
     "prettier-plugin-tailwindcss": "^0.6.11",
     "turbo": "^2.10.5",
