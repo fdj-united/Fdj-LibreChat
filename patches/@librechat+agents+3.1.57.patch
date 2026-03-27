@@ -1,0 +1,156 @@
+diff --git a/node_modules/@librechat/agents/dist/cjs/agents/AgentContext.cjs b/node_modules/@librechat/agents/dist/cjs/agents/AgentContext.cjs
+index e66e9d2..9186b44 100644
+--- a/node_modules/@librechat/agents/dist/cjs/agents/AgentContext.cjs
++++ b/node_modules/@librechat/agents/dist/cjs/agents/AgentContext.cjs
+@@ -311,6 +311,17 @@ class AgentContext {
+                 };
+             }
+         }
++        else if (this.provider === _enum.Providers.BEDROCK) {
++            const bedrockOptions = this.clientOptions;
++            if (bedrockOptions?.promptCache === true) {
++                finalInstructions = {
++                    content: [
++                        { type: 'text', text: instructionsString },
++                        { cachePoint: { type: 'default' } },
++                    ],
++                };
++            }
++        }
+         const systemMessage = new messages.SystemMessage(finalInstructions);
+         // Update token counts (subtract old, add new)
+         if (this.tokenCounter) {
+diff --git a/node_modules/@librechat/agents/dist/cjs/graphs/Graph.cjs b/node_modules/@librechat/agents/dist/cjs/graphs/Graph.cjs
+index 97f4a3d..139fecf 100644
+--- a/node_modules/@librechat/agents/dist/cjs/graphs/Graph.cjs
++++ b/node_modules/@librechat/agents/dist/cjs/graphs/Graph.cjs
+@@ -300,6 +300,17 @@ class StandardGraph extends Graph {
+                 ],
+             };
+         }
++        else if (finalInstructions != null &&
++            finalInstructions &&
++            provider === _enum.Providers.BEDROCK &&
++            clientOptions.promptCache === true) {
++            finalInstructions = {
++                content: [
++                    { type: 'text', text: instructions },
++                    { cachePoint: { type: 'default' } },
++                ],
++            };
++        }
+         if (finalInstructions != null && finalInstructions !== '') {
+             const systemMessage = new messages.SystemMessage(finalInstructions);
+             return runnables.RunnableLambda.from((messages) => {
+diff --git a/node_modules/@librechat/agents/dist/cjs/messages/cache.cjs b/node_modules/@librechat/agents/dist/cjs/messages/cache.cjs
+index 429ff58..bd18a43 100644
+--- a/node_modules/@librechat/agents/dist/cjs/messages/cache.cjs
++++ b/node_modules/@librechat/agents/dist/cjs/messages/cache.cjs
+@@ -237,16 +237,17 @@ function addBedrockCacheControl(messages) {
+     let messagesModified = 0;
+     for (let i = updatedMessages.length - 1; i >= 0; i--) {
+         const originalMessage = updatedMessages[i];
+-        const isToolMessage = 'getType' in originalMessage &&
++        const isUserMessage = ('getType' in originalMessage &&
+             typeof originalMessage.getType === 'function' &&
+-            originalMessage.getType() === 'tool';
++            originalMessage.getType() === 'human') ||
++            ('role' in originalMessage && originalMessage.role === 'user');
+         const content = originalMessage.content;
+         const hasArrayContent = Array.isArray(content);
+         const needsStripping = hasArrayContent &&
+             needsCacheStripping(content);
+         const isEmptyString = typeof content === 'string' && content === '';
+         const needsCacheAdd = messagesModified < 2 &&
+-            !isToolMessage &&
++            isUserMessage &&
+             !isEmptyString &&
+             (typeof content === 'string' || hasArrayContent);
+         if (!needsStripping && !needsCacheAdd) {
+@@ -268,7 +269,7 @@ function addBedrockCacheControl(messages) {
+         else {
+             workingContent = [];
+         }
+-        if (messagesModified >= 2 || isToolMessage || isEmptyString) {
++        if (messagesModified >= 2 || !isUserMessage || isEmptyString) {
+             updatedMessages[i] = cloneMessage(originalMessage, workingContent);
+             continue;
+         }
+diff --git a/node_modules/@librechat/agents/dist/esm/agents/AgentContext.mjs b/node_modules/@librechat/agents/dist/esm/agents/AgentContext.mjs
+index d93d451..e397499 100644
+--- a/node_modules/@librechat/agents/dist/esm/agents/AgentContext.mjs
++++ b/node_modules/@librechat/agents/dist/esm/agents/AgentContext.mjs
+@@ -309,6 +309,17 @@ class AgentContext {
+                 };
+             }
+         }
++        else if (this.provider === Providers.BEDROCK) {
++            const bedrockOptions = this.clientOptions;
++            if (bedrockOptions?.promptCache === true) {
++                finalInstructions = {
++                    content: [
++                        { type: 'text', text: instructionsString },
++                        { cachePoint: { type: 'default' } },
++                    ],
++                };
++            }
++        }
+         const systemMessage = new SystemMessage(finalInstructions);
+         // Update token counts (subtract old, add new)
+         if (this.tokenCounter) {
+diff --git a/node_modules/@librechat/agents/dist/esm/graphs/Graph.mjs b/node_modules/@librechat/agents/dist/esm/graphs/Graph.mjs
+index f05fc30..99ca52c 100644
+--- a/node_modules/@librechat/agents/dist/esm/graphs/Graph.mjs
++++ b/node_modules/@librechat/agents/dist/esm/graphs/Graph.mjs
+@@ -298,6 +298,17 @@ class StandardGraph extends Graph {
+                 ],
+             };
+         }
++        else if (finalInstructions != null &&
++            finalInstructions &&
++            provider === Providers.BEDROCK &&
++            clientOptions.promptCache === true) {
++            finalInstructions = {
++                content: [
++                    { type: 'text', text: instructions },
++                    { cachePoint: { type: 'default' } },
++                ],
++            };
++        }
+         if (finalInstructions != null && finalInstructions !== '') {
+             const systemMessage = new SystemMessage(finalInstructions);
+             return RunnableLambda.from((messages) => {
+diff --git a/node_modules/@librechat/agents/dist/esm/messages/cache.mjs b/node_modules/@librechat/agents/dist/esm/messages/cache.mjs
+index 65d18dd..797185c 100644
+--- a/node_modules/@librechat/agents/dist/esm/messages/cache.mjs
++++ b/node_modules/@librechat/agents/dist/esm/messages/cache.mjs
+@@ -235,16 +235,17 @@ function addBedrockCacheControl(messages) {
+     let messagesModified = 0;
+     for (let i = updatedMessages.length - 1; i >= 0; i--) {
+         const originalMessage = updatedMessages[i];
+-        const isToolMessage = 'getType' in originalMessage &&
++        const isUserMessage = ('getType' in originalMessage &&
+             typeof originalMessage.getType === 'function' &&
+-            originalMessage.getType() === 'tool';
++            originalMessage.getType() === 'human') ||
++            ('role' in originalMessage && originalMessage.role === 'user');
+         const content = originalMessage.content;
+         const hasArrayContent = Array.isArray(content);
+         const needsStripping = hasArrayContent &&
+             needsCacheStripping(content);
+         const isEmptyString = typeof content === 'string' && content === '';
+         const needsCacheAdd = messagesModified < 2 &&
+-            !isToolMessage &&
++            isUserMessage &&
+             !isEmptyString &&
+             (typeof content === 'string' || hasArrayContent);
+         if (!needsStripping && !needsCacheAdd) {
+@@ -266,7 +267,7 @@ function addBedrockCacheControl(messages) {
+         else {
+             workingContent = [];
+         }
+-        if (messagesModified >= 2 || isToolMessage || isEmptyString) {
++        if (messagesModified >= 2 || !isUserMessage || isEmptyString) {
+             updatedMessages[i] = cloneMessage(originalMessage, workingContent);
+             continue;
+         }
