@@ -92,6 +92,9 @@ const bedrockValues: Record<string, { prompt: number; completion: number }> = {
   'nova-pro': { prompt: 0.8, completion: 3.2 },
   'nova-premier': { prompt: 2.5, completion: 12.5 },
   'deepseek.r1': { prompt: 1.35, completion: 5.4 },
+  // Claude models on Bedrock cross-region inference (eu.* prefix — 10% surcharge over Anthropic direct)
+  'eu.anthropic.claude-sonnet-4-6': { prompt: 3.30, completion: 16.50 },
+  // Moonshot/Kimi models on Bedrock
   'moonshot.kimi': { prompt: 0.6, completion: 2.5 },
   'moonshot.kimi-k2': { prompt: 0.6, completion: 2.5 },
   'moonshot.kimi-k2.5': { prompt: 0.6, completion: 3.0 },
@@ -305,6 +308,7 @@ export const cacheTokenValues: Record<string, { write: number; read: number }> =
   'claude-sonnet-4': { write: 3.75, read: 0.3 },
   'claude-sonnet-4-5': { write: 3.75, read: 0.3 },
   'claude-sonnet-4-6': { write: 3.75, read: 0.3 },
+  'eu.anthropic.claude-sonnet-4-6': { write: 4.125, read: 0.33 },
   'claude-opus-4': { write: 18.75, read: 1.5 },
   'claude-opus-4-5': { write: 6.25, read: 0.5 },
   'claude-opus-4-6': { write: 6.25, read: 0.5 },
