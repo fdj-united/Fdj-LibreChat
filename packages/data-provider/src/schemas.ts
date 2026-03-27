@@ -394,7 +394,7 @@ export const defaultAgentFormValues = {
   code_environment_id: undefined as string | null | undefined,
   code_workspace_id: undefined as string | undefined,
   repositoryInstructions: undefined as 'prefer' | 'defer' | 'off' | undefined,
-  category: 'general',
+  category: 'General productivity',
   support_contact: {
     name: '',
     email: '',
