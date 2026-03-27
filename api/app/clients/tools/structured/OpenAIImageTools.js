@@ -11,8 +11,11 @@ const {
   extractBaseURL,
   getProxyDispatcher,
   applyAxiosProxyConfig,
+  getBalanceConfig,
+  getTransactionsConfig,
 } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
+const { spendTokens } = require('@librechat/data-schemas');
 const { getFiles } = require('~/models');
 
 const displayMessage =
@@ -46,6 +49,64 @@ function createAbortHandler() {
   return function () {
     logger.debug('[ImageGenOAI] Image generation aborted');
   };
+}
+
+/**
+ * Records token usage for balance/transaction tracking
+ * @param {Object} params
+ * @param {Object} params.usage - Usage object from OpenAI API response
+ * @param {ServerRequest} params.req - The request object
+ * @param {string} params.userId - The user ID
+ * @param {string} params.conversationId - The conversation ID
+ * @param {string} params.model - The model name
+ * @param {string} [params.messageId] - The message ID
+ * @param {string} params.context - The context label for the transaction
+ */
+async function recordTokenUsage({ usage, req, userId, conversationId, model, messageId, context }) {
+  if (!usage) {
+    logger.debug('[ImageGenOAI] No usage data available for balance tracking');
+    return;
+  }
+
+  const appConfig = req?.config;
+  const balance = getBalanceConfig(appConfig);
+  const transactions = getTransactionsConfig(appConfig);
+
+  if (!balance?.enabled && transactions?.enabled === false) {
+    return;
+  }
+
+  const promptTokens = usage.input_tokens ?? 0;
+  const completionTokens = usage.output_tokens ?? 0;
+
+  if (promptTokens === 0 && completionTokens === 0) {
+    logger.debug('[ImageGenOAI] No tokens to record');
+    return;
+  }
+
+  logger.debug('[ImageGenOAI] Recording token usage:', {
+    promptTokens,
+    completionTokens,
+    model,
+    conversationId,
+  });
+
+  try {
+    await spendTokens(
+      {
+        user: userId,
+        model,
+        messageId,
+        conversationId,
+        context,
+        balance,
+        transactions,
+      },
+      { promptTokens, completionTokens },
+    );
+  } catch (error) {
+    logger.error('[ImageGenOAI] Error recording token usage:', error);
+  }
 }
 
 /**
@@ -196,8 +257,6 @@ Error Message: ${error.message}`);
         );
       }
 
-      // For gpt-image-1, the response contains base64-encoded images
-      // TODO: handle cost in `resp.usage`
       const base64Image = resp.data[0].b64_json;
 
       if (!base64Image) {
@@ -205,6 +264,23 @@ Error Message: ${error.message}`);
           'No image data returned from OpenAI API. There may be a problem with the API or your configuration.',
         );
       }
+
+      const conversationId = runnableConfig?.configurable?.thread_id;
+      const messageId =
+        runnableConfig?.configurable?.run_id ??
+        runnableConfig?.configurable?.requestBody?.messageId;
+
+      recordTokenUsage({
+        usage: resp.usage,
+        req,
+        userId: req?.user?.id,
+        conversationId,
+        messageId,
+        model: imageModel,
+        context: 'image_generation',
+      }).catch((error) => {
+        logger.error('[ImageGenOAI] Failed to record token usage:', error);
+      });
 
       const content = [
         {
@@ -384,6 +460,23 @@ Error Message: ${error.message}`);
             },
           },
         ];
+
+        const conversationId = runnableConfig?.configurable?.thread_id;
+        const messageId =
+          runnableConfig?.configurable?.run_id ??
+          runnableConfig?.configurable?.requestBody?.messageId;
+
+        recordTokenUsage({
+          usage: response.data.usage,
+          req,
+          userId: req?.user?.id,
+          conversationId,
+          messageId,
+          model: imageModel,
+          context: 'image_generation',
+        }).catch((error) => {
+          logger.error('[ImageEditOAI] Failed to record token usage:', error);
+        });
 
         const file_ids = [v4()];
         const textResponse = [
