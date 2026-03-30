@@ -11,11 +11,13 @@ import {
   Clock,
 } from 'lucide-react';
 import {
+  OGDialog,
   FileUpload,
   TooltipAnchor,
   DropdownPopup,
   AttachmentIcon,
   SharePointIcon,
+  OGDialogTemplate,
   useToastContext,
 } from '@librechat/client';
 import {
@@ -39,10 +41,10 @@ import {
 import useSharePointFileHandling from '~/hooks/Files/useSharePointFileHandling';
 import { SharePointPickerDialog } from '~/components/SharePoint';
 import { useGetFiles, useGetStartupConfig } from '~/data-provider';
+import { useChatContext, useFileMapContext } from '~/Providers';
 import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
 import { cn } from '~/utils';
-import { useChatContext, useFileMapContext } from '~/Providers';
 
 type FileUploadType =
   | 'image'
@@ -79,9 +81,7 @@ const AttachFileMenu = ({
   );
   const [toolResource, setToolResource] = useState<EToolResources | undefined>();
   const { handleFileChange } = useFileHandling();
-  const { handleSharePointFiles, isProcessing, downloadProgress } = useSharePointFileHandling({
-    toolResource,
-  });
+  const { handleSharePointFiles, isProcessing, downloadProgress } = useSharePointFileHandling();
 
   const { agentsConfig } = useGetAgentsConfig();
   const { data: startupConfig } = useGetStartupConfig();
@@ -94,6 +94,8 @@ const AttachFileMenu = ({
   const { showToast } = useToastContext();
 
   const [isSharePointDialogOpen, setIsSharePointDialogOpen] = useState(false);
+  const [pendingSharePointFiles, setPendingSharePointFiles] = useState<any[]>([]);
+  const [showSharePointUploadModal, setShowSharePointUploadModal] = useState(false);
 
   /** TODO: Ephemeral Agent Capabilities
    * Allow defining agent capabilities on a per-endpoint basis
@@ -170,6 +172,70 @@ const AttachFileMenu = ({
     // Trigger file picker
     inputRef.current.click();
   }, [handleFileChange, setToolResource]);
+
+  const sharePointUploadOptions = useMemo(() => {
+    type SharePointUploadOption = {
+      label: string;
+      value: EToolResources | undefined;
+      icon: React.JSX.Element;
+    };
+    const options: SharePointUploadOption[] = [];
+
+    let currentProvider = provider || endpoint;
+    if (currentProvider?.toLowerCase() === Providers.OPENROUTER) {
+      currentProvider = Providers.OPENROUTER;
+    }
+
+    const isAzureWithResponsesApi =
+      currentProvider === EModelEndpoint.azureOpenAI && useResponsesApi;
+
+    if (
+      isDocumentSupportedProvider(endpointType) ||
+      isDocumentSupportedProvider(currentProvider) ||
+      isAzureWithResponsesApi
+    ) {
+      options.push({
+        label: localize('com_ui_upload_provider'),
+        value: undefined,
+        icon: <FileImageIcon className="icon-md" />,
+      });
+    }
+
+    if (capabilities.contextEnabled) {
+      options.push({
+        label: localize('com_ui_upload_file'),
+        value: EToolResources.context,
+        icon: <FileType2Icon className="icon-md" />,
+      });
+    }
+
+    if (capabilities.fileSearchEnabled && fileSearchAllowedByAgent) {
+      options.push({
+        label: localize('com_ui_upload_file_search'),
+        value: EToolResources.file_search,
+        icon: <FileSearch className="icon-md" />,
+      });
+    }
+
+    if (capabilities.codeEnabled && codeAllowedByAgent) {
+      options.push({
+        label: localize('com_ui_upload_code_files'),
+        value: EToolResources.execute_code,
+        icon: <TerminalSquareIcon className="icon-md" />,
+      });
+    }
+
+    return options;
+  }, [
+    localize,
+    provider,
+    endpoint,
+    endpointType,
+    capabilities,
+    useResponsesApi,
+    fileSearchAllowedByAgent,
+    codeAllowedByAgent,
+  ]);
 
   const dropdownItems = useMemo(() => {
     const handleAttachExistingFile = (file: TFile) => {
@@ -389,14 +455,25 @@ const AttachFileMenu = ({
       disabled={isUploadDisabled}
     />
   );
-  const handleSharePointFilesSelected = async (sharePointFiles: any[]) => {
-    try {
-      await handleSharePointFiles(sharePointFiles);
-      setIsSharePointDialogOpen(false);
-    } catch (error) {
-      console.error('SharePoint file processing error:', error);
-    }
+  const handleSharePointFilesSelected = (sharePointFiles: any[]) => {
+    setIsSharePointDialogOpen(false);
+    setPendingSharePointFiles(sharePointFiles);
+    setShowSharePointUploadModal(true);
   };
+
+  const handleSharePointUploadOptionSelect = useCallback(
+    async (selectedToolResource: EToolResources | undefined) => {
+      setShowSharePointUploadModal(false);
+      const filesToProcess = pendingSharePointFiles;
+      setPendingSharePointFiles([]);
+      try {
+        await handleSharePointFiles(filesToProcess, selectedToolResource);
+      } catch (error) {
+        console.error('SharePoint file processing error:', error);
+      }
+    },
+    [handleSharePointFiles, pendingSharePointFiles],
+  );
 
   return (
     <>
@@ -426,6 +503,34 @@ const AttachFileMenu = ({
         downloadProgress={downloadProgress}
         maxSelectionCount={endpointFileConfig?.fileLimit}
       />
+      <OGDialog
+        open={showSharePointUploadModal}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingSharePointFiles([]);
+          }
+          setShowSharePointUploadModal(open);
+        }}
+      >
+        <OGDialogTemplate
+          title={localize('com_ui_upload_type')}
+          className="w-11/12 sm:w-[440px] md:w-[400px] lg:w-[360px]"
+          main={
+            <div className="flex flex-col gap-2">
+              {sharePointUploadOptions.map((option, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleSharePointUploadOptionSelect(option.value)}
+                  className="flex items-center gap-2 rounded-lg p-2 hover:bg-surface-active-alt"
+                >
+                  {option.icon}
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </div>
+          }
+        />
+      </OGDialog>
     </>
   );
 };
