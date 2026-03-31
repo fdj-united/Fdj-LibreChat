@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { dataService, QueryKeys } from 'librechat-data-provider';
+import { dataService, QueryKeys, SystemRoles } from 'librechat-data-provider';
 import { Permissions, PermissionTypes } from 'librechat-data-provider';
 import { useToastContext, OGDialog, OGDialogTemplate } from '@librechat/client';
-import { useLocalize, useHasAccess } from '~/hooks';
+import { useLocalize, useHasAccess, useAuthContext } from '~/hooks';
 import { useChatContext } from '~/Providers';
 import type { ReviewCommentEntry } from './types';
 import ReviewCommentHistory from './ReviewCommentHistory';
@@ -17,11 +17,13 @@ export default function ReviewAgentPanel() {
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const agent_id = conversation?.agent_id;
+  const { user } = useAuthContext();
 
-  const canManageVerification = useHasAccess({
+  const hasMarketplaceAccess = useHasAccess({
     permissionType: PermissionTypes.MARKETPLACE,
     permission: Permissions.USE,
   });
+  const canManageVerification = user?.role === SystemRoles.ADMIN && hasMarketplaceAccess;
 
   const [comment, setComment] = useState<string>('');
   const [isVerified, setIsVerified] = useState<boolean>(false);
