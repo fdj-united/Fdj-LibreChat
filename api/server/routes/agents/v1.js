@@ -1,6 +1,6 @@
 const express = require('express');
 const { generateCheckAccess, checkAccess } = require('@librechat/api');
-const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
+const { PermissionTypes, Permissions, PermissionBits, SystemRoles } = require('librechat-data-provider');
 const { requireJwtAuth, configMiddleware, canAccessAgentResource } = require('~/server/middleware');
 const { getAgent } = require('~/models/Agent');
 const {
@@ -211,8 +211,23 @@ router.post('/:id/review', async (req, res) => {
     if (!existingAgent) {
       return res.status(404).json({ error: 'Agent not found' });
     }
+    const isAdmin = req.user?.role === SystemRoles.ADMIN;
+    const canUseMarketplace = await checkAccess({
+      req,
+      user: req.user,
+      permissionType: PermissionTypes.MARKETPLACE,
+      permissions: [Permissions.USE],
+      getRoleByName,
+    });
+    const canManageVerification = isAdmin && canUseMarketplace;
+    let verifiedStatus = !!verified;
+    if (!canManageVerification) {
+      const latestReview = await getLatestReview(id);
+      verifiedStatus = latestReview?.verified ?? false;
+    }
+
     const reviewData = {
-      verified: !!verified,
+      verified: verifiedStatus,
       comment: comment || '',
       reviewed_by: req.user.id,
       reviewed_by_name: req.user.name || req.user.username || req.user.email,
