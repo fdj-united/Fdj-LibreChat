@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { dataService, QueryKeys, SystemRoles } from 'librechat-data-provider';
+import { dataService, PermissionBits, SystemRoles } from 'librechat-data-provider';
 import { Permissions, PermissionTypes } from 'librechat-data-provider';
-import { useToastContext, OGDialog, OGDialogTemplate } from '@librechat/client';
+import { ControlCombobox, useToastContext, OGDialog, OGDialogTemplate } from '@librechat/client';
 import { useLocalize, useHasAccess, useAuthContext } from '~/hooks';
 import { useChatContext } from '~/Providers';
+import { useListAgentsQuery } from '~/data-provider';
 import type { ReviewCommentEntry } from './types';
 import ReviewCommentHistory from './ReviewCommentHistory';
 import ReviewCommentForm from './ReviewCommentForm';
@@ -30,26 +31,28 @@ export default function ReviewAgentPanel() {
   const [originalVerified, setOriginalVerified] = useState<boolean>(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState<boolean>(false);
   const [deleteTarget, setDeleteTarget] = useState<ReviewCommentEntry | null>(null);
+  const [selectedReviewAgentId, setSelectedReviewAgentId] = useState<string | undefined>(agent_id);
+  const { data: agents = null } = useListAgentsQuery(
+    { requiredPermission: PermissionBits.VIEW },
+    { select: (res) => res.data },
+  );
 
-  // Fetch the agent data
-  const { data: agent } = useQuery({
-    queryKey: [QueryKeys.agent, agent_id],
-    queryFn: () => dataService.getAgentById({ agent_id: agent_id as string }),
-    enabled: !!agent_id,
-  });
+  useEffect(() => {
+    setSelectedReviewAgentId(agent_id);
+  }, [agent_id]);
 
   // Fetch the latest review (for verification toggle state)
   const { data: latestReview } = useQuery({
-    queryKey: ['agentReview', agent_id],
-    queryFn: () => dataService.getAgentLatestReview(agent_id as string),
-    enabled: !!agent_id,
+    queryKey: ['agentReview', selectedReviewAgentId],
+    queryFn: () => dataService.getAgentLatestReview(selectedReviewAgentId as string),
+    enabled: !!selectedReviewAgentId,
   });
 
   // Full verification comment history (chronological)
   const { data: reviewHistory = [] } = useQuery({
-    queryKey: ['agentReviews', agent_id],
-    queryFn: () => dataService.getAgentReviews(agent_id as string),
-    enabled: !!agent_id,
+    queryKey: ['agentReviews', selectedReviewAgentId],
+    queryFn: () => dataService.getAgentReviews(selectedReviewAgentId as string),
+    enabled: !!selectedReviewAgentId,
   });
 
   // Mutation for submitting reviews (admins can set verification; others add comment with current state)
@@ -66,8 +69,8 @@ export default function ReviewAgentPanel() {
         comment: data.comment,
       }),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['agentReview', agent_id] });
-      queryClient.invalidateQueries({ queryKey: ['agentReviews', agent_id] });
+      queryClient.invalidateQueries({ queryKey: ['agentReview', variables.agent_id] });
+      queryClient.invalidateQueries({ queryKey: ['agentReviews', variables.agent_id] });
       setComment('');
       setIsVerified(false);
       showToast({ message: localize('com_agents_review_submit_success'), status: 'success' });
@@ -85,8 +88,10 @@ export default function ReviewAgentPanel() {
     mutationFn: ({ agent_id: id, review_id }: { agent_id: string; review_id: string }) =>
       dataService.deleteAgentReview({ agent_id: id, review_id }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agentReview', agent_id] });
-      queryClient.invalidateQueries({ queryKey: ['agentReviews', agent_id] });
+      if (selectedReviewAgentId) {
+        queryClient.invalidateQueries({ queryKey: ['agentReview', selectedReviewAgentId] });
+        queryClient.invalidateQueries({ queryKey: ['agentReviews', selectedReviewAgentId] });
+      }
       setDeleteTarget(null);
       showToast({ message: localize('com_agents_review_delete_success'), status: 'success' });
     },
@@ -106,7 +111,7 @@ export default function ReviewAgentPanel() {
   }, [latestReview]);
 
   const handleSubmitClick = () => {
-    if (!agent_id) {
+    if (!selectedReviewAgentId) {
       showToast({
         message: localize('com_agents_review_no_agent_selected'),
         status: 'error',
@@ -120,19 +125,19 @@ export default function ReviewAgentPanel() {
 
   const handleConfirmSubmit = () => {
     setShowConfirmDialog(false);
-    if (!agent_id) {
+    if (!selectedReviewAgentId) {
       return;
     }
     submitReviewMutation.mutate({
-      agent_id,
+      agent_id: selectedReviewAgentId,
       verified: isVerified,
       comment: comment.trim(),
-      navigateOnSuccess: true,
+      navigateOnSuccess: false,
     });
   };
 
   const handleAddCommentOnly = () => {
-    if (!agent_id) {
+    if (!selectedReviewAgentId) {
       showToast({ message: localize('com_agents_review_no_agent_selected'), status: 'error' });
       return;
     }
@@ -140,7 +145,7 @@ export default function ReviewAgentPanel() {
       return;
     }
     submitReviewMutation.mutate({
-      agent_id,
+      agent_id: selectedReviewAgentId,
       verified: latestReview?.verified ?? false,
       comment: comment.trim(),
       navigateOnSuccess: false,
@@ -148,83 +153,103 @@ export default function ReviewAgentPanel() {
   };
 
   const handleConfirmDelete = () => {
-    if (!agent_id || !deleteTarget?._id) {
+    if (!selectedReviewAgentId || !deleteTarget?._id) {
       return;
     }
-    deleteReviewMutation.mutate({ agent_id, review_id: deleteTarget._id });
+    deleteReviewMutation.mutate({ agent_id: selectedReviewAgentId, review_id: deleteTarget._id });
   };
 
-  if (!agent_id) {
-    return null;
-  }
-
   return (
-    <div className="flex h-full flex-col gap-4 py-4">
+    <div className="flex h-full flex-col gap-4 py-2 px-2">
       {/* Part 1: Comment history — visible to everyone (read-only for non-admins) */}
-      <ReviewCommentHistory
-        reviewHistory={reviewHistory}
-        canManageVerification={canManageVerification}
-        onDeleteRequest={setDeleteTarget}
-        isDeleting={isDeleting}
+      <ControlCombobox
+        containerClassName="px-0"
+        selectedValue={selectedReviewAgentId ?? ''}
+        displayValue={agents?.find((agent) => agent.id === selectedReviewAgentId)?.name ?? ''}
+        selectPlaceholder={localize('com_agents_review_agent_name_label')}
+        iconSide="right"
+        searchPlaceholder={localize('com_agents_search_name')}
+        setValue={setSelectedReviewAgentId}
+        items={
+          agents?.map((agent) => ({
+            label: agent.name ?? '',
+            value: agent.id ?? '',
+          })) ?? [{ label: 'Loading...', value: '' }]
+        }
+        className="z-50 flex h-[40px] w-full flex-none items-center justify-center truncate rounded-md bg-transparent font-bold"
+        ariaLabel={localize('com_agents_review_agent_name_label')}
+        isCollapsed={false}
+        showCarat={true}
       />
 
-      {/* Comment / verification form — add comment (non-admins) or full verification (admins) */}
-      <ReviewCommentForm
-        agentId={agent_id}
-        agentName={agent?.name ?? undefined}
-        comment={comment}
-        onCommentChange={setComment}
-        isVerified={isVerified}
-        onVerifiedChange={setIsVerified}
-        originalVerified={originalVerified}
-        isSubmitting={isSubmitting}
-        canManageVerification={canManageVerification}
-        onSubmitClick={handleSubmitClick}
-        onAddCommentClick={handleAddCommentOnly}
-        onViewMarketplace={() => navigate('/agents/all')}
-      />
+      {selectedReviewAgentId && (
+        <>
+          {/* Part 1: Comment history — visible to everyone (read-only for non-admins) */}
+          <ReviewCommentHistory
+            reviewHistory={reviewHistory}
+            canManageVerification={canManageVerification}
+            onDeleteRequest={setDeleteTarget}
+            isDeleting={isDeleting}
+          />
 
-      {/* Submit confirmation dialog */}
-      <OGDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-        <OGDialogTemplate
-          showCloseButton={false}
-          title={localize('com_agents_review_confirm_title')}
-          className="max-w-md"
-          main={
-            <p className="text-sm text-text-secondary">
-              {localize('com_agents_review_confirm_description')}
-            </p>
-          }
-          selection={{
-            selectHandler: handleConfirmSubmit,
-            selectText: isSubmitting
-              ? localize('com_agents_review_submitting')
-              : localize('com_agents_review_confirm_submit'),
-            isLoading: isSubmitting,
-          }}
-        />
-      </OGDialog>
+          {/* Comment / verification form — add comment (non-admins) or full verification (admins) */}
+          <ReviewCommentForm
+            agentId={selectedReviewAgentId}
+            comment={comment}
+            onCommentChange={setComment}
+            isVerified={isVerified}
+            onVerifiedChange={setIsVerified}
+            originalVerified={originalVerified}
+            isSubmitting={isSubmitting}
+            canManageVerification={canManageVerification}
+            onSubmitClick={handleSubmitClick}
+            onAddCommentClick={handleAddCommentOnly}
+            onViewMarketplace={() => navigate('/agents/all')}
+          />
 
-      {/* Delete comment confirmation dialog */}
-      <OGDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <OGDialogTemplate
-          showCloseButton={false}
-          title={localize('com_agents_review_delete_confirm_title')}
-          className="max-w-md"
-          main={
-            <p className="text-sm text-text-secondary">
-              {localize('com_agents_review_delete_confirm_description')}
-            </p>
-          }
-          selection={{
-            selectHandler: handleConfirmDelete,
-            selectClasses:
-              'bg-destructive text-white transition-all duration-200 hover:bg-destructive/80',
-            selectText: localize('com_agents_review_delete'),
-            isLoading: isDeleting,
-          }}
-        />
-      </OGDialog>
+          {/* Submit confirmation dialog */}
+          <OGDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+            <OGDialogTemplate
+              showCloseButton={false}
+              title={localize('com_agents_review_confirm_title')}
+              className="max-w-md"
+              main={
+                <p className="text-sm text-text-secondary">
+                  {localize('com_agents_review_confirm_description')}
+                </p>
+              }
+              selection={{
+                selectHandler: handleConfirmSubmit,
+                selectText: isSubmitting
+                  ? localize('com_agents_review_submitting')
+                  : localize('com_agents_review_confirm_submit'),
+                isLoading: isSubmitting,
+              }}
+            />
+          </OGDialog>
+
+          {/* Delete comment confirmation dialog */}
+          <OGDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+            <OGDialogTemplate
+              showCloseButton={false}
+              title={localize('com_agents_review_delete_confirm_title')}
+              className="max-w-md"
+              main={
+                <p className="text-sm text-text-secondary">
+                  {localize('com_agents_review_delete_confirm_description')}
+                </p>
+              }
+              selection={{
+                selectHandler: handleConfirmDelete,
+                selectClasses:
+                  'bg-destructive text-white transition-all duration-200 hover:bg-destructive/80',
+                selectText: localize('com_agents_review_delete'),
+                isLoading: isDeleting,
+              }}
+            />
+          </OGDialog>
+        </>
+      )}
     </div>
   );
 }
