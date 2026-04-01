@@ -31,6 +31,13 @@ const checkAgentCreate = generateCheckAccess({
 
 router.use(requireJwtAuth);
 
+const requireMarketplaceVerification = (req, res, next) => {
+  if (req.config?.interfaceConfig?.marketplace?.verification === false) {
+    return res.status(403).json({ error: 'Marketplace agent verification is disabled' });
+  }
+  next();
+};
+
 /**
  * Agent actions route.
  * @route GET|POST /agents/actions
@@ -161,7 +168,7 @@ router.post(
  * @param {string} req.params.id - Agent identifier.
  * @returns {Object} 200 - Latest review or null - application/json
  */
-router.get('/:id/review', async (req, res) => {
+router.get('/:id/review', configMiddleware, requireMarketplaceVerification, async (req, res) => {
   try {
     const { id } = req.params;
     const existingAgent = await getAgent({ id });
@@ -181,7 +188,7 @@ router.get('/:id/review', async (req, res) => {
  * @param {string} req.params.id - Agent identifier.
  * @returns {Array} 200 - Array of reviews - application/json
  */
-router.get('/:id/reviews', async (req, res) => {
+router.get('/:id/reviews', configMiddleware, requireMarketplaceVerification, async (req, res) => {
   try {
     const { id } = req.params;
     const existingAgent = await getAgent({ id });
@@ -203,7 +210,7 @@ router.get('/:id/reviews', async (req, res) => {
  * @param {string} req.body.comment - Review comment.
  * @returns {Object} 200 - The new review - application/json
  */
-router.post('/:id/review', async (req, res) => {
+router.post('/:id/review', configMiddleware, requireMarketplaceVerification, async (req, res) => {
   try {
     const { id } = req.params;
     const { verified, comment } = req.body;
@@ -248,7 +255,11 @@ router.post('/:id/review', async (req, res) => {
  * @param {string} req.params.reviewId - Review subdocument _id.
  * @returns {void} 204 - No content
  */
-router.delete('/:id/reviews/:reviewId', async (req, res) => {
+router.delete(
+  '/:id/reviews/:reviewId',
+  configMiddleware,
+  requireMarketplaceVerification,
+  async (req, res) => {
   try {
     const { id, reviewId } = req.params;
     const existingAgent = await getAgent({ id });
@@ -284,7 +295,8 @@ router.delete('/:id/reviews/:reviewId', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
+  },
+);
 
 /**
  * Returns a list of agents.
