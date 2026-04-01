@@ -184,7 +184,11 @@ export default function useSideNavLinks({
       });
     }
 
-    if (isAgentsEndpoint(endpoint) && hasAccessToAgents) {
+    if (
+      isAgentsEndpoint(endpoint) &&
+      hasAccessToAgents &&
+      interfaceConfig?.marketplace?.verification !== false
+    ) {
       links.push({
         title: 'com_agents_review_section' as any,
         label: '',

@@ -14,7 +14,7 @@ import {
   useVerifiedFilter,
   TranslationKeys,
 } from '~/hooks';
-import { useGetEndpointsQuery, useGetAgentCategoriesQuery } from '~/data-provider';
+import { useGetEndpointsQuery, useGetAgentCategoriesQuery, useGetStartupConfig } from '~/data-provider';
 import MarketplaceAdminSettings from './MarketplaceAdminSettings';
 import { SidePanelProvider, useChatContext } from '~/Providers';
 import { SidePanelGroup } from '~/components/SidePanel';
@@ -52,6 +52,9 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
   // Get URL parameters
   const searchQuery = searchParams.get('q') || '';
   const verifiedOnly = searchParams.get('verified') === '1';
+  const { data: startupConfig } = useGetStartupConfig();
+  const verificationEnabled = startupConfig?.interface?.marketplace?.verification !== false;
+  const effectiveVerifiedOnly = verificationEnabled && verifiedOnly;
 
   // Animation state
   type Direction = 'left' | 'right';
@@ -321,10 +324,12 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                       onSearch={handleSearch}
                       className="min-w-0 flex-1"
                     />
-                    <VerificationFilterToggle
-                      verifiedOnly={verifiedOnly}
-                      onVerifiedFilter={handleVerifiedFilter}
-                    />
+                    {verificationEnabled && (
+                      <VerificationFilterToggle
+                        verifiedOnly={verifiedOnly}
+                        onVerifiedFilter={handleVerifiedFilter}
+                      />
+                    )}
                     {/* TODO: Remove this once we have a better way to handle admin settings */}
                     {/* Admin Settings */}
                     <MarketplaceAdminSettings />
@@ -414,7 +419,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                       key={`grid-${displayCategory}`}
                       category={displayCategory}
                       searchQuery={searchQuery}
-                      verifiedOnly={verifiedOnly}
+                      verifiedOnly={effectiveVerifiedOnly}
                       onSelectAgent={handleAgentSelect}
                       scrollElementRef={scrollContainerRef}
                     />
@@ -495,7 +500,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                         key={`grid-${nextCategory}`}
                         category={nextCategory}
                         searchQuery={searchQuery}
-                        verifiedOnly={verifiedOnly}
+                        verifiedOnly={effectiveVerifiedOnly}
                         onSelectAgent={handleAgentSelect}
                         scrollElementRef={scrollContainerRef}
                       />
