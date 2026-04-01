@@ -246,6 +246,8 @@ interface:
     roles: true
   marketplace:
     use: false
+    # Toggle Agent Verification features (marketplace verified filter, verified badges, and review section)
+    verification: false
   fileCitations: true
   # Show the thumbs up/thumbs down feedback buttons on responses (default: true)
   feedback: true

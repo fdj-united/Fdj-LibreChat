@@ -6,6 +6,7 @@ import { Label, OGDialog, OGDialogTrigger } from '@librechat/client';
 import type t from 'librechat-data-provider';
 import Description, { getPlainDescription } from '~/components/ui/Description';
 import { useLocalize, TranslationKeys, useAgentCategories } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import AgentDetailContent from './AgentDetailContent';
 import { cn, renderAgentAvatar } from '~/utils';
 import AgentContact from './AgentContact';
@@ -24,6 +25,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
   const { categories } = useAgentCategories();
   const [isOpen, setIsOpen] = useState(false);
   const description = useMemo(() => getPlainDescription(agent.description), [agent.description]);
+  const { data: startupConfig } = useGetStartupConfig();
+  const verificationEnabled = startupConfig?.interface?.marketplace?.verification !== false;
 
   const categoryLabel = useMemo(() => {
     if (!agent.category) return '';
@@ -42,11 +45,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
   const { data: latestReview } = useQuery({
     queryKey: ['agentReview', agent.id],
     queryFn: () => dataService.getAgentLatestReview(agent.id),
-    enabled: !!agent.id,
+    enabled: verificationEnabled && !!agent.id,
     staleTime: 5 * 60 * 1000,
   });
 
-  const isVerified = latestReview?.verified === true;
+  const isVerified = verificationEnabled && latestReview?.verified === true;
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
     if (open && onSelect) {
