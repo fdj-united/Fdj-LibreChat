@@ -1218,6 +1218,7 @@ export const interfaceSchema = z
     marketplace: z
       .object({
         use: z.boolean().optional(),
+        verification: z.boolean().optional(),
       })
       .optional(),
     fileSearch: z.boolean().optional(),
@@ -1289,6 +1290,7 @@ export const interfaceSchema = z
     },
     marketplace: {
       use: false,
+      verification: true,
     },
     mcpServers: {
       use: true,

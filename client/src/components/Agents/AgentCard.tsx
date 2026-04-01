@@ -5,6 +5,7 @@ import { dataService } from 'librechat-data-provider';
 import type t from 'librechat-data-provider';
 import { BadgeCheck } from 'lucide-react';
 import { useLocalize, TranslationKeys, useAgentCategories } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import { cn, renderAgentAvatar, getContactDisplayName } from '~/utils';
 import AgentDetailContent from './AgentDetailContent';
 
@@ -21,6 +22,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
   const localize = useLocalize();
   const { categories } = useAgentCategories();
   const [isOpen, setIsOpen] = useState(false);
+  const { data: startupConfig } = useGetStartupConfig();
+  const verificationEnabled = startupConfig?.interface?.marketplace?.verification !== false;
 
   const categoryLabel = useMemo(() => {
     if (!agent.category) return '';
@@ -42,12 +45,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onSelect, className = '' }
   const { data: latestReview } = useQuery({
     queryKey: ['agentReview', agent.id],
     queryFn: () => dataService.getAgentLatestReview(agent.id),
-    enabled: !!agent.id,
+    enabled: verificationEnabled && !!agent.id,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes to reduce API calls
   });
 
-  const isVerified = latestReview?.verified === true;
-  console.log('latestReview', latestReview);
+  const isVerified = verificationEnabled && latestReview?.verified === true;
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
     if (open && onSelect) {

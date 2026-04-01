@@ -3,6 +3,7 @@ import { dataService } from 'librechat-data-provider';
 import { TooltipAnchor } from '@librechat/client';
 import { BadgeCheck, CircleAlert } from 'lucide-react';
 import { useLocalize } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import { useChatContext } from '~/Providers';
 import type { ReviewVerificationIconProps } from './types';
 
@@ -12,12 +13,18 @@ export default function ReviewVerificationIcon({
 }: ReviewVerificationIconProps = {}) {
   const localize = useLocalize();
   const agent_id = useChatContext().conversation?.agent_id;
+  const { data: startupConfig } = useGetStartupConfig();
+  const verificationEnabled = startupConfig?.interface?.marketplace?.verification !== false;
 
   const { data: latestReview } = useQuery({
     queryKey: ['agentReview', agent_id],
     queryFn: () => dataService.getAgentLatestReview(agent_id as string),
-    enabled: verifiedProp === undefined && !!agent_id,
+    enabled: verificationEnabled && verifiedProp === undefined && !!agent_id,
   });
+
+  if (!verificationEnabled) {
+    return null;
+  }
 
   const verified = verifiedProp ?? latestReview?.verified === true;
   const showIcon = verifiedProp !== undefined || (!!agent_id && latestReview !== undefined);

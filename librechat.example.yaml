@@ -168,6 +168,8 @@ interface:
     roles: true
   marketplace:
     use: false
+    # Toggle Agent Verification features (marketplace verified filter, verified badges, and review section)
+    verification: false
   fileCitations: true
   # Tools pinned to the prompt bar by default for all users.
   # Only seeds the initial state — once a user pins/unpins a tool, their choice is kept.
