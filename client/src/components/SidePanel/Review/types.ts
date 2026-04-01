@@ -30,7 +30,6 @@ export interface ReviewVerificationIconProps {
 
 export interface ReviewCommentFormProps {
   agentId: string | undefined;
-  agentName?: string;
   comment: string;
   onCommentChange: (value: string) => void;
   isVerified: boolean;
