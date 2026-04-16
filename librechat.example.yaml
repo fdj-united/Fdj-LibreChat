@@ -103,6 +103,8 @@ interface:
     roles: true
   marketplace:
     use: false
+    # Toggle Agent Verification features (marketplace verified filter, verified badges, and review section)
+    verification: false
   fileCitations: true
   # Remote Agents configuration
   # Controls user permissions for remote agents with external API support
