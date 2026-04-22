@@ -60,6 +60,7 @@ export enum QueryKeys {
   banner = 'banner',
   /* Memories */
   memories = 'memories',
+  notifications = 'notifications',
   principalSearch = 'principalSearch',
   accessRoles = 'accessRoles',
   resourcePermissions = 'resourcePermissions',
@@ -122,6 +123,10 @@ export enum MutationKeys {
   updateProject = 'updateProject',
   deleteProject = 'deleteProject',
   assignConversationToProject = 'assignConversationToProject',
+  createNotification = 'createNotification',
+  markNotificationRead = 'markNotificationRead',
+  markAllNotificationsRead = 'markAllNotificationsRead',
+  deleteNotification = 'deleteNotification',
   /* Skill mutations from the original UI PR — tree/node operations are
    * phase 2 and currently stubbed in the data-service layer. */
   createSkillNode = 'createSkillNode',
