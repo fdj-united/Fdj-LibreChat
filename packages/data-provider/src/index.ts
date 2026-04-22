@@ -24,6 +24,8 @@ export * from './models';
 export * from './families';
 /* mcp */
 export * from './mcp';
+/* notifications */
+export * from './notifications';
 /* RBAC */
 export * from './permissions';
 export * from './roles';

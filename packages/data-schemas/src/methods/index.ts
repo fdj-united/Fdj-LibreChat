@@ -25,6 +25,7 @@ import {
   MAX_TOOL_FAVORITES,
   type ToolFavoriteMethods,
 } from './favorite';
+import { createNotificationMethods, type NotificationMethods } from './notification';
 /* Agent Categories */
 import { createAgentCategoryMethods, type AgentCategoryMethods } from './agentCategory';
 /* Agent API Keys */
@@ -235,6 +236,7 @@ export type AllMethods = UserMethods &
   FileMethods &
   MemoryMethods &
   ToolFavoriteMethods &
+  NotificationMethods &
   AgentCategoryMethods &
   AgentApiKeyMethods &
   MCPServerMethods &
@@ -465,6 +467,7 @@ export function createMethods(
     ...createFileMethods(mongoose),
     ...createMemoryMethods(mongoose),
     ...createToolFavoriteMethods(mongoose),
+    ...createNotificationMethods(mongoose),
     ...createAgentCategoryMethods(mongoose),
     ...createAgentApiKeyMethods(mongoose),
     ...createMCPServerMethods(mongoose),
@@ -522,6 +525,7 @@ export type {
   FileOwnerScope,
   MemoryMethods,
   ToolFavoriteMethods,
+  NotificationMethods,
   AgentCategoryMethods,
   AgentApiKeyMethods,
   MCPServerMethods,
