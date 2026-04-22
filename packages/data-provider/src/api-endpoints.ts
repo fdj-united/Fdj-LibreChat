@@ -584,6 +584,27 @@ export const memoryById = (id: string, agentId?: string) =>
   `${memories()}/id/${encodeURIComponent(id)}${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''}`;
 export const memoryPreferences = () => `${memories()}/preferences`;
 
+/* Notifications */
+export const notifications = (params?: q.NotificationsListParams) => {
+  const unreadOnly =
+    typeof params?.unreadOnly === 'boolean' ? String(params.unreadOnly) : undefined;
+  const query = params
+    ? buildQuery({
+        cursor: params.cursor,
+        limit: params.limit,
+        unreadOnly,
+      })
+    : '';
+  return `${BASE_URL}/api/notifications${query}`;
+};
+
+export const notification = (id: string) =>
+  `${BASE_URL}/api/notifications/${encodeURIComponent(id)}`;
+
+export const notificationMarkRead = (id: string) => `${notification(id)}/read`;
+
+export const notificationsReadAll = () => `${BASE_URL}/api/notifications/read-all`;
+
 export const searchPrincipals = (params: q.PrincipalSearchParams) => {
   const { q: query, limit, types } = params;
   let url = `${BASE_URL}/api/permissions/search-principals?q=${encodeURIComponent(query)}`;
