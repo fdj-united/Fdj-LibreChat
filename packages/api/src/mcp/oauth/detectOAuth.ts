@@ -93,10 +93,24 @@ async function check401WithMethod(
       signal: AbortSignal.timeout(mcpConfig.OAUTH_DETECTION_TIMEOUT),
     };
 
-    // POST requests need headers and body for MCP servers
+    // POST requests need headers and body for MCP servers.
+    // Use a valid JSON-RPC initialize request so MCP gateways/proxies
+    // forward it to the upstream server instead of rejecting it as malformed.
     if (method === 'POST') {
-      fetchOptions.headers = { 'Content-Type': 'application/json' };
-      fetchOptions.body = JSON.stringify({});
+      fetchOptions.headers = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      };
+      fetchOptions.body = JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'oauth-probe', version: '0.0.1' },
+        },
+        id: 0,
+      });
     }
 
     const response = await fetch(serverUrl, fetchOptions);
@@ -136,6 +150,17 @@ async function check401WithMethod(
       return {
         requiresOAuth: true,
         method: '401-challenge-metadata',
+        metadata: null,
+      };
+    }
+
+    // Some servers (e.g. Atlassian MCP behind a gateway) return 401 with a
+    // JSON error body but no WWW-Authenticate header. Honour the
+    // OAUTH_ON_AUTH_ERROR flag so a bare 401 still triggers the OAuth flow.
+    if (mcpConfig.OAUTH_ON_AUTH_ERROR) {
+      return {
+        requiresOAuth: true,
+        method: 'no-metadata-found',
         metadata: null,
       };
     }
