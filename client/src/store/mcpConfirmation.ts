@@ -30,14 +30,28 @@ export interface MCPPendingConfirmation {
    * https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation
    */
   presentation?: MCPConfirmationPresentation;
+  /**
+   * Client-computed epoch-ms deadline, set on SSE arrival. Used by the dialog
+   * so an entry queued for N seconds before becoming the head still has the
+   * correct remaining time when it surfaces. Replaces the previous in-dialog
+   * `deadlineRef` mechanism.
+   */
+  deadline: number;
 }
 
 /**
- * Pending MCP tool-call confirmation that requires user review. The backend
- * suspends the agent loop until the user accepts or cancels via
- * POST /api/mcp/confirm/:confirmationId. While set, the modal is shown.
+ * FIFO queue of pending MCP tool-call confirmations. The dialog renders the
+ * head; on resolve (accept / cancel / auto-cancel) the head is popped and the
+ * next item (if any) becomes visible. Each entry carries its own deadline so
+ * popping doesn't reset the countdown for items that were queued earlier.
+ *
+ * Why an array (not a single value): the LLM may issue multiple tool calls
+ * in parallel, each producing its own confirmation envelope. The previous
+ * single-slot atom silently overwrote the first when the second SSE arrived,
+ * leaving one confirmation invisible and the agent loop stuck on its
+ * `awaitConfirmationDecision` until the 120s server-side TTL.
  */
-export const pendingMCPConfirmationAtom = atom<MCPPendingConfirmation | null>({
-  key: 'pendingMCPConfirmation',
-  default: null,
+export const pendingMCPConfirmationsAtom = atom<MCPPendingConfirmation[]>({
+  key: 'pendingMCPConfirmations',
+  default: [],
 });
