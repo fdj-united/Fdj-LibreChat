@@ -24,7 +24,7 @@ import { clearComposerDrafts, applyPendingAction, findPendingActionMessageIndex 
 import { pendingApprovalActionFamily } from '~/components/Chat/approval/state';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { startedAsNewConversation } from './useEventHandlers';
-import store, { pendingMCPConfirmationAtom } from '~/store';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import useUsageHandler from './useUsageHandler';
@@ -47,7 +47,7 @@ export default function useSSE(
   const [completed, setCompleted] = useState(new Set());
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
-  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const { setMessages, getMessages, setConversation, setIsSubmitting, newConversation } =
     chatHelpers;
@@ -152,7 +152,17 @@ export default function useSSE(
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.event === 'mcp_confirmation_required') {
-        setPendingMCPConfirmation(data.data);
+        setPendingMCPConfirmations((prev) =>
+          prev.some((p) => p.confirmationId === data.data.confirmationId)
+            ? prev
+            : [
+                ...prev,
+                {
+                  ...data.data,
+                  deadline: Date.now() + data.data.expiresInSeconds * 1000,
+                },
+              ],
+        );
       } else if (data.event === 'title') {
         titleHandler(data);
       } else if (data.event === UsageEvents.ON_CONTEXT_USAGE) {
