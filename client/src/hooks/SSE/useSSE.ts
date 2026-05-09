@@ -24,10 +24,10 @@ import { clearComposerDrafts, applyPendingAction, findPendingActionMessageIndex 
 import { pendingApprovalActionFamily } from '~/components/Chat/approval/state';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { startedAsNewConversation } from './useEventHandlers';
+import store, { pendingMCPConfirmationAtom } from '~/store';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import useUsageHandler from './useUsageHandler';
-import store from '~/store';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -47,6 +47,7 @@ export default function useSSE(
   const [completed, setCompleted] = useState(new Set());
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
+  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
 
   const { setMessages, getMessages, setConversation, setIsSubmitting, newConversation } =
     chatHelpers;
@@ -150,6 +151,8 @@ export default function useSSE(
         };
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
+      } else if (data.event === 'mcp_confirmation_required') {
+        setPendingMCPConfirmation(data.data);
       } else if (data.event === 'title') {
         titleHandler(data);
       } else if (data.event === UsageEvents.ON_CONTEXT_USAGE) {

@@ -14,6 +14,7 @@ import text from './text';
 import misc from './misc';
 export * from './agents';
 export * from './mcp';
+export * from './mcpConfirmation';
 export * from './favorites';
 export * from './sandbox';
 export * from './ptc';
