@@ -41,14 +41,8 @@ describe('enqueueMCPConfirmation', () => {
   });
 
   test('dedups by confirmationId — returns SAME reference on hit', () => {
-    const seeded = enqueueMCPConfirmation(
-      [],
-      makeIncoming({ confirmationId: 'cid-A' }),
-    );
-    const result = enqueueMCPConfirmation(
-      seeded,
-      makeIncoming({ confirmationId: 'cid-A' }),
-    );
+    const seeded = enqueueMCPConfirmation([], makeIncoming({ confirmationId: 'cid-A' }));
+    const result = enqueueMCPConfirmation(seeded, makeIncoming({ confirmationId: 'cid-A' }));
     // Reference identity is the contract — Recoil/React skip re-render on Object.is.
     expect(result).toBe(seeded);
   });
