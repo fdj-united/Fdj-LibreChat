@@ -315,7 +315,9 @@ export default function useResumableSSE(
                   // in flight, so re-surface the modal from the replayed event.
                   // Helper dedups by confirmationId — replay during an active
                   // confirmation is a no-op.
-                  setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, pendingEvent.data));
+                  setPendingMCPConfirmations((prev) =>
+                    enqueueMCPConfirmation(prev, pendingEvent.data),
+                  );
                 } else if (pendingEvent.event != null) {
                   stepHandler(pendingEvent, submission);
                 } else if (pendingEvent.type != null) {
