@@ -18,6 +18,7 @@ import ConversationStarters from './Input/ConversationStarters';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import ProjectLandingChip from './ProjectLandingChip';
 import MessagesView from './Messages/MessagesView';
+import MCPConfirmationDialog from '~/components/MCP/MCPConfirmationDialog';
 import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
 import Landing from './Landing';
@@ -128,6 +129,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
               </>
             </div>
           </Presentation>
+          <MCPConfirmationDialog />
         </AddedChatContext.Provider>
       </ChatContext.Provider>
     </ChatFormProvider>

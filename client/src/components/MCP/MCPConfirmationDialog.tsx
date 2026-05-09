@@ -1,0 +1,313 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { useRecoilState } from 'recoil';
+import {
+  Button,
+  OGDialog,
+  OGDialogContent,
+  OGDialogFooter,
+  OGDialogHeader,
+  OGDialogTitle,
+} from '@librechat/client';
+import { useAuthContext } from '~/hooks/AuthContext';
+import {
+  pendingMCPConfirmationAtom,
+  type MCPConfirmationPresentation,
+  type PresentationField,
+} from '~/store/mcpConfirmation';
+
+type Decision = 'accept' | 'cancel';
+
+type ParsedPreview =
+  | { type: 'parsed'; args: Array<{ key: string; value: unknown }> }
+  | { type: 'raw'; text: string };
+
+/**
+ * The gateway emits previews in the shape:
+ *
+ *   Tool: send-chat-message
+ *     chatId: "19:..."
+ *     body: {"content":"hello"}
+ *
+ * Each arg line is two-space-indented `<key>: <jsonValue>`. We split on
+ * newlines, drop the `Tool:` line (the tool name already lives in the title),
+ * and JSON-parse each value so the UI can pretty-print objects instead of
+ * showing them as one-line stringified blobs. If anything looks off we fall
+ * back to the raw preview text rather than dropping information.
+ */
+function parsePreview(preview: string): ParsedPreview {
+  const lines = preview.split('\n');
+  if (lines.length === 0 || !/^\s*Tool:/.test(lines[0])) {
+    return { type: 'raw', text: preview };
+  }
+  const args: Array<{ key: string; value: unknown }> = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const match = line.match(/^\s+([^:]+):\s*(.*)$/);
+    if (!match) return { type: 'raw', text: preview };
+    const key = match[1].trim();
+    const rawValue = match[2];
+    let value: unknown;
+    try {
+      value = JSON.parse(rawValue);
+    } catch {
+      value = rawValue;
+    }
+    args.push({ key, value });
+  }
+  return { type: 'parsed', args };
+}
+
+function isComplexValue(v: unknown): boolean {
+  return v !== null && typeof v === 'object';
+}
+
+function formatValue(v: unknown): string {
+  if (typeof v === 'string') return v;
+  return JSON.stringify(v, null, 2);
+}
+
+/**
+ * Render a single presentation field. The gateway's `format` hint drives
+ * styling: free `text` is rendered relaxed/wrappable, `code` and identifiers
+ * use mono inline, `json` and `markdown` get a fenced block. The hint is
+ * advisory — we still defensively `<pre>`-wrap any object value regardless of
+ * format since rendering an object inline would just print [object Object].
+ */
+function PresentationFieldRow({ field }: { field: PresentationField }) {
+  const { label, value, format } = field;
+  const complex = isComplexValue(value);
+  const useBlock = complex || format === 'json' || format === 'markdown';
+
+  return (
+    <div className="px-3 py-2">
+      <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+        {label}
+      </dt>
+      <dd className="mt-1">
+        {useBlock ? (
+          <pre className="overflow-auto whitespace-pre-wrap break-all rounded bg-surface-primary p-2 font-mono text-xs text-text-primary">
+            {formatValue(value)}
+          </pre>
+        ) : format === 'code' ? (
+          <code className="block break-all font-mono text-xs text-text-primary">
+            {formatValue(value)}
+          </code>
+        ) : (
+          <span className="block break-words text-sm text-text-primary">
+            {formatValue(value)}
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * Render a structured presentation. Primary fields are always visible;
+ * any `detail` fields collapse under a "Show details" toggle so the modal
+ * surfaces the at-a-glance summary first.
+ */
+function PresentationView({
+  presentation,
+}: {
+  presentation: MCPConfirmationPresentation;
+}) {
+  const [showDetails, setShowDetails] = React.useState(false);
+  const primary = presentation.fields.filter((f) => f.importance !== 'detail');
+  const details = presentation.fields.filter((f) => f.importance === 'detail');
+
+  return (
+    <div>
+      {presentation.summary && (
+        <p className="mb-3 text-sm text-text-primary">{presentation.summary}</p>
+      )}
+      <dl className="overflow-hidden rounded-md border border-border-medium bg-surface-secondary divide-y divide-border-medium">
+        {primary.map((f, i) => (
+          <PresentationFieldRow key={`p-${i}`} field={f} />
+        ))}
+        {showDetails &&
+          details.map((f, i) => <PresentationFieldRow key={`d-${i}`} field={f} />)}
+      </dl>
+      {details.length > 0 && (
+        <button
+          type="button"
+          className="mt-2 text-xs text-text-secondary underline hover:text-text-primary"
+          onClick={() => setShowDetails((v) => !v)}
+        >
+          {showDetails ? 'Hide details' : `Show ${details.length} more detail${details.length === 1 ? '' : 's'}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+async function postDecision(
+  confirmationId: string,
+  decision: Decision,
+  token: string | null | undefined,
+): Promise<void> {
+  await fetch(`/api/mcp/confirm/${encodeURIComponent(confirmationId)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ decision }),
+  });
+}
+
+export default function MCPConfirmationDialog() {
+  const [pending, setPending] = useRecoilState(pendingMCPConfirmationAtom);
+  const { token } = useAuthContext();
+  const [submitting, setSubmitting] = useState(false);
+  const [remaining, setRemaining] = useState<number>(0);
+
+  // Compute the deadline from `expiresInSeconds` on receipt rather than trusting
+  // `expiresAt` from the server payload, which is a server-side `Date.now()` and
+  // can be off by clock skew. We pin the deadline once per pending entry.
+  const deadlineRef = useRef<number>(0);
+  // Track the confirmationId we last auto-canceled so we don't double-post.
+  const autoCanceledRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!pending) {
+      setRemaining(0);
+      deadlineRef.current = 0;
+      return;
+    }
+    autoCanceledRef.current = null;
+    deadlineRef.current = Date.now() + pending.expiresInSeconds * 1000;
+
+    const tick = () => {
+      const ms = deadlineRef.current - Date.now();
+      setRemaining(Math.max(0, Math.ceil(ms / 1000)));
+      if (ms <= 0) {
+        if (autoCanceledRef.current !== pending.confirmationId) {
+          autoCanceledRef.current = pending.confirmationId;
+          void postDecision(pending.confirmationId, 'cancel', token).catch(() => {
+            // Server may have already resolved via its own TTL — fine.
+          });
+          setPending(null);
+        }
+      }
+    };
+    tick();
+    const interval = setInterval(tick, 500);
+    return () => clearInterval(interval);
+    // setPending and token are stable refs from recoil/auth; depending on
+    // `pending` is what we want — re-arm whenever a new confirmation arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
+
+  if (!pending) return null;
+
+  const handleDecision = async (decision: Decision) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await postDecision(pending.confirmationId, decision, token);
+    } catch (err) {
+      // Network error — the server's TTL will eventually resolve as timeout.
+      // Surface to console so a developer sees it; don't block the UI.
+      console.error('Failed to submit MCP confirmation decision', err);
+    } finally {
+      setSubmitting(false);
+      setPending(null);
+    }
+  };
+
+  return (
+    <OGDialog
+      open={true}
+      onOpenChange={(open) => {
+        // Treat dismissal as cancel so the agent loop can resume.
+        if (!open && !submitting) {
+          void handleDecision('cancel');
+        }
+      }}
+    >
+      <OGDialogContent className="w-11/12 max-w-2xl">
+        <OGDialogHeader>
+          <OGDialogTitle>
+            {pending.presentation?.title ?? `Confirm action: ${pending.toolName}`}
+            <span className="ml-2 text-sm font-normal text-text-secondary">
+              ({pending.serverName})
+            </span>
+          </OGDialogTitle>
+        </OGDialogHeader>
+        <div className="py-4">
+          <p className="mb-3 text-sm text-text-secondary">
+            The model is requesting to run a tool that requires your approval.
+            Review the call below before continuing.
+          </p>
+          {pending.presentation ? (
+            // Gateway gave us a structured presentation — render it directly.
+            <PresentationView presentation={pending.presentation} />
+          ) : (
+            // Fallback: parse the raw `preview` text for tools the gateway
+            // hasn't been configured to present yet.
+            (() => {
+              const parsed = parsePreview(pending.preview);
+              if (parsed.type === 'raw') {
+                return (
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border-medium bg-surface-secondary p-3 text-sm text-text-primary">
+                    {parsed.text}
+                  </pre>
+                );
+              }
+              if (parsed.args.length === 0) {
+                return (
+                  <p className="text-sm italic text-text-secondary">
+                    (no arguments)
+                  </p>
+                );
+              }
+              return (
+                <dl className="max-h-80 overflow-auto rounded-md border border-border-medium bg-surface-secondary divide-y divide-border-medium">
+                  {parsed.args.map(({ key, value }) => (
+                    <div key={key} className="px-3 py-2">
+                      <dt className="font-mono text-xs font-semibold text-text-secondary">
+                        {key}
+                      </dt>
+                      <dd className="mt-1">
+                        {isComplexValue(value) ? (
+                          <pre className="overflow-auto whitespace-pre-wrap break-all rounded bg-surface-primary p-2 font-mono text-xs text-text-primary">
+                            {formatValue(value)}
+                          </pre>
+                        ) : (
+                          <code className="block break-all font-mono text-xs text-text-primary">
+                            {formatValue(value)}
+                          </code>
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              );
+            })()
+          )}
+          <p className="mt-3 text-xs text-text-secondary">
+            Auto-cancels in {remaining}s
+          </p>
+        </div>
+        <OGDialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => void handleDecision('cancel')}
+            disabled={submitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="submit"
+            onClick={() => void handleDecision('accept')}
+            disabled={submitting}
+          >
+            Accept
+          </Button>
+        </OGDialogFooter>
+      </OGDialogContent>
+    </OGDialog>
+  );
+}

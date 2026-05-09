@@ -22,6 +22,7 @@ const {
   generateCheckAccess,
   validateOAuthSession,
   OAUTH_SESSION_COOKIE,
+  getConfirmationStore,
 } = require('@librechat/api');
 const {
   createMCPServerController,
@@ -95,6 +96,39 @@ const checkMCPCreate = generateCheckAccess({
  */
 router.get('/tools', requireJwtAuth, checkMCPUsePermissions, async (req, res) => {
   return getMCPTools(req, res);
+});
+
+/**
+ * Resolve a pending tool-call confirmation. Called by the React modal when the
+ * user clicks Accept or Cancel. The confirmationId is owned by the user who
+ * initiated the call; only that user may resolve it.
+ *
+ * @route POST /api/mcp/confirm/:confirmationId
+ * @body { decision: 'accept' | 'cancel' }
+ */
+router.post('/confirm/:confirmationId', requireJwtAuth, (req, res) => {
+  const { confirmationId } = req.params;
+  const { decision } = req.body || {};
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
+  if (decision !== 'accept' && decision !== 'cancel') {
+    return res.status(400).json({ error: 'Invalid decision' });
+  }
+  if (typeof confirmationId !== 'string' || confirmationId.length === 0) {
+    return res.status(400).json({ error: 'Invalid confirmationId' });
+  }
+
+  const result = getConfirmationStore().resolve(confirmationId, userId, decision);
+  if (result.ok) {
+    return res.status(204).end();
+  }
+  if (result.reason === 'forbidden') {
+    return res.status(403).json({ error: 'Confirmation does not belong to this user' });
+  }
+  return res.status(404).json({ error: 'Confirmation not found or already resolved' });
 });
 
 /**

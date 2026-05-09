@@ -42,7 +42,7 @@ import {
 import useEventHandlers, { buildCreatedInitialResponse } from './useEventHandlers';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useUsageHandler from './useUsageHandler';
-import store from '~/store';
+import store, { pendingMCPConfirmationAtom } from '~/store';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -441,6 +441,7 @@ export default function useResumableSSE(
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
+  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
 
   const sseRef = useRef<SSE | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -595,6 +596,11 @@ export default function useResumableSSE(
               data: data.data,
               submission: currentSubmission as EventSubmission,
             });
+            return;
+          }
+
+          if (data.event === 'mcp_confirmation_required') {
+            setPendingMCPConfirmation(data.data);
             return;
           }
 
@@ -776,7 +782,9 @@ export default function useResumableSSE(
             if (data.pendingEvents?.length > 0) {
               console.log(`[ResumableSSE] Replaying ${data.pendingEvents.length} pending events`);
               for (const pendingEvent of data.pendingEvents) {
-                if (pendingEvent.event === 'title') {
+                if (pendingEvent.event === 'mcp_confirmation_required') {
+                  setPendingMCPConfirmation(pendingEvent.data);
+                } else if (pendingEvent.event === 'title') {
                   titleHandler(pendingEvent);
                 } else if (pendingEvent.event === UsageEvents.ON_CONTEXT_USAGE) {
                   contextHandler(pendingEvent.data, resumeSubmission);

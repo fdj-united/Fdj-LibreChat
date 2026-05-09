@@ -17,7 +17,7 @@ import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import useUsageHandler from './useUsageHandler';
 import { clearAllDrafts } from '~/utils';
-import store from '~/store';
+import store, { pendingMCPConfirmationAtom } from '~/store';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -36,6 +36,7 @@ export default function useSSE(
   const [completed, setCompleted] = useState(new Set());
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
+  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
 
   const { setMessages, getMessages, setConversation, setIsSubmitting, newConversation } =
     chatHelpers;
@@ -131,6 +132,8 @@ export default function useSSE(
         };
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
+      } else if (data.event === 'mcp_confirmation_required') {
+        setPendingMCPConfirmation(data.data);
       } else if (data.event === 'title') {
         titleHandler(data);
       } else if (data.event === UsageEvents.ON_CONTEXT_USAGE) {
