@@ -20,7 +20,8 @@ import type { ActiveJobsResponse } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import { clearAllDrafts } from '~/utils';
-import store, { pendingMCPConfirmationAtom } from '~/store';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
+import { enqueueMCPConfirmation } from './enqueueMCPConfirmation';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -84,7 +85,7 @@ export default function useResumableSSE(
   const [streamId, setStreamId] = useState<string | null>(null);
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
-  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const sseRef = useRef<SSE | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -213,7 +214,8 @@ export default function useResumableSSE(
             // Intercept BEFORE stepHandler — the agent loop is suspended
             // server-side awaiting POST /api/mcp/confirm/:id. We surface the
             // modal; nothing should reach the chunk pipeline.
-            setPendingMCPConfirmation(data.data);
+            // See enqueueMCPConfirmation for the enqueue+dedup+deadline rationale.
+            setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, data.data));
             return;
           }
 
@@ -305,7 +307,9 @@ export default function useResumableSSE(
                 if (pendingEvent.event === 'mcp_confirmation_required') {
                   // Mid-confirmation reconnect: the server-side wait is still
                   // in flight, so re-surface the modal from the replayed event.
-                  setPendingMCPConfirmation(pendingEvent.data);
+                  // Helper dedups by confirmationId — replay during an active
+                  // confirmation is a no-op.
+                  setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, pendingEvent.data));
                 } else if (pendingEvent.event != null) {
                   stepHandler(pendingEvent, submission);
                 } else if (pendingEvent.type != null) {
