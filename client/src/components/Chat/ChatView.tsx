@@ -11,6 +11,7 @@ import { useAddedResponse, useResumeOnLoad, useAdaptiveSSE, useChatHelpers } fro
 import ConversationStarters from './Input/ConversationStarters';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import MessagesView from './Messages/MessagesView';
+import MCPConfirmationDialog from '~/components/MCP/MCPConfirmationDialog';
 import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
 import Landing from './Landing';
@@ -112,6 +113,7 @@ function ChatView({ index = 0 }: { index?: number }) {
               </>
             </div>
           </Presentation>
+          <MCPConfirmationDialog />
         </AddedChatContext.Provider>
       </ChatContext.Provider>
     </ChatFormProvider>
