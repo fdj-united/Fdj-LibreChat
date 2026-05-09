@@ -754,6 +754,29 @@ function createToolInstance({
             decision === 'timeout'
               ? 'User did not confirm in time.'
               : 'User declined.';
+
+          // Fire-and-forget clear of the gateway-side pending entry. Without
+          // this, the gateway's pending_approvals map keeps the entry until
+          // its 120s TTL — and a retry of the same (tool, args) within that
+          // window silently bypasses the modal.
+          //
+          // Best-effort: if the clear call fails, we still return the
+          // canceled stub. The gateway's TTL is the fallback.
+          //
+          // See agentgateway/docs/superpowers/specs/2026-05-09-mcp-confirmation-clear-design.md
+          const clearArgs = {
+            ...callToolArgs,
+            toolArguments: {
+              ...callToolArgs.toolArguments,
+              __mcp_clear_pending__: true,
+            },
+          };
+          mcpManager.callTool(clearArgs)?.catch((err) => {
+            logger.warn(
+              `[MCP][${serverName}][${toolName}][User: ${userId}] Failed to clear gateway-side pending approval (best-effort; TTL is fallback): ${err.message}`,
+            );
+          });
+
           result = buildCanceledToolResult(provider, reason);
         }
       }
