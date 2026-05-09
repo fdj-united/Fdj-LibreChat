@@ -23,6 +23,7 @@ import type { TResData } from '~/common';
 import { clearComposerDrafts, applyPendingAction, findPendingActionMessageIndex } from '~/utils';
 import { pendingApprovalActionFamily } from '~/components/Chat/approval/state';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
+import { enqueueMCPConfirmation } from './enqueueMCPConfirmation';
 import { startedAsNewConversation } from './useEventHandlers';
 import store, { pendingMCPConfirmationsAtom } from '~/store';
 import { useAuthContext } from '~/hooks/AuthContext';
@@ -152,17 +153,7 @@ export default function useSSE(
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.event === 'mcp_confirmation_required') {
-        setPendingMCPConfirmations((prev) =>
-          prev.some((p) => p.confirmationId === data.data.confirmationId)
-            ? prev
-            : [
-                ...prev,
-                {
-                  ...data.data,
-                  deadline: Date.now() + data.data.expiresInSeconds * 1000,
-                },
-              ],
-        );
+        setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, data.data));
       } else if (data.event === 'title') {
         titleHandler(data);
       } else if (data.event === UsageEvents.ON_CONTEXT_USAGE) {
