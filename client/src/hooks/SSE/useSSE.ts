@@ -10,7 +10,7 @@ import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import { clearAllDrafts } from '~/utils';
-import store, { pendingMCPConfirmationAtom } from '~/store';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -34,7 +34,7 @@ export default function useSSE(
   const [completed, setCompleted] = useState(new Set());
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
-  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const {
     setMessages,
@@ -131,7 +131,21 @@ export default function useSSE(
         // must surface the confirmation modal instead of feeding the chunk
         // pipeline. The backend has suspended the agent loop awaiting the
         // user's decision via POST /api/mcp/confirm/:confirmationId.
-        setPendingMCPConfirmation(data.data);
+        // Enqueue (don't overwrite) so parallel confirmations all surface;
+        // dedup by confirmationId so SSE reconnect mid-confirmation doesn't
+        // double-register. Compute the deadline at receipt time so the
+        // countdown is correct even if this entry waits behind others.
+        setPendingMCPConfirmations((prev) =>
+          prev.some((p) => p.confirmationId === data.data.confirmationId)
+            ? prev
+            : [
+                ...prev,
+                {
+                  ...data.data,
+                  deadline: Date.now() + data.data.expiresInSeconds * 1000,
+                },
+              ],
+        );
       } else if (data.event != null) {
         stepHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.sync != null) {
