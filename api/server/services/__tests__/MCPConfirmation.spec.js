@@ -258,8 +258,13 @@ describe('MCP confirmation flow (integration)', () => {
     expect(contentArr[0].text).not.toContain('confirmationRequired');
   });
 
-  it('user cancels → wrapper synthesizes canceled stub, never re-issues call', async () => {
-    mockCallTool.mockResolvedValueOnce(buildEnvelopeResult(provider));
+  it('user cancels → wrapper synthesizes canceled stub, never re-issues the real call', async () => {
+    // First call: confirmation envelope. Second call: the fire-and-forget
+    // gateway-side clear (sentinel injected) — NOT a real re-issue of the
+    // user's tool call.
+    mockCallTool
+      .mockResolvedValueOnce(buildEnvelopeResult(provider))
+      .mockResolvedValue([]);
 
     const res = makeFakeRes();
     const tool = createToolInstance({
@@ -292,7 +297,12 @@ describe('MCP confirmation flow (integration)', () => {
     expect(httpRes.status).toBe(204);
 
     const result = await callPromise;
-    expect(mockCallTool).toHaveBeenCalledTimes(1);
+    // 1 envelope + 1 sentinel-bearing clear. The real user-args call is NOT
+    // re-issued — every call after the envelope must carry the sentinel.
+    expect(mockCallTool).toHaveBeenCalledTimes(2);
+    expect(mockCallTool.mock.calls[1][0].toolArguments).toMatchObject({
+      __mcp_clear_pending__: true,
+    });
 
     // Synthesized canceled stub — agent gets a benign result, never the envelope.
     const contentArr = result[0];
@@ -308,6 +318,9 @@ describe('MCP confirmation flow (integration)', () => {
       expiresInSeconds: 0.05,
     });
     mockCallTool.mockResolvedValueOnce([[{ type: 'text', text: envelope }], undefined]);
+    // TTL expiry also triggers the fire-and-forget clear; queue a benign
+    // response so the second callTool resolves cleanly.
+    mockCallTool.mockResolvedValueOnce([[], undefined]);
 
     const res = makeFakeRes();
     const tool = createToolInstance({
@@ -325,7 +338,11 @@ describe('MCP confirmation flow (integration)', () => {
     const config = makeToolCallConfig({ user: { id: 'user-1' }, provider });
     const result = await tool.func(args, { getChild: () => undefined }, config);
 
-    expect(mockCallTool).toHaveBeenCalledTimes(1);
+    // 1 envelope + 1 sentinel-bearing clear (TTL path uses same cancel branch).
+    expect(mockCallTool).toHaveBeenCalledTimes(2);
+    expect(mockCallTool.mock.calls[1][0].toolArguments).toMatchObject({
+      __mcp_clear_pending__: true,
+    });
     expect(result[0][0].text).toContain('"canceled":true');
     expect(result[0][0].text).toContain('did not confirm in time');
   });
@@ -390,5 +407,111 @@ describe('MCP confirmation flow (integration)', () => {
       .post('/api/mcp/confirm/unknown-id')
       .send({ decision: 'accept' });
     expect(bad2.status).toBe(404);
+  });
+
+  describe('Pending-approval clear on cancel/timeout', () => {
+    it('issues a fire-and-forget clear via mcpManager.callTool with the sentinel after a cancel', async () => {
+      mockCallTool
+        .mockResolvedValueOnce(buildEnvelopeResult(provider))
+        .mockResolvedValueOnce(buildRealResult(provider));
+
+      const res = makeFakeRes();
+      const tool = createToolInstance({
+        res,
+        toolName: 'send_chat_message',
+        serverName: 'ms365',
+        provider,
+        toolDefinition: {
+          description: 'd',
+          parameters: { type: 'object', properties: {}, required: [] },
+        },
+      });
+
+      const args = { chatId: '19:abc', body: 'bye' };
+      const config = makeToolCallConfig({ user: { id: 'user-1' }, provider });
+      const callPromise = tool.func(args, { getChild: () => undefined }, config);
+
+      let confirmationId = null;
+      for (let i = 0; i < 50 && !confirmationId; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        const ev = res.parseEvents().find((e) => e.event === 'mcp_confirmation_required');
+        if (ev) confirmationId = ev.data.confirmationId;
+      }
+      expect(confirmationId).toBeTruthy();
+
+      const app = buildApp();
+      const httpRes = await request(app)
+        .post(`/api/mcp/confirm/${confirmationId}`)
+        .send({ decision: 'cancel' });
+      expect(httpRes.status).toBe(204);
+
+      const result = await callPromise;
+
+      // The agent receives the canceled stub.
+      const contentArr = result[0];
+      expect(contentArr[0].text).toContain('"canceled":true');
+
+      // Allow the fire-and-forget clear microtask to run.
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Two callTool invocations: original Phase-1, then the clear.
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+      const clearArgs = mockCallTool.mock.calls[1][0];
+      expect(clearArgs.toolArguments).toMatchObject({
+        __mcp_clear_pending__: true,
+        chatId: '19:abc',
+        body: 'bye',
+      });
+      // Same server/tool/provider so the gateway re-derives the key correctly.
+      expect(clearArgs.serverName).toBe('ms365');
+      expect(clearArgs.toolName).toBe('send_chat_message');
+      expect(clearArgs.provider).toBe(provider);
+    });
+
+    it('returns the canceled stub even if the clear call fails', async () => {
+      mockCallTool
+        .mockResolvedValueOnce(buildEnvelopeResult(provider))
+        .mockRejectedValueOnce(new Error('network down'));
+
+      const res = makeFakeRes();
+      const tool = createToolInstance({
+        res,
+        toolName: 'send_chat_message',
+        serverName: 'ms365',
+        provider,
+        toolDefinition: {
+          description: 'd',
+          parameters: { type: 'object', properties: {}, required: [] },
+        },
+      });
+
+      const args = { chatId: '19:err', body: 'oops' };
+      const config = makeToolCallConfig({ user: { id: 'user-1' }, provider });
+      const callPromise = tool.func(args, { getChild: () => undefined }, config);
+
+      let confirmationId = null;
+      for (let i = 0; i < 50 && !confirmationId; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        const ev = res.parseEvents().find((e) => e.event === 'mcp_confirmation_required');
+        if (ev) confirmationId = ev.data.confirmationId;
+      }
+      expect(confirmationId).toBeTruthy();
+
+      const app = buildApp();
+      const httpRes = await request(app)
+        .post(`/api/mcp/confirm/${confirmationId}`)
+        .send({ decision: 'cancel' });
+      expect(httpRes.status).toBe(204);
+
+      // The wrapper resolves with the canceled stub regardless of the clear's failure.
+      const result = await callPromise;
+      const contentArr = result[0];
+      expect(contentArr[0].text).toContain('"canceled":true');
+      expect(contentArr[0].text).not.toContain('confirmationRequired');
+
+      // Drain the fire-and-forget rejection so it doesn't bleed into other tests.
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+    });
   });
 });
