@@ -18,6 +18,7 @@ import useEventHandlers from './useEventHandlers';
 import useUsageHandler from './useUsageHandler';
 import { clearAllDrafts } from '~/utils';
 import store, { pendingMCPConfirmationsAtom } from '~/store';
+import { enqueueMCPConfirmation } from './enqueueMCPConfirmation';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -133,17 +134,7 @@ export default function useSSE(
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.event === 'mcp_confirmation_required') {
-        setPendingMCPConfirmations((prev) =>
-          prev.some((p) => p.confirmationId === data.data.confirmationId)
-            ? prev
-            : [
-                ...prev,
-                {
-                  ...data.data,
-                  deadline: Date.now() + data.data.expiresInSeconds * 1000,
-                },
-              ],
-        );
+        setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, data.data));
       } else if (data.event === 'title') {
         titleHandler(data);
       } else if (data.event === UsageEvents.ON_CONTEXT_USAGE) {
