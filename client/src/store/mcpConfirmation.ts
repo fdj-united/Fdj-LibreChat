@@ -22,6 +22,7 @@ export interface MCPPendingConfirmation {
   toolName: string;
   preview: string;
   expiresInSeconds: number;
+  /** Server-supplied; informational only. Use `deadline` for the countdown — server clocks may drift. */
   expiresAt: number;
   /**
    * Optional structured rendering hints from the gateway. When present, the
