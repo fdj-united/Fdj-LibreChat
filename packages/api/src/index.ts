@@ -20,6 +20,7 @@ export * from './mcp/mcpConfig';
 export * from './mcp/authority';
 export * from './mcp/registry/MCPServersRegistry';
 export * from './mcp/MCPManager';
+export * from './mcp/ConfirmationStore';
 export * from './mcp/connection';
 export * from './mcp/toolsChanged';
 export * from './mcp/oauth';

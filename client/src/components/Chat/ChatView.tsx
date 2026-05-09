@@ -18,6 +18,7 @@ import {
   useLocalize,
 } from '~/hooks';
 import { ChatContext, AddedChatContext, ChatFormProvider, useFileMapContext } from '~/Providers';
+import MCPConfirmationDialog from '~/components/MCP/MCPConfirmationDialog';
 import { QueuedTurnPortalProvider } from './Steering/QueuedTurnPortal';
 import ApprovalProvider from './Messages/Content/ApprovalContext';
 import ConversationStarters from './Input/ConversationStarters';
@@ -232,6 +233,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                 </Presentation>
               </QueuedTurnPortalProvider>
             </ApprovalProvider>
+            <MCPConfirmationDialog />
           </AddedChatContext.Provider>
         </ChatContext.Provider>
       </ChatFormProvider>
