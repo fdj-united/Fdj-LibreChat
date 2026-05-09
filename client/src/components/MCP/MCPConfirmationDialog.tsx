@@ -10,7 +10,7 @@ import {
 } from '@librechat/client';
 import { useAuthContext } from '~/hooks/AuthContext';
 import {
-  pendingMCPConfirmationAtom,
+  pendingMCPConfirmationsAtom,
   type MCPConfirmationPresentation,
   type PresentationField,
 } from '~/store/mcpConfirmation';
@@ -158,62 +158,65 @@ async function postDecision(
 }
 
 export default function MCPConfirmationDialog() {
-  const [pending, setPending] = useRecoilState(pendingMCPConfirmationAtom);
+  const [queue, setQueue] = useRecoilState(pendingMCPConfirmationsAtom);
+  const head = queue[0];
   const { token } = useAuthContext();
   const [submitting, setSubmitting] = useState(false);
   const [remaining, setRemaining] = useState<number>(0);
 
-  // Compute the deadline from `expiresInSeconds` on receipt rather than trusting
-  // `expiresAt` from the server payload, which is a server-side `Date.now()` and
-  // can be off by clock skew. We pin the deadline once per pending entry.
-  const deadlineRef = useRef<number>(0);
-  // Track the confirmationId we last auto-canceled so we don't double-post.
+  // Track the confirmationId we last auto-canceled so we don't double-post
+  // when the timer fires multiple times for the same head before pop happens.
   const autoCanceledRef = useRef<string | null>(null);
 
+  // Pop the head off the queue. The next item (if any) becomes the new head
+  // and the dialog re-renders against it; the countdown effect re-arms via
+  // its dependency on head.confirmationId.
+  const popHead = () => {
+    setQueue((prev) => prev.slice(1));
+  };
+
   useEffect(() => {
-    if (!pending) {
+    if (!head) {
       setRemaining(0);
-      deadlineRef.current = 0;
       return;
     }
     autoCanceledRef.current = null;
-    deadlineRef.current = Date.now() + pending.expiresInSeconds * 1000;
 
     const tick = () => {
-      const ms = deadlineRef.current - Date.now();
+      const ms = head.deadline - Date.now();
       setRemaining(Math.max(0, Math.ceil(ms / 1000)));
       if (ms <= 0) {
-        if (autoCanceledRef.current !== pending.confirmationId) {
-          autoCanceledRef.current = pending.confirmationId;
-          void postDecision(pending.confirmationId, 'cancel', token).catch(() => {
+        if (autoCanceledRef.current !== head.confirmationId) {
+          autoCanceledRef.current = head.confirmationId;
+          void postDecision(head.confirmationId, 'cancel', token).catch(() => {
             // Server may have already resolved via its own TTL — fine.
           });
-          setPending(null);
+          popHead();
         }
       }
     };
     tick();
     const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
-    // setPending and token are stable refs from recoil/auth; depending on
-    // `pending` is what we want — re-arm whenever a new confirmation arrives.
+    // We intentionally key off head.confirmationId so the effect re-arms
+    // whenever the head changes (i.e. the previous head was popped).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending]);
+  }, [head?.confirmationId]);
 
-  if (!pending) return null;
+  if (!head) return null;
 
   const handleDecision = async (decision: Decision) => {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await postDecision(pending.confirmationId, decision, token);
+      await postDecision(head.confirmationId, decision, token);
     } catch (err) {
       // Network error — the server's TTL will eventually resolve as timeout.
       // Surface to console so a developer sees it; don't block the UI.
       console.error('Failed to submit MCP confirmation decision', err);
     } finally {
       setSubmitting(false);
-      setPending(null);
+      popHead();
     }
   };
 
@@ -230,10 +233,15 @@ export default function MCPConfirmationDialog() {
       <OGDialogContent className="w-11/12 max-w-2xl">
         <OGDialogHeader>
           <OGDialogTitle>
-            {pending.presentation?.title ?? `Confirm action: ${pending.toolName}`}
+            {head.presentation?.title ?? `Confirm action: ${head.toolName}`}
             <span className="ml-2 text-sm font-normal text-text-secondary">
-              ({pending.serverName})
+              ({head.serverName})
             </span>
+            {queue.length > 1 && (
+              <span className="ml-2 rounded bg-surface-tertiary px-2 py-0.5 text-xs font-normal text-text-secondary">
+                1 of {queue.length} pending
+              </span>
+            )}
           </OGDialogTitle>
         </OGDialogHeader>
         <div className="py-4">
@@ -241,14 +249,11 @@ export default function MCPConfirmationDialog() {
             The model is requesting to run a tool that requires your approval.
             Review the call below before continuing.
           </p>
-          {pending.presentation ? (
-            // Gateway gave us a structured presentation — render it directly.
-            <PresentationView presentation={pending.presentation} />
+          {head.presentation ? (
+            <PresentationView presentation={head.presentation} />
           ) : (
-            // Fallback: parse the raw `preview` text for tools the gateway
-            // hasn't been configured to present yet.
             (() => {
-              const parsed = parsePreview(pending.preview);
+              const parsed = parsePreview(head.preview);
               if (parsed.type === 'raw') {
                 return (
                   <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border-medium bg-surface-secondary p-3 text-sm text-text-primary">
