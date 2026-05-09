@@ -262,9 +262,7 @@ describe('MCP confirmation flow (integration)', () => {
     // First call: confirmation envelope. Second call: the fire-and-forget
     // gateway-side clear (sentinel injected) — NOT a real re-issue of the
     // user's tool call.
-    mockCallTool
-      .mockResolvedValueOnce(buildEnvelopeResult(provider))
-      .mockResolvedValue([]);
+    mockCallTool.mockResolvedValueOnce(buildEnvelopeResult(provider)).mockResolvedValue([]);
 
     const res = makeFakeRes();
     const tool = createToolInstance({
