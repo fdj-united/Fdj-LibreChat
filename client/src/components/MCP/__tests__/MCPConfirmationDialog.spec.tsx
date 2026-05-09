@@ -14,10 +14,7 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { RecoilRoot, useSetRecoilState } from 'recoil';
 import MCPConfirmationDialog from '../MCPConfirmationDialog';
-import {
-  pendingMCPConfirmationsAtom,
-  type MCPPendingConfirmation,
-} from '~/store/mcpConfirmation';
+import { pendingMCPConfirmationsAtom, type MCPPendingConfirmation } from '~/store/mcpConfirmation';
 
 // Mock the auth context — the dialog's only use of `token` is to attach as a
 // Bearer header on `postDecision`'s fetch, which we mock at the global level.
@@ -34,9 +31,7 @@ jest.mock('@librechat/client', () => {
   return {
     OGDialog: ({ children, open }: any) =>
       open ? <div data-testid="dialog-root">{children}</div> : null,
-    OGDialogContent: ({ children }: any) => (
-      <div data-testid="dialog-content">{children}</div>
-    ),
+    OGDialogContent: ({ children }: any) => <div data-testid="dialog-content">{children}</div>,
     OGDialogHeader: ({ children }: any) => <div>{children}</div>,
     OGDialogFooter: ({ children }: any) => <div>{children}</div>,
     OGDialogTitle: ({ children }: any) => <h2>{children}</h2>,
@@ -50,18 +45,14 @@ jest.mock('@librechat/client', () => {
 
 // Stable global fetch mock — we never want a test to hit the real network.
 beforeEach(() => {
-  (global as any).fetch = jest.fn(() =>
-    Promise.resolve({ ok: true, status: 204 } as Response),
-  );
+  (global as any).fetch = jest.fn(() => Promise.resolve({ ok: true, status: 204 } as Response));
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
 });
 
-function makePending(
-  overrides: Partial<MCPPendingConfirmation> = {},
-): MCPPendingConfirmation {
+function makePending(overrides: Partial<MCPPendingConfirmation> = {}): MCPPendingConfirmation {
   return {
     confirmationId: 'cid-A',
     serverName: 'test-server',
@@ -105,9 +96,7 @@ describe('MCPConfirmationDialog queue mechanics', () => {
   });
 
   test('renders the head only when queue has one entry', () => {
-    renderWithQueue([
-      makePending({ confirmationId: 'cid-A', toolName: 'tool-A' }),
-    ]);
+    renderWithQueue([makePending({ confirmationId: 'cid-A', toolName: 'tool-A' })]);
     expect(screen.getByText(/Confirm action: tool-A/)).toBeInTheDocument();
     // No "N pending" badge when queue length is 1.
     expect(screen.queryByText(/of \d+ pending/)).toBeNull();
@@ -176,5 +165,65 @@ describe('MCPConfirmationDialog queue mechanics', () => {
     const seconds = parseInt(text.match(/(\d+)s/)?.[1] ?? '-1', 10);
     expect(seconds).toBeGreaterThanOrEqual(58);
     expect(seconds).toBeLessThanOrEqual(60);
+  });
+
+  test('auto-cancel timer does NOT fire while an Approve is in flight (race against deadline)', async () => {
+    // The bug we're guarding: at the deadline boundary, if the user has just
+    // clicked Approve and the fetch is in flight, the auto-cancel timer
+    // would (without the submittingRef guard) fire a competing cancel AND
+    // pop the head — silently dropping the next queued entry.
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(0));
+
+    // Make fetch slow so we can observe the in-flight window.
+    let resolveFetch: (value: Response) => void = () => {};
+    (global as any).fetch = jest.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    // Head has a deadline 1 second out. Second entry sits behind.
+    renderWithQueue([
+      makePending({
+        confirmationId: 'cid-A',
+        toolName: 'tool-A',
+        deadline: 1_000,
+      }),
+      makePending({
+        confirmationId: 'cid-B',
+        toolName: 'tool-B',
+        deadline: 60_000,
+      }),
+    ]);
+    expect(screen.getByText(/Confirm action: tool-A/)).toBeInTheDocument();
+
+    // User clicks Approve at the deadline boundary. fetch is now in flight.
+    await act(async () => {
+      fireEvent.click(screen.getByText('Accept'));
+    });
+    // 1 fetch call so far (the user's Approve).
+    expect((global as any).fetch).toHaveBeenCalledTimes(1);
+
+    // Advance time past the deadline. The 500ms tick fires; with the
+    // submittingRef guard in place, it must SKIP the auto-cancel branch.
+    await act(async () => {
+      jest.advanceTimersByTime(2_000);
+    });
+    // Still 1 fetch call (no competing 'cancel' was sent).
+    expect((global as any).fetch).toHaveBeenCalledTimes(1);
+
+    // Now resolve the user's Approve. handleDecision's finally pops once.
+    await act(async () => {
+      resolveFetch({ ok: true, status: 204 } as Response);
+    });
+
+    // Head is now tool-B (single pop, not double). The badge stops showing
+    // because length === 1.
+    expect(screen.queryByText(/Confirm action: tool-A/)).toBeNull();
+    expect(screen.getByText(/Confirm action: tool-B/)).toBeInTheDocument();
+
+    jest.useRealTimers();
   });
 });
