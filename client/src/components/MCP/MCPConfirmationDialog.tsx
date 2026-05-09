@@ -168,6 +168,17 @@ export default function MCPConfirmationDialog() {
   // when the timer fires multiple times for the same head before pop happens.
   const autoCanceledRef = useRef<string | null>(null);
 
+  // Mirror `submitting` in a ref so the timer's tick() can read the current
+  // value without depending on it (which would otherwise re-arm the interval
+  // on every flip, including the one inside handleDecision's finally clause).
+  // Without this, the timer can race against an in-flight Approve at the
+  // deadline boundary and double-pop the queue — silently dropping entry B
+  // when the user approves entry A at second 119.5.
+  const submittingRef = useRef(false);
+  useEffect(() => {
+    submittingRef.current = submitting;
+  }, [submitting]);
+
   // Pop the head off the queue. The next item (if any) becomes the new head
   // and the dialog re-renders against it; the countdown effect re-arms via
   // its dependency on head.confirmationId.
@@ -185,7 +196,12 @@ export default function MCPConfirmationDialog() {
     const tick = () => {
       const ms = head.deadline - Date.now();
       setRemaining(Math.max(0, Math.ceil(ms / 1000)));
-      if (ms <= 0) {
+      // Skip auto-cancel while a user-initiated decision is in flight —
+      // the in-flight handleDecision will pop the head when it resolves,
+      // and firing a competing 'cancel' here would both double-pop the
+      // queue (silently dropping the next entry) and send a contradictory
+      // wire decision.
+      if (ms <= 0 && !submittingRef.current) {
         if (autoCanceledRef.current !== head.confirmationId) {
           autoCanceledRef.current = head.confirmationId;
           void postDecision(head.confirmationId, 'cancel', token).catch(() => {
