@@ -10,7 +10,7 @@ import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import { clearAllDrafts } from '~/utils';
-import store from '~/store';
+import store, { pendingMCPConfirmationAtom } from '~/store';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -34,6 +34,7 @@ export default function useSSE(
   const [completed, setCompleted] = useState(new Set());
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
+  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
 
   const {
     setMessages,
@@ -125,6 +126,12 @@ export default function useSSE(
         };
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
+      } else if (data.event === 'mcp_confirmation_required') {
+        // Intercept before stepHandler — this event is not a step delta and
+        // must surface the confirmation modal instead of feeding the chunk
+        // pipeline. The backend has suspended the agent loop awaiting the
+        // user's decision via POST /api/mcp/confirm/:confirmationId.
+        setPendingMCPConfirmation(data.data);
       } else if (data.event != null) {
         stepHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.sync != null) {
