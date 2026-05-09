@@ -820,6 +820,9 @@ function createToolInstance({
               __mcp_clear_pending__: true,
             },
           };
+          // Fire-and-forget — see comment block above. The `?.` guards Jest
+          // mocks that don't chain `.mockResolvedValue(...)`; production
+          // `MCPManager.callTool` always returns a Promise.
           mcpManager.callTool(clearArgs)?.catch((err) => {
             logger.warn(
               `[MCP][${serverName}][${toolName}][User: ${userId}] Failed to clear gateway-side pending approval (best-effort; TTL is fallback): ${err.message}`,
