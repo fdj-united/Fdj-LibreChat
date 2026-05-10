@@ -320,27 +320,29 @@ export default function MCPConfirmationDialog() {
               );
             })()
           )}
-          <p className="mt-3 text-xs text-text-secondary">Auto-cancels in {remaining}s</p>
         </div>
 
         <OGDialogFooter
           data-testid="dialog-footer"
-          className="flex-shrink-0 border-t border-border-light px-6 py-3"
+          className="flex flex-shrink-0 items-center justify-between border-t border-border-light px-6 py-3"
         >
-          <Button
-            variant="outline"
-            onClick={() => void handleDecision('cancel')}
-            disabled={submitting}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="submit"
-            onClick={() => void handleDecision('accept')}
-            disabled={submitting}
-          >
-            Accept
-          </Button>
+          <p className="text-xs text-text-secondary">Auto-cancels in {remaining}s</p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => void handleDecision('cancel')}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="submit"
+              onClick={() => void handleDecision('accept')}
+              disabled={submitting}
+            >
+              Accept
+            </Button>
+          </div>
         </OGDialogFooter>
       </OGDialogContent>
     </OGDialog>
