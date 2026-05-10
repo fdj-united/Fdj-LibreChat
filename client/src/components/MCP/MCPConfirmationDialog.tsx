@@ -114,9 +114,6 @@ function PresentationView({ presentation }: { presentation: MCPConfirmationPrese
 
   return (
     <div>
-      {presentation.summary && (
-        <p className="mb-3 text-sm text-text-primary">{presentation.summary}</p>
-      )}
       <dl className="divide-y divide-border-medium overflow-hidden rounded-md border border-border-medium bg-surface-secondary">
         {primary.map((f, i) => (
           <PresentationFieldRow key={`p-${i}`} field={f} />
@@ -242,8 +239,14 @@ export default function MCPConfirmationDialog() {
         }
       }}
     >
-      <OGDialogContent className="w-11/12 max-w-2xl">
-        <OGDialogHeader>
+      <OGDialogContent
+        data-testid="dialog-root"
+        className="flex max-h-[85vh] w-11/12 max-w-2xl flex-col overflow-hidden p-0"
+      >
+        <OGDialogHeader
+          data-testid="dialog-header"
+          className="flex-shrink-0 border-b border-border-light px-6 py-4"
+        >
           <OGDialogTitle>
             {head.presentation?.title ?? `Confirm action: ${head.toolName}`}
             <span className="ml-2 text-sm font-normal text-text-secondary">
@@ -255,8 +258,12 @@ export default function MCPConfirmationDialog() {
               </span>
             )}
           </OGDialogTitle>
+          {head.presentation?.summary && (
+            <p className="mt-1 text-sm text-text-secondary">{head.presentation.summary}</p>
+          )}
         </OGDialogHeader>
-        <div className="py-4">
+
+        <div data-testid="dialog-body" className="flex-1 overflow-y-auto px-6 py-4">
           <p className="mb-3 text-sm text-text-secondary">
             The model is requesting to run a tool that requires your approval. Review the call below
             before continuing.
@@ -300,7 +307,11 @@ export default function MCPConfirmationDialog() {
           )}
           <p className="mt-3 text-xs text-text-secondary">Auto-cancels in {remaining}s</p>
         </div>
-        <OGDialogFooter>
+
+        <OGDialogFooter
+          data-testid="dialog-footer"
+          className="flex-shrink-0 border-t border-border-light px-6 py-3"
+        >
           <Button
             variant="outline"
             onClick={() => void handleDecision('cancel')}
