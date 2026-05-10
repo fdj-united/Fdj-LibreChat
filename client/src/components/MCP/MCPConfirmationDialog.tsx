@@ -88,6 +88,7 @@ function PresentationFieldRow({ field }: { field: PresentationField }) {
     <div className="px-3 py-2">
       <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{label}</dt>
       <dd className="mt-1">
+        {/* eslint-disable no-nested-ternary */}
         {isMarkdown ? (
           <div className="max-w-none break-words text-text-primary">
             <MarkdownLite content={value as string} codeExecution={false} />
@@ -103,6 +104,7 @@ function PresentationFieldRow({ field }: { field: PresentationField }) {
         ) : (
           <span className="block break-words text-sm text-text-primary">{formatValue(value)}</span>
         )}
+        {/* eslint-enable no-nested-ternary */}
       </dd>
     </div>
   );
