@@ -22,6 +22,13 @@ jest.mock('~/hooks/AuthContext', () => ({
   useAuthContext: () => ({ token: 'test-token' }),
 }));
 
+jest.mock('~/components/Chat/Messages/Content/MarkdownLite', () => ({
+  __esModule: true,
+  default: ({ content }: { content: string }) => (
+    <div data-testid="markdown-lite">{content}</div>
+  ),
+}));
+
 // Mock the OGDialog portal-based Radix components so jsdom doesn't have to
 // deal with portals. We render children straight into the testing container
 // when `open` is true; when closed/null, we render nothing.
@@ -236,6 +243,29 @@ describe('MCPConfirmationDialog queue mechanics', () => {
     expect(screen.getByText(/Confirm action: tool-B/)).toBeInTheDocument();
 
     jest.useRealTimers();
+  });
+
+  test('renders markdown-format field content via MarkdownLite (not <pre>)', () => {
+    const head = makePending({
+      confirmationId: 'cid-md',
+      toolName: 'tool-md',
+      presentation: {
+        title: 'Markdown test',
+        fields: [
+          {
+            label: 'Body',
+            value: '## Hello\n\nWorld',
+            format: 'markdown',
+            importance: 'primary',
+          },
+        ],
+      },
+    });
+    renderWithQueue([head]);
+
+    // The markdown content reaches a MarkdownLite component, not a <pre>.
+    const md = screen.getByTestId('markdown-lite');
+    expect(md.textContent).toBe('## Hello\n\nWorld');
   });
 
   test('dialog has sticky header + scrollable body + sticky footer layout classes', () => {
