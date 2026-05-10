@@ -24,9 +24,7 @@ jest.mock('~/hooks/AuthContext', () => ({
 
 jest.mock('~/components/Chat/Messages/Content/MarkdownLite', () => ({
   __esModule: true,
-  default: ({ content }: { content: string }) => (
-    <div data-testid="markdown-lite">{content}</div>
-  ),
+  default: ({ content }: { content: string }) => <div data-testid="markdown-lite">{content}</div>,
 }));
 
 // Mock the OGDialog portal-based Radix components so jsdom doesn't have to
