@@ -324,9 +324,9 @@ export default function MCPConfirmationDialog() {
 
         <OGDialogFooter
           data-testid="dialog-footer"
-          className="flex flex-shrink-0 items-center justify-between border-t border-border-light px-6 py-3"
+          className="flex flex-shrink-0 items-center border-t border-border-light px-6 py-3"
         >
-          <p className="text-xs text-text-secondary">Auto-cancels in {remaining}s</p>
+          <p className="mr-auto text-xs text-text-secondary">Auto-cancels in {remaining}s</p>
           <div className="flex gap-2">
             <Button
               variant="outline"
