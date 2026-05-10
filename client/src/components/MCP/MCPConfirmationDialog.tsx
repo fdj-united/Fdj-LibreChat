@@ -135,9 +135,9 @@ function PresentationView({ presentation }: { presentation: MCPConfirmationPrese
           className="mt-3 inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary"
         >
           {showDetails ? (
-            <ChevronUp className="size-4" />
+            <ChevronUp aria-hidden="true" className="size-4" />
           ) : (
-            <ChevronDown className="size-4" />
+            <ChevronDown aria-hidden="true" className="size-4" />
           )}
           {showDetails
             ? 'Hide details'
