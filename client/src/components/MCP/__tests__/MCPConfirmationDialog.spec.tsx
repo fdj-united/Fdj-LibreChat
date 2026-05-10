@@ -29,11 +29,22 @@ jest.mock('@librechat/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react');
   return {
-    OGDialog: ({ children, open }: any) =>
-      open ? <div data-testid="dialog-root">{children}</div> : null,
-    OGDialogContent: ({ children }: any) => <div data-testid="dialog-content">{children}</div>,
-    OGDialogHeader: ({ children }: any) => <div>{children}</div>,
-    OGDialogFooter: ({ children }: any) => <div>{children}</div>,
+    OGDialog: ({ children, open }: any) => (open ? <div>{children}</div> : null),
+    OGDialogContent: ({ children, className, ...props }: any) => (
+      <div data-testid="dialog-root" className={className} {...props}>
+        {children}
+      </div>
+    ),
+    OGDialogHeader: ({ children, className, ...props }: any) => (
+      <div className={className} {...props}>
+        {children}
+      </div>
+    ),
+    OGDialogFooter: ({ children, className, ...props }: any) => (
+      <div className={className} {...props}>
+        {children}
+      </div>
+    ),
     OGDialogTitle: ({ children }: any) => <h2>{children}</h2>,
     Button: ({ children, onClick, disabled }: any) => (
       <button type="button" onClick={onClick} disabled={disabled}>
@@ -225,5 +236,29 @@ describe('MCPConfirmationDialog queue mechanics', () => {
     expect(screen.getByText(/Confirm action: tool-B/)).toBeInTheDocument();
 
     jest.useRealTimers();
+  });
+
+  test('dialog has sticky header + scrollable body + sticky footer layout classes', () => {
+    renderWithQueue([makePending({ confirmationId: 'cid-A', toolName: 'tool-A' })]);
+
+    // The body container is the only element that should scroll.
+    const dialog = screen.getByTestId('dialog-root');
+    expect(dialog.className).toContain('overflow-hidden');
+    expect(dialog.className).toContain('flex-col');
+
+    // Header has flex-shrink-0 + border-b
+    const header = screen.getByTestId('dialog-header');
+    expect(header.className).toContain('flex-shrink-0');
+    expect(header.className).toContain('border-b');
+
+    // Body is the scroll container (flex-1 + overflow-y-auto)
+    const body = screen.getByTestId('dialog-body');
+    expect(body.className).toContain('flex-1');
+    expect(body.className).toContain('overflow-y-auto');
+
+    // Footer is sticky at bottom
+    const footer = screen.getByTestId('dialog-footer');
+    expect(footer.className).toContain('flex-shrink-0');
+    expect(footer.className).toContain('border-t');
   });
 });
