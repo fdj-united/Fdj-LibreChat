@@ -90,7 +90,7 @@ function PresentationFieldRow({ field }: { field: PresentationField }) {
       <dd className="mt-1">
         {/* eslint-disable no-nested-ternary */}
         {isMarkdown ? (
-          <div className="prose prose-sm dark:prose-invert max-w-none break-words text-text-primary">
+          <div className="max-w-none break-words text-text-primary">
             <MarkdownLite content={value as string} codeExecution={false} />
           </div>
         ) : useBlock ? (
