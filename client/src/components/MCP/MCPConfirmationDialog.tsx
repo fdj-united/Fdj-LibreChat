@@ -1,6 +1,7 @@
 /* eslint-disable i18next/no-literal-string */
 import React, { useEffect, useRef, useState } from 'react';
 import { useRecoilState } from 'recoil';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   Button,
   OGDialog,
@@ -129,15 +130,18 @@ function PresentationView({ presentation }: { presentation: MCPConfirmationPrese
         {showDetails && details.map((f, i) => <PresentationFieldRow key={`d-${i}`} field={f} />)}
       </dl>
       {details.length > 0 && (
-        <button
+        <Button
           type="button"
-          className="mt-2 text-xs text-text-secondary underline hover:text-text-primary"
+          variant="ghost"
+          size="sm"
           onClick={() => setShowDetails((v) => !v)}
+          className="mt-3 inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary"
         >
+          {showDetails ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
           {showDetails
             ? 'Hide details'
             : `Show ${details.length} more detail${details.length === 1 ? '' : 's'}`}
-        </button>
+        </Button>
       )}
     </div>
   );
