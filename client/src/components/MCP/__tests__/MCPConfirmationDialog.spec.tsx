@@ -53,13 +53,30 @@ jest.mock('@librechat/client', () => {
       </div>
     ),
     OGDialogTitle: ({ children }: any) => <h2>{children}</h2>,
-    Button: ({ children, onClick, disabled }: any) => (
-      <button type="button" onClick={onClick} disabled={disabled}>
+    Button: ({ children, onClick, disabled, className, variant, size, type, ...props }: any) => (
+      <button
+        type={type ?? 'button'}
+        onClick={onClick}
+        disabled={disabled}
+        className={className}
+        data-variant={variant}
+        data-size={size}
+        {...props}
+      >
         {children}
       </button>
     ),
   };
 });
+
+jest.mock('lucide-react', () => ({
+  ChevronDown: ({ className }: { className?: string }) => (
+    <svg data-testid="chevron-down" className={className} />
+  ),
+  ChevronUp: ({ className }: { className?: string }) => (
+    <svg data-testid="chevron-up" className={className} />
+  ),
+}));
 
 // Stable global fetch mock — we never want a test to hit the real network.
 beforeEach(() => {
@@ -290,5 +307,40 @@ describe('MCPConfirmationDialog queue mechanics', () => {
     const footer = screen.getByTestId('dialog-footer');
     expect(footer.className).toContain('flex-shrink-0');
     expect(footer.className).toContain('border-t');
+  });
+
+  test('show-details toggle is a button with chevron icon and toggles state', async () => {
+    renderWithQueue([
+      makePending({
+        confirmationId: 'cid-d',
+        toolName: 'tool-d',
+        presentation: {
+          title: 'Detail test',
+          fields: [
+            { label: 'Primary', value: 'p', format: 'text', importance: 'primary' },
+            { label: 'Hidden', value: 'h', format: 'text', importance: 'detail' },
+          ],
+        },
+      }),
+    ]);
+
+    // Initial state: chevron-down + "Show 1 more detail"
+    const toggle = screen.getByRole('button', { name: /Show 1 more detail/ });
+    expect(toggle).toBeInTheDocument();
+    expect(screen.getByTestId('chevron-down')).toBeInTheDocument();
+    expect(screen.queryByTestId('chevron-up')).toBeNull();
+    // Detail field NOT visible yet.
+    expect(screen.queryByText(/Hidden/)).toBeNull();
+
+    // Click → expand
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+
+    // After click: chevron-up + "Hide details" + detail field visible
+    expect(screen.getByRole('button', { name: /Hide details/ })).toBeInTheDocument();
+    expect(screen.getByTestId('chevron-up')).toBeInTheDocument();
+    expect(screen.queryByTestId('chevron-down')).toBeNull();
+    expect(screen.getByText(/Hidden/)).toBeInTheDocument();
   });
 });
