@@ -9,6 +9,7 @@ import {
   OGDialogTitle,
 } from '@librechat/client';
 import { useAuthContext } from '~/hooks/AuthContext';
+import MarkdownLite from '~/components/Chat/Messages/Content/MarkdownLite';
 import {
   pendingMCPConfirmationsAtom,
   type MCPConfirmationPresentation,
@@ -77,13 +78,20 @@ function formatValue(v: unknown): string {
 function PresentationFieldRow({ field }: { field: PresentationField }) {
   const { label, value, format } = field;
   const complex = isComplexValue(value);
-  const useBlock = complex || format === 'json' || format === 'markdown';
+  // Markdown branch only takes string values; non-strings fall through to the
+  // <pre> block for safety (e.g. a malformed object slipped in with format=markdown).
+  const isMarkdown = format === 'markdown' && typeof value === 'string';
+  const useBlock = complex || format === 'json' || (format === 'markdown' && !isMarkdown);
 
   return (
     <div className="px-3 py-2">
       <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{label}</dt>
       <dd className="mt-1">
-        {useBlock ? (
+        {isMarkdown ? (
+          <div className="prose prose-sm dark:prose-invert max-w-none break-words text-text-primary">
+            <MarkdownLite content={value as string} codeExecution={false} />
+          </div>
+        ) : useBlock ? (
           <pre className="overflow-auto whitespace-pre-wrap break-all rounded bg-surface-primary p-2 font-mono text-xs text-text-primary">
             {formatValue(value)}
           </pre>
