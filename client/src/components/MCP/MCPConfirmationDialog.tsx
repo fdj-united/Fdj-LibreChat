@@ -116,7 +116,7 @@ function PresentationFieldRow({ field }: { field: PresentationField }) {
  * surfaces the at-a-glance summary first.
  */
 function PresentationView({ presentation }: { presentation: MCPConfirmationPresentation }) {
-  const [showDetails, setShowDetails] = React.useState(false);
+  const [showDetails, setShowDetails] = React.useState(true);
   const primary = presentation.fields.filter((f) => f.importance !== 'detail');
   const details = presentation.fields.filter((f) => f.importance === 'detail');
 
@@ -260,7 +260,7 @@ export default function MCPConfirmationDialog() {
       >
         <OGDialogHeader
           data-testid="dialog-header"
-          className="flex-shrink-0 border-b border-border-light px-6 py-4"
+          className="flex-shrink-0 border-b border-border-light px-6 py-4 my-0"
         >
           <OGDialogTitle>
             {head.presentation?.title ?? `Confirm action: ${head.toolName}`}
@@ -278,7 +278,7 @@ export default function MCPConfirmationDialog() {
           )}
         </OGDialogHeader>
 
-        <div data-testid="dialog-body" className="flex-1 overflow-y-auto px-6 py-4">
+        <div data-testid="dialog-body" className="flex-1 overflow-y-auto px-6 py-0 my-0">
           <p className="mb-3 text-sm text-text-secondary">
             The model is requesting to run a tool that requires your approval. Review the call below
             before continuing.
