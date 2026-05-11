@@ -11,7 +11,6 @@ import {
   apiBaseUrl,
   createPayload,
   ViolationTypes,
-  LocalStorageKeys,
   removeNullishValues,
 } from 'librechat-data-provider';
 import type { TMessage, TPayload, TSubmission, EventSubmission } from 'librechat-data-provider';
@@ -20,17 +19,9 @@ import { useGetStartupConfig, useGetUserBalance, queueTitleGeneration } from '~/
 import type { ActiveJobsResponse } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
-import store from '~/store';
-
-const clearDraft = (conversationId?: string | null) => {
-  if (conversationId) {
-    localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${conversationId}`);
-    localStorage.removeItem(`${LocalStorageKeys.FILES_DRAFT}${conversationId}`);
-  } else {
-    localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${Constants.NEW_CONVO}`);
-    localStorage.removeItem(`${LocalStorageKeys.FILES_DRAFT}${Constants.NEW_CONVO}`);
-  }
-};
+import { clearAllDrafts } from '~/utils';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
+import { enqueueMCPConfirmation } from './enqueueMCPConfirmation';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -94,6 +85,7 @@ export default function useResumableSSE(
   const [streamId, setStreamId] = useState<string | null>(null);
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const sseRef = useRef<SSE | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -176,7 +168,7 @@ export default function useResumableSSE(
               conversationId: data.conversation?.conversationId,
               hasResponseMessage: !!data.responseMessage,
             });
-            clearDraft(currentSubmission.conversation?.conversationId);
+            clearAllDrafts(currentSubmission.conversation?.conversationId);
             try {
               finalHandler(data, currentSubmission as EventSubmission);
             } catch (error) {
@@ -218,6 +210,15 @@ export default function useResumableSSE(
             return;
           }
 
+          if (data.event === 'mcp_confirmation_required') {
+            // Intercept BEFORE stepHandler — the agent loop is suspended
+            // server-side awaiting POST /api/mcp/confirm/:id. We surface the
+            // modal; nothing should reach the chunk pipeline.
+            // See enqueueMCPConfirmation for the enqueue+dedup+deadline rationale.
+            setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, data.data));
+            return;
+          }
+
           if (data.event != null) {
             stepHandler(data, { ...currentSubmission, userMessage } as EventSubmission);
             return;
@@ -226,12 +227,12 @@ export default function useResumableSSE(
           if (data.sync != null) {
             console.log('[ResumableSSE] SYNC received', {
               runSteps: data.resumeState?.runSteps?.length ?? 0,
+              pendingEvents: data.pendingEvents?.length ?? 0,
             });
 
             const runId = v4();
             setActiveRunId(runId);
 
-            // Replay run steps
             if (data.resumeState?.runSteps) {
               for (const runStep of data.resumeState.runSteps) {
                 stepHandler({ event: 'on_run_step', data: runStep }, {
@@ -241,19 +242,15 @@ export default function useResumableSSE(
               }
             }
 
-            // Set message content from aggregatedContent
             if (data.resumeState?.aggregatedContent && userMessage?.messageId) {
               const messages = getMessages() ?? [];
               const userMsgId = userMessage.messageId;
               const serverResponseId = data.resumeState.responseMessageId;
 
-              // Find the EXACT response message - prioritize responseMessageId from server
-              // This is critical when there are multiple responses to the same user message
               let responseIdx = -1;
               if (serverResponseId) {
                 responseIdx = messages.findIndex((m) => m.messageId === serverResponseId);
               }
-              // Fallback: find by parentMessageId pattern (for new messages)
               if (responseIdx < 0) {
                 responseIdx = messages.findIndex(
                   (m) =>
@@ -272,7 +269,6 @@ export default function useResumableSSE(
               });
 
               if (responseIdx >= 0) {
-                // Update existing response message with aggregatedContent
                 const updated = [...messages];
                 const oldContent = updated[responseIdx]?.content;
                 updated[responseIdx] = {
@@ -285,25 +281,42 @@ export default function useResumableSSE(
                   newContentLength: data.resumeState.aggregatedContent?.length,
                 });
                 setMessages(updated);
-                // Sync both content handler and step handler with the updated message
-                // so subsequent deltas build on synced content, not stale content
                 resetContentHandler();
                 syncStepMessage(updated[responseIdx]);
                 console.log('[ResumableSSE] SYNC complete, handlers synced');
               } else {
-                // Add new response message
                 const responseId = serverResponseId ?? `${userMsgId}_`;
-                setMessages([
-                  ...messages,
-                  {
-                    messageId: responseId,
-                    parentMessageId: userMsgId,
-                    conversationId: currentSubmission.conversation?.conversationId ?? '',
-                    text: '',
-                    content: data.resumeState.aggregatedContent,
-                    isCreatedByUser: false,
-                  } as TMessage,
-                ]);
+                const newMessage = {
+                  messageId: responseId,
+                  parentMessageId: userMsgId,
+                  conversationId: currentSubmission.conversation?.conversationId ?? '',
+                  text: '',
+                  content: data.resumeState.aggregatedContent,
+                  isCreatedByUser: false,
+                } as TMessage;
+                setMessages([...messages, newMessage]);
+                resetContentHandler();
+                syncStepMessage(newMessage);
+              }
+            }
+
+            if (data.pendingEvents?.length > 0) {
+              console.log(`[ResumableSSE] Replaying ${data.pendingEvents.length} pending events`);
+              const submission = { ...currentSubmission, userMessage } as EventSubmission;
+              for (const pendingEvent of data.pendingEvents) {
+                if (pendingEvent.event === 'mcp_confirmation_required') {
+                  // Mid-confirmation reconnect: the server-side wait is still
+                  // in flight, so re-surface the modal from the replayed event.
+                  // Helper dedups by confirmationId — replay during an active
+                  // confirmation is a no-op.
+                  setPendingMCPConfirmations((prev) =>
+                    enqueueMCPConfirmation(prev, pendingEvent.data),
+                  );
+                } else if (pendingEvent.event != null) {
+                  stepHandler(pendingEvent, submission);
+                } else if (pendingEvent.type != null) {
+                  contentHandler({ data: pendingEvent, submission });
+                }
               }
             }
 
@@ -353,7 +366,13 @@ export default function useResumableSSE(
           console.log('[ResumableSSE] Stream not found (404) - job completed or expired');
           sse.close();
           removeActiveJob(currentStreamId);
-          setIsSubmitting(false);
+          clearAllDrafts(currentSubmission.conversation?.conversationId);
+          errorHandler({
+            data: {
+              text: JSON.stringify({ type: ErrorTypes.STREAM_EXPIRED }),
+            } as unknown as Parameters<typeof errorHandler>[0]['data'],
+            submission: currentSubmission as EventSubmission,
+          });
           setShowStopButton(false);
           setStreamId(null);
           reconnectAttemptRef.current = 0;

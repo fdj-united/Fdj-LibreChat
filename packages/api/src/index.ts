@@ -7,6 +7,7 @@ export * from './apiKeys';
 /* MCP */
 export * from './mcp/registry/MCPServersRegistry';
 export * from './mcp/MCPManager';
+export * from './mcp/ConfirmationStore';
 export * from './mcp/connection';
 export * from './mcp/oauth';
 export * from './mcp/auth';
@@ -15,6 +16,8 @@ export * from './mcp/errors';
 /* Utilities */
 export * from './mcp/utils';
 export * from './utils';
+export { default as Tokenizer, countTokens } from './utils/tokenizer';
+export type { EncodingName } from './utils/tokenizer';
 export * from './db/utils';
 /* OAuth */
 export * from './oauth';

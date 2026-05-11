@@ -14,6 +14,8 @@ const {
   normalizeJsonSchema,
   GenerationJobManager,
   resolveJsonSchemaRefs,
+  getConfirmationStore,
+  parseConfirmationEnvelope,
 } = require('@librechat/api');
 const {
   Time,
@@ -33,6 +35,55 @@ const { getGraphApiToken } = require('./GraphTokenService');
 const { reinitMCPServer } = require('./Tools/mcp');
 const { getAppConfig } = require('./Config');
 const { getLogStores } = require('~/cache');
+
+const MAX_CACHE_SIZE = 1000;
+const lastReconnectAttempts = new Map();
+const RECONNECT_THROTTLE_MS = 10_000;
+
+const missingToolCache = new Map();
+const MISSING_TOOL_TTL_MS = 10_000;
+
+function evictStale(map, ttl) {
+  if (map.size <= MAX_CACHE_SIZE) {
+    return;
+  }
+  const now = Date.now();
+  for (const [key, timestamp] of map) {
+    if (now - timestamp >= ttl) {
+      map.delete(key);
+    }
+    if (map.size <= MAX_CACHE_SIZE) {
+      return;
+    }
+  }
+}
+
+const unavailableMsg =
+  "This tool's MCP server is temporarily unavailable. Please try again shortly.";
+
+/**
+ * @param {string} toolName
+ * @param {string} serverName
+ */
+function createUnavailableToolStub(toolName, serverName) {
+  const normalizedToolKey = `${toolName}${Constants.mcp_delimiter}${normalizeServerName(serverName)}`;
+  const _call = async () => [unavailableMsg, null];
+  const toolInstance = tool(_call, {
+    schema: {
+      type: 'object',
+      properties: {
+        input: { type: 'string', description: 'Input for the tool' },
+      },
+      required: [],
+    },
+    name: normalizedToolKey,
+    description: unavailableMsg,
+    responseFormat: AgentConstants.CONTENT_AND_ARTIFACT,
+  });
+  toolInstance.mcp = true;
+  toolInstance.mcpRawServerName = serverName;
+  return toolInstance;
+}
 
 function isEmptyObjectSchema(jsonSchema) {
   return (
@@ -211,6 +262,17 @@ async function reconnectServer({
   logger.debug(
     `[MCP][reconnectServer] serverName: ${serverName}, user: ${user?.id}, hasUserMCPAuthMap: ${!!userMCPAuthMap}`,
   );
+
+  const throttleKey = `${user.id}:${serverName}`;
+  const now = Date.now();
+  const lastAttempt = lastReconnectAttempts.get(throttleKey) ?? 0;
+  if (now - lastAttempt < RECONNECT_THROTTLE_MS) {
+    logger.debug(`[MCP][reconnectServer] Throttled reconnect for ${serverName}`);
+    return null;
+  }
+  lastReconnectAttempts.set(throttleKey, now);
+  evictStale(lastReconnectAttempts, RECONNECT_THROTTLE_MS);
+
   const runId = Constants.USE_PRELIM_RESPONSE_MESSAGE_ID;
   const flowId = `${user.id}:${serverName}:${Date.now()}`;
   const flowManager = getFlowStateManager(getLogStores(CacheKeys.FLOWS));
@@ -267,7 +329,7 @@ async function reconnectServer({
       userMCPAuthMap,
       forceNew: true,
       returnOnOAuth: false,
-      connectionTimeout: Time.TWO_MINUTES,
+      connectionTimeout: Time.THIRTY_SECONDS,
     });
   } finally {
     // Clean up abort handler to prevent memory leaks
@@ -330,9 +392,13 @@ async function createMCPTools({
     userMCPAuthMap,
     streamId,
   });
+  if (result === null) {
+    logger.debug(`[MCP][${serverName}] Reconnect throttled, skipping tool creation.`);
+    return [];
+  }
   if (!result || !result.tools) {
     logger.warn(`[MCP][${serverName}] Failed to reinitialize MCP server.`);
-    return;
+    return [];
   }
 
   const serverTools = [];
@@ -402,6 +468,14 @@ async function createMCPTool({
   /** @type {LCTool | undefined} */
   let toolDefinition = availableTools?.[toolKey]?.function;
   if (!toolDefinition) {
+    const cachedAt = missingToolCache.get(toolKey);
+    if (cachedAt && Date.now() - cachedAt < MISSING_TOOL_TTL_MS) {
+      logger.debug(
+        `[MCP][${serverName}][${toolName}] Tool in negative cache, returning unavailable stub.`,
+      );
+      return createUnavailableToolStub(toolName, serverName);
+    }
+
     logger.warn(
       `[MCP][${serverName}][${toolName}] Requested tool not found in available tools, re-initializing MCP server.`,
     );
@@ -415,11 +489,18 @@ async function createMCPTool({
       streamId,
     });
     toolDefinition = result?.availableTools?.[toolKey]?.function;
+
+    if (!toolDefinition) {
+      missingToolCache.set(toolKey, Date.now());
+      evictStale(missingToolCache, MISSING_TOOL_TTL_MS);
+    }
   }
 
   if (!toolDefinition) {
-    logger.warn(`[MCP][${serverName}][${toolName}] Tool definition not found, cannot create tool.`);
-    return;
+    logger.warn(
+      `[MCP][${serverName}][${toolName}] Tool definition not found, returning unavailable stub.`,
+    );
+    return createUnavailableToolStub(toolName, serverName);
   }
 
   return createToolInstance({
@@ -430,6 +511,113 @@ async function createMCPTool({
     toolDefinition,
     streamId,
   });
+}
+
+/**
+ * Providers that expect tool results as a content-array (matches CONTENT_ARRAY_PROVIDERS
+ * in packages/api/src/mcp/parsers.ts). For these, FormattedContentResult[0] is an array
+ * of content blocks; for others, it is a string.
+ */
+const ARRAY_CONTENT_PROVIDERS = new Set(['google', 'anthropic', 'azureopenai', 'openai']);
+
+/**
+ * Build a synthetic "canceled" tool result that mirrors the FormattedContentResult shape
+ * MCPManager.callTool returns. The agent loop sees this as a normal tool response and
+ * can continue conversationally.
+ */
+function buildCanceledToolResult(provider, reason) {
+  const text = JSON.stringify({ success: false, canceled: true, reason });
+  if (ARRAY_CONTENT_PROVIDERS.has(provider)) {
+    return [[{ type: 'text', text }], undefined];
+  }
+  return [text, undefined];
+}
+
+/**
+ * Emit an SSE event to the originating user's open stream, routing through the
+ * resumable-job manager when present and falling back to direct res.write otherwise.
+ */
+async function emitMCPSSE(res, streamId, eventData) {
+  if (streamId) {
+    await GenerationJobManager.emitChunk(streamId, eventData);
+  } else if (res) {
+    sendEvent(res, eventData);
+  }
+}
+
+/**
+ * Suspends the agent loop while the user reviews a "confirmationRequired" envelope.
+ *
+ * Emits an `mcp_confirmation_required` SSE event, then awaits a decision posted to
+ * /api/mcp/confirm/:id by the originating user. On accept, the caller re-invokes the
+ * tool with identical args so the gateway's Phase 2 args-hash matches and forwards
+ * upstream. On cancel or timeout, the caller returns a synthesized canceled result.
+ *
+ * The LLM never observes the envelope: this function returns the decision but the
+ * envelope itself is dropped and replaced by either the real upstream result or a
+ * canceled stub. That asymmetry is the security property — the model has no path to
+ * issue the second tool call itself.
+ */
+async function awaitConfirmationDecision({
+  res,
+  streamId,
+  userId,
+  serverName,
+  toolName,
+  envelope,
+  signal,
+}) {
+  const store = getConfirmationStore();
+  const ttlMs = Math.max(1000, envelope.expiresInSeconds * 1000);
+  const { confirmationId, waitForDecision } = store.register(userId, ttlMs);
+
+  const eventData = {
+    event: 'mcp_confirmation_required',
+    data: {
+      confirmationId,
+      serverName,
+      toolName,
+      preview: envelope.preview,
+      expiresInSeconds: envelope.expiresInSeconds,
+      expiresAt: Date.now() + ttlMs,
+      // Optional structured rendering hints from the gateway. Forwarded
+      // verbatim; the client falls back to parsing `preview` when absent.
+      ...(envelope.presentation ? { presentation: envelope.presentation } : {}),
+    },
+  };
+
+  try {
+    await emitMCPSSE(res, streamId, eventData);
+  } catch (err) {
+    logger.error(
+      `[MCP][${serverName}][${toolName}] Failed to emit confirmation SSE event`,
+      err,
+    );
+    store.resolve(confirmationId, userId, 'cancel');
+    return { decision: 'cancel' };
+  }
+
+  let abortListener = null;
+  if (signal) {
+    abortListener = () => {
+      // If the request is aborted (user navigates away, stops generation), drop
+      // the confirmation rather than leaking the deferred until TTL.
+      store.resolve(confirmationId, userId, 'cancel');
+    };
+    if (signal.aborted) {
+      abortListener();
+    } else {
+      signal.addEventListener('abort', abortListener, { once: true });
+    }
+  }
+
+  try {
+    return await waitForDecision;
+  } finally {
+    if (signal && abortListener) {
+      signal.removeEventListener('abort', abortListener);
+    }
+  }
 }
 
 function createToolInstance({
@@ -501,7 +689,7 @@ function createToolInstance({
       const customUserVars =
         config?.configurable?.userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
 
-      const result = await mcpManager.callTool({
+      const callToolArgs = {
         serverName,
         toolName,
         provider,
@@ -521,7 +709,80 @@ function createToolInstance({
         oauthStart,
         oauthEnd,
         graphTokenResolver: getGraphApiToken,
-      });
+      };
+
+      let result = await mcpManager.callTool(callToolArgs);
+
+      // Confirmation interception. The gateway returns an envelope on the first
+      // call; we MUST NOT pass that to the LLM because doing so makes the model
+      // the security boundary. Instead suspend, ask the user, then either
+      // re-issue identical args (Phase 2 → upstream executes) or synthesize a
+      // canceled response.
+      const envelope = parseConfirmationEnvelope(result);
+      if (envelope && userId) {
+        logger.info(
+          `[MCP][${serverName}][${toolName}][User: ${userId}] Confirmation required, suspending agent loop`,
+        );
+        const { decision } = await awaitConfirmationDecision({
+          res,
+          streamId,
+          userId,
+          serverName,
+          toolName,
+          envelope,
+          signal: derivedSignal,
+        });
+
+        if (decision === 'accept') {
+          // Re-call with the SAME toolArguments reference so the gateway's
+          // args-hash matches and Phase 2 fires upstream.
+          result = await mcpManager.callTool(callToolArgs);
+          // Defense in depth: a Phase-2 call should not return another envelope.
+          // If it does, treat as misconfiguration and synthesize a canceled stub
+          // so the LLM never sees the envelope text.
+          if (parseConfirmationEnvelope(result)) {
+            logger.warn(
+              `[MCP][${serverName}][${toolName}][User: ${userId}] Phase-2 call still returned a confirmation envelope; treating as canceled`,
+            );
+            result = buildCanceledToolResult(
+              provider,
+              'Confirmation could not be completed. Please retry.',
+            );
+          }
+        } else {
+          const reason =
+            decision === 'timeout'
+              ? 'User did not confirm in time.'
+              : 'User declined.';
+
+          // Fire-and-forget clear of the gateway-side pending entry. Without
+          // this, the gateway's pending_approvals map keeps the entry until
+          // its 120s TTL — and a retry of the same (tool, args) within that
+          // window silently bypasses the modal.
+          //
+          // Best-effort: if the clear call fails, we still return the
+          // canceled stub. The gateway's TTL is the fallback.
+          //
+          // See agentgateway/docs/superpowers/specs/2026-05-09-mcp-confirmation-clear-design.md
+          const clearArgs = {
+            ...callToolArgs,
+            toolArguments: {
+              ...callToolArgs.toolArguments,
+              __mcp_clear_pending__: true,
+            },
+          };
+          // Fire-and-forget — see comment block above. The `?.` guards Jest
+          // mocks that don't chain `.mockResolvedValue(...)`; production
+          // `MCPManager.callTool` always returns a Promise.
+          mcpManager.callTool(clearArgs)?.catch((err) => {
+            logger.warn(
+              `[MCP][${serverName}][${toolName}][User: ${userId}] Failed to clear gateway-side pending approval (best-effort; TTL is fallback): ${err.message}`,
+            );
+          });
+
+          result = buildCanceledToolResult(provider, reason);
+        }
+      }
 
       if (isAssistantsEndpoint(provider) && Array.isArray(result)) {
         return result[0];
@@ -717,7 +978,9 @@ async function getServerConnectionStatus(
 module.exports = {
   createMCPTool,
   createMCPTools,
+  createToolInstance,
   getMCPSetupData,
   checkOAuthFlowStatus,
   getServerConnectionStatus,
+  createUnavailableToolStub,
 };

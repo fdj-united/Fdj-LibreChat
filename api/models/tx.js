@@ -97,11 +97,19 @@ const bedrockValues = {
   'nova-pro': { prompt: 0.8, completion: 3.2 },
   'nova-premier': { prompt: 2.5, completion: 12.5 },
   'deepseek.r1': { prompt: 1.35, completion: 5.4 },
+  // Claude models on Bedrock cross-region inference (eu.* prefix — 10% surcharge over Anthropic direct)
+  'eu.anthropic.claude-sonnet-4-6': { prompt: 3.30, completion: 16.50 },
   // Moonshot/Kimi models on Bedrock
   'moonshot.kimi': { prompt: 0.6, completion: 2.5 },
   'moonshot.kimi-k2': { prompt: 0.6, completion: 2.5 },
   'moonshot.kimi-k2.5': { prompt: 0.6, completion: 3.0 },
   'moonshot.kimi-k2-thinking': { prompt: 0.6, completion: 2.5 },
+  // Claude models on Bedrock cross-region inference (eu.* prefix — 10% surcharge over Anthropic direct)
+  'eu.anthropic.claude-haiku-4-5': { prompt: 1.10, completion: 5.50 },
+  'eu.anthropic.claude-sonnet-4-5': { prompt: 3.30, completion: 16.50 },
+  'eu.anthropic.claude-sonnet-4-6': { prompt: 3.30, completion: 16.50 },
+  'eu.anthropic.claude-opus-4-5': { prompt: 5.50, completion: 27.50 },
+  'eu.anthropic.claude-opus-4-6': { prompt: 5.50, completion: 27.50 },
 };
 
 /**
@@ -305,9 +313,16 @@ const cacheTokenValues = {
   'claude-haiku-4-5': { write: 1.25, read: 0.1 },
   'claude-sonnet-4': { write: 3.75, read: 0.3 },
   'claude-sonnet-4-6': { write: 3.75, read: 0.3 },
+  'eu.anthropic.claude-sonnet-4-6': { write: 4.125, read: 0.33 },
   'claude-opus-4': { write: 18.75, read: 1.5 },
   'claude-opus-4-5': { write: 6.25, read: 0.5 },
   'claude-opus-4-6': { write: 6.25, read: 0.5 },
+  // Claude models on Bedrock cross-region inference (eu.* prefix — 10% surcharge over Anthropic direct)
+  'eu.anthropic.claude-haiku-4-5': { write: 1.375, read: 0.110 },
+  'eu.anthropic.claude-sonnet-4-5': { write: 4.125, read: 0.330 },
+  'eu.anthropic.claude-sonnet-4-6': { write: 4.125, read: 0.330 },
+  'eu.anthropic.claude-opus-4-5': { write: 6.875, read: 0.550 },
+  'eu.anthropic.claude-opus-4-6': { write: 6.875, read: 0.550 },
   // OpenAI models — cached input discount varies by family:
   //   gpt-4o (incl. mini), o1 (incl. mini/preview): 50% off
   //   gpt-4.1 (incl. mini/nano), o3 (incl. mini), o4-mini: 75% off

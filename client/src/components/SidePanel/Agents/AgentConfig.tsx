@@ -70,6 +70,8 @@ export default function AgentConfig() {
       return 'Claude Haiku 4.5';
     } else if (modelId.includes('claude-opus-4-6')) {
       return 'Claude Opus 4.6';
+    } else if (modelId.includes('claude-sonnet-4-6')) {
+      return 'Claude Sonnet 4.6';
     }
     return modelId;
   };

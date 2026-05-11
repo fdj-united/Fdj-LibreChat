@@ -2,31 +2,16 @@ import { useEffect, useState } from 'react';
 import { v4 } from 'uuid';
 import { SSE } from 'sse.js';
 import { useSetRecoilState } from 'recoil';
-import {
-  request,
-  Constants,
-  /* @ts-ignore */
-  createPayload,
-  LocalStorageKeys,
-  removeNullishValues,
-} from 'librechat-data-provider';
+import { request, createPayload, removeNullishValues } from 'librechat-data-provider';
 import type { TMessage, TPayload, TSubmission, EventSubmission } from 'librechat-data-provider';
 import type { EventHandlerParams } from './useEventHandlers';
 import type { TResData } from '~/common';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
-import store from '~/store';
-
-const clearDraft = (conversationId?: string | null) => {
-  if (conversationId) {
-    localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${conversationId}`);
-    localStorage.removeItem(`${LocalStorageKeys.FILES_DRAFT}${conversationId}`);
-  } else {
-    localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${Constants.NEW_CONVO}`);
-    localStorage.removeItem(`${LocalStorageKeys.FILES_DRAFT}${Constants.NEW_CONVO}`);
-  }
-};
+import { clearAllDrafts } from '~/utils';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
+import { enqueueMCPConfirmation } from './enqueueMCPConfirmation';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -50,6 +35,7 @@ export default function useSSE(
   const [completed, setCompleted] = useState(new Set());
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const {
     setMessages,
@@ -120,7 +106,7 @@ export default function useSSE(
       const data = JSON.parse(e.data);
 
       if (data.final != null) {
-        clearDraft(submission.conversation?.conversationId);
+        clearAllDrafts(submission.conversation?.conversationId);
         try {
           finalHandler(data, submission as EventSubmission);
         } catch (error) {
@@ -141,6 +127,13 @@ export default function useSSE(
         };
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
+      } else if (data.event === 'mcp_confirmation_required') {
+        // Intercept before stepHandler — this event is not a step delta and
+        // must surface the confirmation modal instead of feeding the chunk
+        // pipeline. The backend has suspended the agent loop awaiting the
+        // user's decision via POST /api/mcp/confirm/:confirmationId.
+        // See enqueueMCPConfirmation for the enqueue+dedup+deadline rationale.
+        setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, data.data));
       } else if (data.event != null) {
         stepHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.sync != null) {

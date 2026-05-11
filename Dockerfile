@@ -1,9 +1,9 @@
-# v0.8.3
+# v0.8.4
 
 # Base node image
 FROM node:20-alpine AS node
 
-# Install jemalloc
+RUN apk upgrade --no-cache
 RUN apk add --no-cache jemalloc
 RUN apk add --no-cache python3 py3-pip uv
 
@@ -28,6 +28,7 @@ COPY --chown=node:node client/package.json ./client/package.json
 COPY --chown=node:node packages/data-provider/package.json ./packages/data-provider/package.json
 COPY --chown=node:node packages/data-schemas/package.json ./packages/data-schemas/package.json
 COPY --chown=node:node packages/api/package.json ./packages/api/package.json
+COPY --chown=node:node patches ./patches
 
 RUN \
     # Allow mounting of these files, which have no default
