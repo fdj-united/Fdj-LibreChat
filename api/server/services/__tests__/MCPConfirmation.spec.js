@@ -373,7 +373,7 @@ describe('MCP confirmation flow (integration)', () => {
 
   it('REST endpoint rejects resolution attempts from a different user', async () => {
     const store = getConfirmationStore();
-    const { confirmationId } = store.register('user-1', 5_000);
+    const { confirmationId } = await store.register('user-1', 5_000);
 
     const app = express();
     app.use(express.json());
@@ -396,9 +396,7 @@ describe('MCP confirmation flow (integration)', () => {
   it('REST endpoint validates body and confirmationId', async () => {
     const app = buildApp();
 
-    const bad1 = await request(app)
-      .post('/api/mcp/confirm/some-id')
-      .send({ decision: 'maybe' });
+    const bad1 = await request(app).post('/api/mcp/confirm/some-id').send({ decision: 'maybe' });
     expect(bad1.status).toBe(400);
 
     const bad2 = await request(app)

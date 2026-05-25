@@ -79,7 +79,7 @@ router.get('/tools', requireJwtAuth, async (req, res) => {
  * @route POST /api/mcp/confirm/:confirmationId
  * @body { decision: 'accept' | 'cancel' }
  */
-router.post('/confirm/:confirmationId', requireJwtAuth, (req, res) => {
+router.post('/confirm/:confirmationId', requireJwtAuth, async (req, res) => {
   const { confirmationId } = req.params;
   const { decision } = req.body || {};
   const userId = req.user?.id;
@@ -94,7 +94,9 @@ router.post('/confirm/:confirmationId', requireJwtAuth, (req, res) => {
     return res.status(400).json({ error: 'Invalid confirmationId' });
   }
 
-  const result = getConfirmationStore().resolve(confirmationId, userId, decision);
+  // resolve() returns a Promise in the Redis-backed store (since AIS-510)
+  // and a plain object in the in-memory store. Awaiting handles both.
+  const result = await getConfirmationStore().resolve(confirmationId, userId, decision);
   if (result.ok) {
     return res.status(204).end();
   }

@@ -1,7 +1,4 @@
-import {
-  ConfirmationStore,
-  parseConfirmationEnvelope,
-} from '~/mcp/ConfirmationStore';
+import { ConfirmationStore, parseConfirmationEnvelope } from '~/mcp/ConfirmationStore';
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: {
@@ -16,7 +13,7 @@ describe('ConfirmationStore', () => {
   describe('register / resolve', () => {
     it('resolves with the decision posted by the originating user', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
       expect(store.has(confirmationId)).toBe(true);
       expect(store.size()).toBe(1);
@@ -32,7 +29,7 @@ describe('ConfirmationStore', () => {
 
     it('cancel decisions are surfaced to the awaiting promise', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
       store.resolve(confirmationId, 'user-1', 'cancel');
       const outcome = await waitForDecision;
@@ -50,7 +47,7 @@ describe('ConfirmationStore', () => {
 
     it('resolves with timeout when ttl elapses without a decision', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 1_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 1_000);
       expect(store.has(confirmationId)).toBe(true);
 
       jest.advanceTimersByTime(1_000);
@@ -62,7 +59,7 @@ describe('ConfirmationStore', () => {
 
     it('resolve called after timeout returns not_found', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 1_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 1_000);
 
       jest.advanceTimersByTime(1_000);
       await waitForDecision;
@@ -73,7 +70,7 @@ describe('ConfirmationStore', () => {
 
     it('does not invoke the timeout if resolved first', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 1_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 1_000);
 
       store.resolve(confirmationId, 'user-1', 'accept');
       jest.advanceTimersByTime(5_000);
@@ -86,7 +83,7 @@ describe('ConfirmationStore', () => {
   describe('cross-user isolation', () => {
     it('rejects resolution attempts from a different userId without resolving', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
       const result = store.resolve(confirmationId, 'user-2', 'accept');
       expect(result).toEqual({ ok: false, reason: 'forbidden' });
@@ -113,7 +110,7 @@ describe('ConfirmationStore', () => {
 
     it('double-resolve is idempotent (second call returns not_found)', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
       const first = store.resolve(confirmationId, 'user-1', 'accept');
       const second = store.resolve(confirmationId, 'user-1', 'cancel');
@@ -126,21 +123,21 @@ describe('ConfirmationStore', () => {
   });
 
   describe('input validation', () => {
-    it('throws when userId is empty', () => {
+    it('throws when userId is empty', async () => {
       const store = new ConfirmationStore();
-      expect(() => store.register('', 1_000)).toThrow(/userId/);
+      await expect(store.register('', 1_000)).rejects.toThrow(/userId/);
     });
 
-    it('throws on non-positive ttl', () => {
+    it('throws on non-positive ttl', async () => {
       const store = new ConfirmationStore();
-      expect(() => store.register('u', 0)).toThrow(/ttlMs/);
-      expect(() => store.register('u', -1)).toThrow(/ttlMs/);
+      await expect(store.register('u', 0)).rejects.toThrow(/ttlMs/);
+      await expect(store.register('u', -1)).rejects.toThrow(/ttlMs/);
     });
 
-    it('produces unique confirmationIds across calls', () => {
+    it('produces unique confirmationIds across calls', async () => {
       const store = new ConfirmationStore();
-      const a = store.register('user-1', 5_000);
-      const b = store.register('user-1', 5_000);
+      const a = await store.register('user-1', 5_000);
+      const b = await store.register('user-1', 5_000);
       expect(a.confirmationId).not.toEqual(b.confirmationId);
     });
   });
@@ -269,12 +266,8 @@ describe('parseConfirmationEnvelope', () => {
     });
 
     it('drops the whole presentation when fields is missing or empty', () => {
-      expect(
-        parseConfirmationEnvelope(envelopeWith({ title: 't' }))?.presentation,
-      ).toBeUndefined();
-      expect(
-        parseConfirmationEnvelope(envelopeWith({ fields: [] }))?.presentation,
-      ).toBeUndefined();
+      expect(parseConfirmationEnvelope(envelopeWith({ title: 't' }))?.presentation).toBeUndefined();
+      expect(parseConfirmationEnvelope(envelopeWith({ fields: [] }))?.presentation).toBeUndefined();
     });
 
     it('rejects unknown format / importance enum values', () => {

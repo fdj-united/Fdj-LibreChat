@@ -569,7 +569,11 @@ async function awaitConfirmationDecision({
 }) {
   const store = getConfirmationStore();
   const ttlMs = Math.max(1000, envelope.expiresInSeconds * 1000);
-  const { confirmationId, waitForDecision } = store.register(userId, ttlMs);
+  // register() is async since AIS-510 — the Redis-backed store must finish
+  // SUBSCRIBE + SET before returning the cid, otherwise a fast resolve POST
+  // on another pod could publish before this pod is listening. The
+  // in-memory store still resolves on the same tick.
+  const { confirmationId, waitForDecision } = await store.register(userId, ttlMs);
 
   const eventData = {
     event: 'mcp_confirmation_required',
@@ -589,10 +593,7 @@ async function awaitConfirmationDecision({
   try {
     await emitMCPSSE(res, streamId, eventData);
   } catch (err) {
-    logger.error(
-      `[MCP][${serverName}][${toolName}] Failed to emit confirmation SSE event`,
-      err,
-    );
+    logger.error(`[MCP][${serverName}][${toolName}] Failed to emit confirmation SSE event`, err);
     store.resolve(confirmationId, userId, 'cancel');
     return { decision: 'cancel' };
   }
@@ -751,9 +752,7 @@ function createToolInstance({
           }
         } else {
           const reason =
-            decision === 'timeout'
-              ? 'User did not confirm in time.'
-              : 'User declined.';
+            decision === 'timeout' ? 'User did not confirm in time.' : 'User declined.';
 
           // Fire-and-forget clear of the gateway-side pending entry. Without
           // this, the gateway's pending_approvals map keeps the entry until

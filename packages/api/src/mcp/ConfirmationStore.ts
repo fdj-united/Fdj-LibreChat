@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
 import { logger } from '@librechat/data-schemas';
+import { ioredisClient } from '~/cache/redisClients';
+import { cacheConfig } from '~/cache/cacheConfig';
+import { RedisConfirmationStore } from './RedisConfirmationStore';
 
 export type ConfirmationDecision = 'accept' | 'cancel' | 'timeout';
 
@@ -14,15 +17,34 @@ interface PendingConfirmation {
 }
 
 export interface IConfirmationStore {
-  register(userId: string, ttlMs: number): {
+  /**
+   * Reserve a pending-confirmation slot for the given user.
+   *
+   * Returns the cid (for inclusion in the SSE event the wrapper emits to
+   * the client) and a promise the wrapper awaits until the user clicks
+   * Accept / Cancel or the TTL elapses.
+   *
+   * The promise is created eagerly and returned together with the cid, but
+   * any backing-store work (e.g. Redis SUBSCRIBE + SET in
+   * {@link RedisConfirmationStore}) is awaited before this method resolves,
+   * so the caller can safely emit the cid downstream without a race against
+   * a fast resolve POST from another pod.
+   */
+  register(
+    userId: string,
+    ttlMs: number,
+  ): Promise<{
     confirmationId: string;
     waitForDecision: Promise<ConfirmationOutcome>;
-  };
+  }>;
   resolve(
     confirmationId: string,
     userId: string,
     decision: 'accept' | 'cancel',
-  ): { ok: true } | { ok: false; reason: 'not_found' | 'forbidden' };
+  ):
+    | { ok: true }
+    | { ok: false; reason: 'not_found' | 'forbidden' }
+    | Promise<{ ok: true } | { ok: false; reason: 'not_found' | 'forbidden' }>;
   has(confirmationId: string): boolean;
   size(): number;
 }
@@ -36,18 +58,20 @@ export interface IConfirmationStore {
  * elapses. A non-originating userId calling resolve() is rejected so that one
  * user cannot release another's pending action.
  *
- * Single-process v1. The IConfirmationStore interface allows swapping in a
- * Redis-backed implementation when multi-replica is required — note that a
- * Redis variant must also relocate the wait-loop, since pub/sub crosses
- * processes and Promises do not.
+ * Single-process. Multi-replica deployments must use
+ * {@link RedisConfirmationStore} instead — picked automatically by
+ * {@link getConfirmationStore} when `USE_REDIS=true`.
  */
 export class ConfirmationStore implements IConfirmationStore {
   private pending = new Map<string, PendingConfirmation>();
 
-  register(
+  async register(
     userId: string,
     ttlMs: number,
-  ): { confirmationId: string; waitForDecision: Promise<ConfirmationOutcome> } {
+  ): Promise<{
+    confirmationId: string;
+    waitForDecision: Promise<ConfirmationOutcome>;
+  }> {
     if (!userId) {
       throw new Error('ConfirmationStore.register requires a userId');
     }
@@ -110,11 +134,38 @@ export class ConfirmationStore implements IConfirmationStore {
   }
 }
 
-let singleton: ConfirmationStore | null = null;
+let singleton: IConfirmationStore | null = null;
 
-export function getConfirmationStore(): ConfirmationStore {
+/**
+ * Return the process-wide confirmation store. Uses
+ * {@link RedisConfirmationStore} when Redis is configured (multi-replica
+ * deployments), falling back to in-memory {@link ConfirmationStore} when
+ * `USE_REDIS=false` (single-process / tests).
+ *
+ * The Redis variant requires a separate connection for the subscribe loop;
+ * `ioredisClient.duplicate()` is used so retry / TLS / auth options are
+ * inherited from the shared client. If `USE_REDIS=true` but the shared
+ * client is somehow unavailable, we log and fall back to in-memory rather
+ * than throwing — confirmations will then fail in the multi-replica race
+ * scenario, but the agent loop continues to work.
+ */
+export function getConfirmationStore(): IConfirmationStore {
   if (!singleton) {
-    singleton = new ConfirmationStore();
+    if (cacheConfig.USE_REDIS && ioredisClient) {
+      const subscriber = ioredisClient.duplicate();
+      subscriber.on('error', (err) => {
+        logger.error('[ConfirmationStore] subscriber connection error', err);
+      });
+      singleton = new RedisConfirmationStore(ioredisClient, subscriber);
+      logger.info('[ConfirmationStore] Using Redis-backed store (multi-replica safe)');
+    } else {
+      if (cacheConfig.USE_REDIS && !ioredisClient) {
+        logger.warn(
+          '[ConfirmationStore] USE_REDIS=true but ioredisClient is unavailable; falling back to in-memory store. Multi-replica MCP confirmations will not work correctly.',
+        );
+      }
+      singleton = new ConfirmationStore();
+    }
   }
   return singleton;
 }
@@ -168,9 +219,7 @@ export interface ConfirmationEnvelope {
  * parse it as a confirmation envelope. Returns null if the result is not an
  * envelope.
  */
-export function parseConfirmationEnvelope(
-  result: unknown,
-): ConfirmationEnvelope | null {
+export function parseConfirmationEnvelope(result: unknown): ConfirmationEnvelope | null {
   if (!Array.isArray(result) || result.length === 0) return null;
   const [content] = result as [unknown, unknown];
   let text: string | null = null;
@@ -221,10 +270,7 @@ const KNOWN_FORMATS: ReadonlySet<PresentationFormat> = new Set([
   'json',
   'markdown',
 ]);
-const KNOWN_IMPORTANCES: ReadonlySet<PresentationImportance> = new Set([
-  'primary',
-  'detail',
-]);
+const KNOWN_IMPORTANCES: ReadonlySet<PresentationImportance> = new Set(['primary', 'detail']);
 
 /**
  * Coerce an arbitrary `presentation` value into our typed shape. Defensive
