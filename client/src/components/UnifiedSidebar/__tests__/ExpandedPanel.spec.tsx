@@ -86,6 +86,17 @@ jest.mock('~/components/Nav/AccountSettings', () => ({
   default: () => <div data-testid="account-settings" />,
 }));
 
+const mockUseGetStartupConfig = jest.fn();
+
+jest.mock('~/data-provider', () => ({
+  useGetStartupConfig: () => mockUseGetStartupConfig(),
+}));
+
+jest.mock('~/components/Notifications/HeaderBell', () => ({
+  __esModule: true,
+  default: () => <div data-testid="header-bell" />,
+}));
+
 import ExpandedPanel from '../ExpandedPanel';
 import store from '~/store';
 
@@ -150,6 +161,7 @@ describe('ExpandedPanel', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
+    mockUseGetStartupConfig.mockReturnValue({ data: { interface: { notifications: false } } });
   });
 
   describe('NavIconButton collapse toggle', () => {
@@ -201,6 +213,19 @@ describe('ExpandedPanel', () => {
 
       expect(onClick).toHaveBeenCalledTimes(1);
       expect(onNavigate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('notifications interface toggle', () => {
+    it('does not render the notification bell when notifications are disabled', () => {
+      renderPanel({ expanded: true });
+      expect(screen.queryByTestId('header-bell')).not.toBeInTheDocument();
+    });
+
+    it('renders the notification bell when notifications are enabled', async () => {
+      mockUseGetStartupConfig.mockReturnValue({ data: { interface: { notifications: true } } });
+      renderPanel({ expanded: true });
+      expect(await screen.findByTestId('header-bell')).toBeInTheDocument();
     });
   });
 
