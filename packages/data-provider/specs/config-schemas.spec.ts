@@ -5,6 +5,7 @@ import {
   endpointSchema,
   RetentionMode,
   configSchema,
+  getConfigDefaults,
   interfaceSchema,
   fileStorageSchema,
   fileStrategiesSchema,
@@ -1004,6 +1005,11 @@ describe('interfaceSchema', () => {
     const result = interfaceSchema.parse({ modelSelect: true });
 
     expect(result.defaultPinnedTools).toBeUndefined();
+  });
+
+  it('defaults notifications to false and accepts explicit true', () => {
+    expect(getConfigDefaults().interface.notifications).toBe(false);
+    expect(interfaceSchema.parse({ notifications: true }).notifications).toBe(true);
   });
 });
 
