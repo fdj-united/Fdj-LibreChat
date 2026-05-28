@@ -2350,6 +2350,7 @@ export const interfaceSchema = z
     traceViewer: traceViewerSchema.optional(),
     /** Tool keys (and `'mcp'` or an MCP server name) pinned to the prompt bar by default */
     defaultPinnedTools: z.array(z.string()).optional(),
+    notifications: z.boolean().optional(),
     buildInfo: z.boolean().optional(),
     remoteAgents: z
       .object({
@@ -2453,6 +2454,7 @@ export const interfaceSchema = z
     },
     fileSearch: true,
     fileCitations: true,
+    notifications: false,
     buildInfo: true,
     remoteAgents: {
       use: false,
