@@ -1,18 +1,22 @@
-import { memo, useCallback, lazy, Suspense } from 'react';
+import { memo, useCallback, lazy, Suspense, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRecoilValue } from 'recoil';
 import { SquarePen } from 'lucide-react';
-import { QueryKeys } from 'librechat-data-provider';
-import { useQueryClient } from '@tanstack/react-query';
+import { getConfigDefaults, QueryKeys } from 'librechat-data-provider';
 import { Skeleton, Sidebar, Button, TooltipAnchor } from '@librechat/client';
 import type { NavLink } from '~/common';
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
 import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
 import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
+import { useGetStartupConfig } from '~/data-provider';
 import { useLocalize, useNewConvo } from '~/hooks';
 import { clearMessagesCache, cn } from '~/utils';
 import store from '~/store';
 
+const defaultInterface = getConfigDefaults().interface;
+
 const AccountSettings = lazy(() => import('~/components/Nav/AccountSettings'));
+const HeaderBell = lazy(() => import('~/components/Notifications/HeaderBell'));
 
 const NewChatButton = memo(function NewChatButton({
   setActive,
@@ -135,8 +139,13 @@ function ExpandedPanel({
   onExpand?: () => void;
 }) {
   const localize = useLocalize();
+  const { data: startupConfig } = useGetStartupConfig();
   const { active, setActive } = useActivePanel();
   const effectiveActive = resolveActivePanel(active, links);
+  const interfaceConfig = useMemo(
+    () => startupConfig?.interface ?? defaultInterface,
+    [startupConfig],
+  );
 
   const toggleLabel = expanded ? 'com_nav_close_sidebar' : 'com_nav_open_sidebar';
   const toggleClick = expanded ? onCollapse : onExpand;
@@ -180,7 +189,12 @@ function ExpandedPanel({
         ))}
       </div>
 
-      <div className="mt-auto">
+      <div className="mt-auto flex flex-col items-center gap-2">
+        {interfaceConfig.notifications === true && (
+          <Suspense fallback={<Skeleton className="h-9 w-9 rounded-lg" />}>
+            <HeaderBell className="relative" panelSide="left" panelDirection="up" />
+          </Suspense>
+        )}
         <Suspense fallback={<Skeleton className="h-9 w-9 rounded-lg" />}>
           <AccountSettings collapsed />
         </Suspense>

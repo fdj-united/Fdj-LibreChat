@@ -59,6 +59,7 @@ export async function loadDefaultInterface({
     fileSearch: interfaceConfig?.fileSearch,
     fileCitations: interfaceConfig?.fileCitations,
     defaultPinnedTools: interfaceConfig?.defaultPinnedTools,
+    notifications: interfaceConfig?.notifications,
     peoplePicker: interfaceConfig?.peoplePicker,
     marketplace: interfaceConfig?.marketplace,
     remoteAgents: interfaceConfig?.remoteAgents,
