@@ -48,6 +48,8 @@ Run `/update-librechat` in Claude Code.
 
 **Conflict resolution** (triage protocol, used in both phases): for every conflict block, classifies it as **trivial** (whitespace, import reorder, version bump, comment-only) or **non-trivial** (backend logic, MCP code, config, type/control-flow changes). Trivial blocks auto-resolve with a one-line note. Non-trivial blocks pause for you: shows the marker block with surrounding context + the proposed resolution + reasoning, and asks you to **Apply / Keep fork only / Keep upstream only / Skip (resolve manually)**. Lockfile conflicts regenerate via `npm install`, never hand-edit. Default to asking when classification confidence is below ~95%.
 
+**Static require sweep** (Step 7b): after the build passes, scans fork-touched `api/**/*.js` files for `require('~/...')` and `import ... from '~/...'` paths whose target no longer exists. Catches the class of regression where upstream moves a file (e.g. `api/models/spendTokens.js` → `packages/data-schemas/`) and your fork patch still references the old path — these resolve at git-merge time, pass `npm run build`, and crash only at backend startup. Best-effort: doesn't catch TS path mismatches, dynamic requires, or wrong named exports. Not a replacement for smoke-testing.
+
 **Breaking-change scan**: greps Conventional Commits markers (`feat!:`, `fix!:`, `BREAKING CHANGE:`) in the merged commit log, plus any `CHANGELOG.md` changes, and surfaces hits before you push.
 
 **Summary**: shows new HEAD of main, new release branch name + replayed commit count, backup tag for main rollback, conflicts resolved, MCP hotspot files touched, and pre-push smoke-test recommendations.
@@ -339,13 +341,57 @@ If Run: `npm install`. If it fails (peer-dep conflicts, registry issues), surfac
 
 # Step 7: Validation
 
+## 7a — Build
+
 Run, in order:
 - `npm run build:data-provider` — shared types must be current before downstream packages compile.
 - `npm run build` — Turborepo orchestrates the rest; cached where possible.
 
 If either fails: show the error and only fix issues clearly caused by the merge/replay (missing imports, type mismatches from merged code). Do not refactor unrelated code. If unclear, ask the user.
 
-If validation is broken and you cannot pinpoint a fix in a few attempts, **stop and offer rollback**:
+## 7b — Static require sweep (catches a class build can't catch)
+
+**Why this exists**: the build doesn't execute the legacy `api/` CommonJS code, so a fork patch that does `require('~/foo/bar')` against a path upstream has moved (or never had) will pass `npm run build` but crash at backend startup. Real example: a fork patch in `api/app/clients/tools/structured/OpenAIImageTools.js` required `~/models/spendTokens` — that submodule existed at v0.8.4 but was consolidated into `packages/data-schemas` for v0.8.5. The require resolved at git-merge time (no conflict), passed the build, and crashed `npm run backend` with `Cannot find module`. This sweep catches that class of issue before the publish gate.
+
+**Scope**: only fork-touched JS files in `api/` (where `module-alias` maps `~/` → `api/`). The sweep doesn't look at TS code under `packages/` (different resolver).
+
+**Range to scan**:
+- Phase 1: `$MAIN_BACKUP_TAG..HEAD` on `main` (post-merge changes)
+- Phase 2: `main..HEAD` on `$NEW_BRANCH` (the replayed fdj commits)
+
+**Run**:
+```bash
+RANGE=...  # set per phase
+git diff --name-only $RANGE -- 'api/**/*.js' | while read f; do
+  [ -f "$f" ] || continue
+  grep -nE "(require\(|from )['\"]~/[^'\"]+['\"]" "$f" | while read -r line; do
+    p=$(echo "$line" | sed -E "s|.*['\"]~/||; s|['\"].*$||")
+    if [ ! -e "api/$p.js" ] && [ ! -e "api/$p/index.js" ] && \
+       [ ! -e "api/$p.cjs" ] && [ ! -e "api/$p/index.cjs" ]; then
+      echo "BROKEN  $f  →  ~/$p"
+    fi
+  done
+done
+```
+
+If the sweep returns nothing: log "✓ require sweep clean" and proceed.
+
+If the sweep returns one or more lines: surface them clearly and use AskUserQuestion:
+- **Fix each broken require interactively** (Recommended) — for each hit, open the file at the matched line, show what's there, propose a fix (typical fix: change `require('~/foo/bar')` to `require('~/foo')` if `bar` was consolidated into the parent index — verify by checking what the parent index exports), and ask: Apply / Keep as-is / Skip this one.
+- **Flag in summary and continue** — the upgrade proceeds; broken requires are listed in Step 10's summary as `⚠ N broken requires — smoke test WILL fail until fixed`.
+- **Abort and roll back** — see the rollback paragraph below.
+
+**Important — what this sweep does NOT catch**:
+- TypeScript path-alias mismatches in `packages/api/` (different resolver)
+- Dynamic requires whose path comes from a variable
+- Wrong *named* exports from a still-valid module (`require('~/models').foo` returning `undefined` because `foo` was renamed)
+- Anything logically broken but syntactically resolved
+
+Smoke-testing the running app (Step 10's recommendation) is still the ultimate validation. The sweep is a cheap first pass.
+
+## 7c — Rollback offer
+
+If 7a build is broken and you cannot pinpoint a fix in a few attempts, OR if 7b sweep finds broken requires you cannot easily resolve, **stop and offer rollback**:
 - **Phase 1 failure**: `git reset --hard $MAIN_BACKUP_TAG` returns `main` to its pre-merge state. Suggest re-running the skill targeting a smaller upstream tag.
 - **Phase 2 failure**: `git checkout main && git branch -D $NEW_BRANCH` drops the new release branch. The starting release branch is untouched. Suggest re-running Phase 2 with a smaller subset of fdj commits to localize the breakage.
 
@@ -412,6 +458,7 @@ Show:
 - Main backup tag (for rollback): `$MAIN_BACKUP_TAG`
 - Conflicts resolved across both phases (list files, if any)
 - MCP fork hotspot files touched (list, if any) — smoke-test the confirmation dialog before/after pushing
+- **Broken requires flagged at Step 7b** (if any were flagged-and-skipped, list each `<file> → ~/<path>`) — surface as a `⚠ WARNING: backend WILL crash at startup until these are fixed` block. Show the typical fix pattern (consolidate `require('~/foo/bar')` into `require('~/foo')` if `bar` was rolled into the parent index). Recommend fixing on the new release branch *before* pushing if not done already.
 
 If anything was NOT pushed in Step 9, remind the user of the manual commands:
 - `git push origin main`
