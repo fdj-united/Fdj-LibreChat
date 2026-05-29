@@ -44,7 +44,7 @@ import { useGetFiles, useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
 import { MenuItemProps } from '~/common';
 import { cn } from '~/utils';
-import { useChatContext, useFileMapContext } from '~/Providers';
+import { useFileMapContext } from '~/Providers';
 
 type FileUploadType =
   | 'image'
@@ -105,7 +105,6 @@ const AttachFileMenu = ({
   const sharePointEnabled = startupConfig?.sharePointFilePickerEnabled;
 
   const { data: allFiles = [] } = useGetFiles();
-  const { setFiles } = useChatContext();
   const { addFile } = useUpdateFiles(setFiles);
   const fileMap = useFileMapContext();
   const { showToast } = useToastContext();
@@ -152,92 +151,6 @@ const AttachFileMenu = ({
     },
     [endpointFileConfig?.supportedMimeTypes],
   );
-
-  // Smart upload handler that routes based on file type
-  const handleSmartUpload = useCallback(() => {
-    if (!inputRef.current) {
-      return;
-    }
-
-    // Clear input and accept filter
-    inputRef.current.value = '';
-    inputRef.current.accept = '';
-
-    // Remove any existing listener to prevent duplicates
-    const existingListener = (inputRef.current as any)._smartUploadHandler;
-    if (existingListener) {
-      inputRef.current.removeEventListener('change', existingListener);
-    }
-
-    // Create handler to detect file type after selection
-    const smartUploadHandler = (event: Event) => {
-      const input = event.target as HTMLInputElement;
-      const file = input.files?.[0];
-
-      if (!file) {
-        return;
-      }
-
-      // Check if file is an image by checking if mimetype starts with 'image'
-      const isImage = file.type.startsWith('image');
-      setToolResource(isImage ? undefined : EToolResources.context);
-
-      // Trigger file change handler
-      handleFileChange(event as any, isImage ? undefined : EToolResources.context);
-      input.removeEventListener('change', smartUploadHandler);
-      delete (input as any)._smartUploadHandler;
-    };
-
-    // Store reference for cleanup
-    (inputRef.current as any)._smartUploadHandler = smartUploadHandler;
-    inputRef.current.addEventListener('change', smartUploadHandler);
-
-    // Trigger file picker
-    inputRef.current.click();
-  }, [handleFileChange, setToolResource]);
-
-  // Smart upload handler that routes based on file type
-  const handleSmartUpload = useCallback(() => {
-    if (!inputRef.current) {
-      return;
-    }
-
-    // Clear input and accept filter
-    inputRef.current.value = '';
-    inputRef.current.accept = '';
-
-    // Remove any existing listener to prevent duplicates
-    const existingListener = (inputRef.current as any)._smartUploadHandler;
-    if (existingListener) {
-      inputRef.current.removeEventListener('change', existingListener);
-    }
-
-    // Create handler to detect file type after selection
-    const smartUploadHandler = (event: Event) => {
-      const input = event.target as HTMLInputElement;
-      const file = input.files?.[0];
-
-      if (!file) {
-        return;
-      }
-
-      // Check if file is an image by checking if mimetype starts with 'image'
-      const isImage = file.type.startsWith('image');
-      setToolResource(isImage ? undefined : EToolResources.context);
-
-      // Trigger file change handler
-      handleFileChange(event as any, isImage ? undefined : EToolResources.context);
-      input.removeEventListener('change', smartUploadHandler);
-      delete (input as any)._smartUploadHandler;
-    };
-
-    // Store reference for cleanup
-    (inputRef.current as any)._smartUploadHandler = smartUploadHandler;
-    inputRef.current.addEventListener('change', smartUploadHandler);
-
-    // Trigger file picker
-    inputRef.current.click();
-  }, [handleFileChange, setToolResource]);
 
   // Smart upload handler that routes based on file type
   const handleSmartUpload = useCallback(() => {
