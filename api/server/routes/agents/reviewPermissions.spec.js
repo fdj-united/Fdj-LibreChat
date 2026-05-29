@@ -69,7 +69,7 @@ describe('Agent review permissions', () => {
   let agentId;
   let adminId;
   let userId;
-  const { getAgent } = require('~/models/Agent');
+  const { getAgent } = require('~/models');
   const { addOrUpdateReview, getLatestReview } = require('~/models/AgentReview');
 
   beforeEach(() => {
