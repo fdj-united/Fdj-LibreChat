@@ -1,6 +1,6 @@
 ---
 name: merge-feature
-description: Merge a feature branch into a release branch using a rebase-then-merge workflow. Rebases the feature branch onto the release tip, merges --no-ff into the release branch, validates, creates an annotated release tag v<upstream>-fdj<N> at the merge commit (auto-incremented from existing tags), and defers branch+tag push to a single gate at the end. Asks before deleting the feature branch.
+description: Merge a feature branch into a release branch using a rebase-then-merge workflow. Rebases the feature branch onto the release tip, merges --no-ff into the release branch, validates, creates an annotated release tag v<upstream>-fdj<N> at the merge commit (auto-incremented from existing tags), and defers branch+tag push to a single gate at the end. Asks before deleting the feature branch. If invoked from a release branch with uncommitted or unpushed work, offers to auto-extract that work to a new feature branch first, then runs the normal flow.
 ---
 
 # About
@@ -21,11 +21,14 @@ Tag naming: the upstream version prefix is parsed from the release branch name. 
 
 This skill automates the flow with safeguards: backup refs for both branches, conflict triage, deferred publish gate, ask-before-cleanup.
 
-Run `/merge-feature` from your feature branch in Claude Code.
+Run `/merge-feature` from your feature branch in Claude Code. If you forgot to create a feature branch and committed directly to a release branch (or have uncommitted changes there), the skill will offer to **auto-extract** that work to a new feature branch and continue.
 
 ## How it works
 
-**Preflight**: requires a clean working tree, captures the starting branch as the feature branch, refuses to run from `main` or `release/*`.
+**Preflight**:
+- From a feature branch: requires a clean working tree, captures the branch, proceeds.
+- From a release branch with local-only work (uncommitted changes, or commits ahead of `origin/$RELEASE_BRANCH`): offers **auto-extract** — creates a new feature branch holding the work, resets the release branch back to `origin/$RELEASE_BRANCH` locally (no force-push needed because we're only resetting commits that aren't on origin yet), then continues the normal rebase-merge-tag flow. If commits were already pushed to origin/release, they're not "local" and won't trigger extraction; you'd need to write a follow-up fix on a feature branch (which the skill then handles normally).
+- From `main`/`master`: hard-stops (nothing for this skill to do).
 
 **Target selection**: lists local + remote `release/*` branches (newest by version first), defaults to the newest, lets you override.
 
@@ -78,24 +81,99 @@ Integrate a feature branch into the active release branch with the fewest surpri
 - Annotated tags only (`git tag -a`), never lightweight — release tags carry tagger + date + message metadata.
 - Keep token usage low: rely on git plumbing, open only conflicted files.
 
-# Step 0: Preflight (stop early if unsafe)
-Run:
-- `git status --porcelain`
+# Step 0: Preflight (and auto-extract if needed)
 
-If output is non-empty:
-- Tell the user to commit or stash first, then stop.
+Capture the starting branch (before any branch operations):
+- `START_BRANCH=$(git rev-parse --abbrev-ref HEAD)`
 
-Capture the starting branch as the feature branch:
-- `FEATURE_BRANCH=$(git rev-parse --abbrev-ref HEAD)`
-
-Refuse to proceed if `FEATURE_BRANCH` is `main`, `master`, or matches `^release/`:
-- Tell the user: "This skill should be run from a feature branch (e.g. `feat/foo`). You're on `$FEATURE_BRANCH`. Switch to your feature branch first, then re-run."
+**Hard-stop on `main` or `master`** (nothing for this skill to do there):
+- Tell the user: "This skill is for landing a feature into a release branch. You're on `$START_BRANCH`. Either check out your feature branch, or check out the release branch where you've made changes you want to ship, and re-run."
 - Stop.
 
-Fetch origin so we know about all remote refs:
+Fetch origin so we know what's published:
 - `git fetch origin --prune`
 
+**If `START_BRANCH` does NOT match `^release/`:**
+- Normal case — user is on a feature branch.
+- Standard preflight: if `git status --porcelain` is non-empty, tell the user to commit or stash first, then stop.
+- Set `FEATURE_BRANCH=$START_BRANCH`. Proceed to Step 1.
+
+**If `START_BRANCH` matches `^release/`:**
+
+Detect what local work exists that isn't yet on origin:
+- `LOCAL_DIRTY=$([ -n "$(git status --porcelain)" ] && echo yes || echo no)` — uncommitted changes
+- If `origin/$START_BRANCH` doesn't exist: stop with "Release branch `$START_BRANCH` is not on origin. Push it first (or pick a different release branch) — auto-extract requires a remote reference to reset to."
+- Otherwise: `LOCAL_AHEAD=$(git rev-list --count origin/$START_BRANCH..HEAD)`
+
+**Case A — nothing to extract** (`LOCAL_DIRTY=no` AND `LOCAL_AHEAD=0`):
+- Tell the user: "You're on `$START_BRANCH` with no uncommitted changes and nothing ahead of origin. This skill needs work to land. Either switch to your feature branch, or make some changes here and re-run."
+- Stop.
+
+**Case B — local work present** (`LOCAL_DIRTY=yes` OR `LOCAL_AHEAD>0`):
+
+Show the user what will be extracted:
+- If `LOCAL_AHEAD>0`: `git log --oneline origin/$START_BRANCH..HEAD`
+- If `LOCAL_DIRTY=yes`: `git status --short`
+
+Explain the plan in one sentence: move this work onto a new feature branch, reset `$START_BRANCH` back to `origin/$START_BRANCH` locally (no force-push), then run the normal rebase-merge-tag flow targeting `$START_BRANCH`.
+
+Use AskUserQuestion:
+- **Extract to a new feature branch and continue** (Recommended)
+- **Abort** — leave everything as-is, you'll handle it manually
+
+If Abort: stop.
+
+If Extract: continue with Step 0.5.
+
+## Step 0.5: Extract work to a new feature branch
+
+1. **Pick a name for the new feature branch.** Suggest a default derived from the work:
+   - If `LOCAL_AHEAD>0`: parse the most recent commit's subject. Example: `fix(AttachFileMenu): dedup handleSmartUpload` → suggest `fix/attachfilemenu-dedup-handlesmartupload`.
+   - If only uncommitted changes: suggest `chore/release-fixes-$(date +%Y%m%d)`.
+
+   Ask the user via AskUserQuestion (or free-text) to accept the suggestion or override. Validate:
+   - Must not be `main`, `master`, or match `^release/`
+   - Must not exist locally: `git rev-parse --verify "refs/heads/$NAME" 2>/dev/null` fails
+   - Must not exist on origin: `git ls-remote --exit-code --heads origin "$NAME"` fails
+   - Re-prompt on validation failure.
+
+2. **Show the final plan and confirm:**
+   ```
+   Plan:
+     1. Stash uncommitted changes (if any)
+     2. Create new branch $NEW_FEAT pointing at current HEAD ($LOCAL_AHEAD commits ride along)
+     3. Reset $START_BRANCH back to origin/$START_BRANCH (local-only — no push)
+     4. Switch to $NEW_FEAT
+     5. Unstash onto $NEW_FEAT
+     6. Have you commit any remaining uncommitted changes
+   After extract:
+     - $NEW_FEAT holds your work
+     - $START_BRANCH (local) matches origin/$START_BRANCH — no force-push needed
+     - Skill continues with RELEASE_BRANCH=$START_BRANCH and FEATURE_BRANCH=$NEW_FEAT
+   ```
+   AskUserQuestion: **Proceed** / **Abort**. If Abort: stop, nothing has been changed yet.
+
+3. **Execute the extract** (each command is locally reversible if the next fails):
+   - If `LOCAL_DIRTY=yes`: `git stash push -m "auto-extract-from-$START_BRANCH-$(date +%s)"`
+   - `git branch "$NEW_FEAT"` — pins new branch at the original HEAD (includes the local commits)
+   - `git reset --hard "origin/$START_BRANCH"` — release branch now matches remote
+   - `git checkout "$NEW_FEAT"` — working tree now reflects the original HEAD
+   - If we stashed: `git stash pop` — restores uncommitted changes (conflict-free: the stash was taken at the same commit `$NEW_FEAT` now points to)
+
+4. **Handle any newly-uncommitted changes** (from the unstash):
+   - If `git status --porcelain` is empty: nothing to do.
+   - Otherwise use AskUserQuestion:
+     - **Auto-commit with a generated message** (Recommended) — `git add -A && git commit -m "wip: extracted changes from $START_BRANCH"`. You can `git commit --amend` later if you want to refine the message.
+     - **Open my editor for the commit message** — `git add -A && git commit` (uses `$GIT_EDITOR`).
+     - **Stop here — I'll commit manually and re-run** — extract has succeeded; the skill exits cleanly. Re-running on `$NEW_FEAT` will pick up from Step 1.
+
+5. Set `FEATURE_BRANCH=$NEW_FEAT` and `RELEASE_BRANCH=$START_BRANCH`. Proceed to Step 1 (which will skip target selection since `RELEASE_BRANCH` is already set).
+
 # Step 1: Pick the target release branch
+
+**If `RELEASE_BRANCH` is already set from Step 0.5 auto-extract**: skip the selection below; the target is `$RELEASE_BRANCH`. Proceed directly to Step 2.
+
+Otherwise, enumerate the candidates:
 
 Enumerate `release/*` branches from both local and remote:
 ```
