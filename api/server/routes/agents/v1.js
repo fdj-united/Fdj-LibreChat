@@ -2,7 +2,6 @@ const express = require('express');
 const { generateCheckAccess, checkAccess } = require('@librechat/api');
 const { PermissionTypes, Permissions, PermissionBits, SystemRoles } = require('librechat-data-provider');
 const { requireJwtAuth, configMiddleware, canAccessAgentResource } = require('~/server/middleware');
-const { getAgent } = require('~/models/Agent');
 const {
   addOrUpdateReview,
   getAgentReview,
@@ -11,7 +10,7 @@ const {
   deleteReview,
 } = require('~/models/AgentReview');
 const v1 = require('~/server/controllers/agents/v1');
-const { getRoleByName } = require('~/models');
+const { getAgent, getRoleByName } = require('~/models');
 const actions = require('./actions');
 const tools = require('./tools');
 
