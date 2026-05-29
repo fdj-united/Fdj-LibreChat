@@ -17,6 +17,8 @@ This fork's workflow for shipping a feature into a release branch:
 
 Tag naming: the upstream version prefix is parsed from the release branch name. Both `release/v0.8.4` (preferred going forward) and `release/v0.8.4-fdj11` (legacy) yield prefix `v0.8.4`. The next fdj number is `max(existing v0.8.4-fdj* tags) + 1` (or `1` if none).
 
+**Direct commits to the release branch are intentionally NOT tagged.** Each `v<upstream>-fdj<N>` tag points at a merge commit produced by this skill. Any direct commits (small fixes, chore changes, hot edits) that landed on the release branch between feature merges are *covered* by the next merge's tag — i.e. they're reachable as ancestors of the merge commit `v<upstream>-fdj<N>` points at. So if you want a "ship marker" for a direct commit, either land the next feature via `/merge-feature` to bundle it under a new tag, or tag it manually with `git tag -a <name>` (the skill won't do this automatically).
+
 This skill automates the flow with safeguards: backup refs for both branches, conflict triage, deferred publish gate, ask-before-cleanup.
 
 Run `/merge-feature` from your feature branch in Claude Code.
