@@ -3,13 +3,14 @@ import { useMediaQuery } from '@librechat/client';
 import { PermissionTypes, Permissions } from 'librechat-data-provider';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import type t from 'librechat-data-provider';
-import { useDocumentTitle, useHasAccess, useLocalize, TranslationKeys } from '~/hooks';
+import { useDocumentTitle, useHasAccess, useLocalize, useVerifiedFilter, TranslationKeys } from '~/hooks';
 import { useGetEndpointsQuery, useGetAgentCategoriesQuery } from '~/data-provider';
 import MarketplaceAdminSettings from './MarketplaceAdminSettings';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { SidePanelGroup } from '~/components/SidePanel';
 import CategoryTabs from './CategoryTabs';
 import SearchBar from './SearchBar';
+import VerificationFilterToggle from './VerificationFilterToggle';
 import AgentGrid from './AgentGrid';
 import { cn } from '~/utils';
 
@@ -34,6 +35,8 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
 
   // Get URL parameters
   const searchQuery = searchParams.get('q') || '';
+  const verifiedOnly = searchParams.get('verified') === '1';
+  const handleVerifiedFilter = useVerifiedFilter();
 
   // Animation state
   type Direction = 'left' | 'right';
@@ -218,15 +221,17 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
             {/* Sticky wrapper for search bar and categories */}
             <div className="sticky top-0 z-10 mt-4 bg-presentation pb-4 md:mt-0">
               <div className="container mx-auto max-w-4xl px-4">
-                {isSmallScreen ? (
-                  <div className="mx-auto mb-3 flex max-w-2xl items-center justify-between gap-2">
-                    <OpenSidebar />
-                    <MarketplaceAdminSettings compact />
-                  </div>
-                ) : null}
-                {/* Search bar */}
-                <div className="mx-auto flex max-w-2xl gap-2 pb-6">
+                <div className="mx-auto mb-3 flex max-w-2xl items-center justify-between gap-2 md:hidden">
+                  <OpenSidebar />
+                  <MarketplaceAdminSettings compact />
+                </div>
+                {/* Search bar + verification filter */}
+                <div className="mx-auto flex max-w-2xl flex-wrap items-center gap-2 pb-6">
                   <SearchBar value={searchQuery} onSearch={handleSearch} />
+                  <VerificationFilterToggle
+                    verifiedOnly={verifiedOnly}
+                    onVerifiedFilter={handleVerifiedFilter}
+                  />
                   {/* TODO: Remove this once we have a better way to handle admin settings */}
                   {!isSmallScreen && <MarketplaceAdminSettings />}
                 </div>
@@ -315,6 +320,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                     key={`grid-${displayCategory}`}
                     category={displayCategory}
                     searchQuery={searchQuery}
+                    verifiedOnly={verifiedOnly}
                     onSelectAgent={handleAgentSelect}
                     scrollElementRef={scrollContainerRef}
                   />
@@ -395,6 +401,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                       key={`grid-${nextCategory}`}
                       category={nextCategory}
                       searchQuery={searchQuery}
+                      verifiedOnly={verifiedOnly}
                       onSelectAgent={handleAgentSelect}
                       scrollElementRef={scrollContainerRef}
                     />
