@@ -3,13 +3,14 @@ import { useMediaQuery } from '@librechat/client';
 import { PermissionTypes, Permissions } from 'librechat-data-provider';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import type t from 'librechat-data-provider';
-import { useDocumentTitle, useHasAccess, useLocalize, TranslationKeys } from '~/hooks';
+import { useDocumentTitle, useHasAccess, useLocalize, useVerifiedFilter, TranslationKeys } from '~/hooks';
 import { useGetEndpointsQuery, useGetAgentCategoriesQuery } from '~/data-provider';
 import MarketplaceAdminSettings from './MarketplaceAdminSettings';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { SidePanelGroup } from '~/components/SidePanel';
 import CategoryTabs from './CategoryTabs';
 import SearchBar from './SearchBar';
+import VerificationFilterToggle from './VerificationFilterToggle';
 import AgentGrid from './AgentGrid';
 import { cn } from '~/utils';
 
@@ -34,6 +35,8 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
 
   // Get URL parameters
   const searchQuery = searchParams.get('q') || '';
+  const verifiedOnly = searchParams.get('verified') === '1';
+  const handleVerifiedFilter = useVerifiedFilter();
 
   // Animation state
   type Direction = 'left' | 'right';
@@ -222,9 +225,13 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                   <OpenSidebar />
                   <MarketplaceAdminSettings compact />
                 </div>
-                {/* Search bar */}
-                <div className="mx-auto flex max-w-2xl gap-2 pb-6">
+                {/* Search bar + verification filter */}
+                <div className="mx-auto flex max-w-2xl flex-wrap items-center gap-2 pb-6">
                   <SearchBar value={searchQuery} onSearch={handleSearch} />
+                  <VerificationFilterToggle
+                    verifiedOnly={verifiedOnly}
+                    onVerifiedFilter={handleVerifiedFilter}
+                  />
                   {/* TODO: Remove this once we have a better way to handle admin settings */}
                   <div className="hidden md:block">
                     <MarketplaceAdminSettings />
@@ -315,6 +322,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                     key={`grid-${displayCategory}`}
                     category={displayCategory}
                     searchQuery={searchQuery}
+                    verifiedOnly={verifiedOnly}
                     onSelectAgent={handleAgentSelect}
                     scrollElementRef={scrollContainerRef}
                   />
@@ -395,6 +403,7 @@ const AgentMarketplace: React.FC<AgentMarketplaceProps> = ({ className = '' }) =
                       key={`grid-${nextCategory}`}
                       category={nextCategory}
                       searchQuery={searchQuery}
+                      verifiedOnly={verifiedOnly}
                       onSelectAgent={handleAgentSelect}
                       scrollElementRef={scrollContainerRef}
                     />
