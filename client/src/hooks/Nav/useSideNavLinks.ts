@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { MCPIcon, AttachmentIcon, OpenAIMinimalIcon } from '@librechat/client';
 import {
   Bot,
+  Eye,
   Brain,
   Bookmark,
   NotebookPen,
@@ -34,6 +35,7 @@ import { SchedulePanel } from '~/components/SidePanel/Schedules';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
+import { ReviewPanel, ReviewVerificationIcon } from '~/components/SidePanel/Review';
 import { PromptsAccordion } from '~/components/Prompts';
 import { SkillsAccordion } from '~/components/Skills';
 
@@ -232,6 +234,21 @@ export default function useSideNavLinks({
       });
     }
 
+    if (
+      isAgentsEndpoint(endpoint) &&
+      hasAccessToAgents &&
+      interfaceConfig?.marketplace?.verification !== false
+    ) {
+      links.push({
+        title: 'com_agents_review_section' as any,
+        label: '',
+        icon: Eye,
+        id: 'review-agent',
+        Component: ReviewPanel,
+        endAdornment: ReviewVerificationIcon,
+      });
+    }
+
     if (includeHidePanel && hidePanel) {
       links.push({
         title: 'com_sidepanel_hide_panel',
@@ -257,6 +274,7 @@ export default function useSideNavLinks({
     hasAccessToSchedules,
     interfaceConfig.schedules,
     interfaceConfig.parameters,
+    interfaceConfig.marketplace?.verification,
     endpointType,
     hasAccessToBookmarks,
     availableMCPServers,
