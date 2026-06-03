@@ -70,6 +70,7 @@ jobs:
          {"target":"node","file":"Dockerfile","image_name":"librechat"}]
       tag_suffixes: ${{ needs.resolve-tags.outputs.tag_suffixes }}
       build_branch: ${{ github.ref_name }}
+      arches: '["amd64"]'
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
