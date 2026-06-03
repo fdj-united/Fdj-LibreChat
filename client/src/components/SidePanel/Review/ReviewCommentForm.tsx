@@ -81,7 +81,7 @@ export default function ReviewCommentForm({
           checked={isVerified}
           onCheckedChange={onVerifiedChange}
           disabled={isSubmitting}
-          aria-label="Toggle agent verification"
+          aria-label={localize('com_agents_review_verified_label')}
         />
       </div>
       {agentId && (
