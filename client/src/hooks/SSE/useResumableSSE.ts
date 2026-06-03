@@ -32,7 +32,7 @@ import type { ActiveJobsResponse } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
 import { clearAllDrafts, removeConvoFromAllQueries, upsertConvoInAllQueries } from '~/utils';
-import store, { pendingMCPConfirmationAtom } from '~/store';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -195,7 +195,7 @@ export default function useResumableSSE(
   const [streamId, setStreamId] = useState<string | null>(null);
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
-  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const sseRef = useRef<SSE | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -322,7 +322,20 @@ export default function useResumableSSE(
             // Intercept BEFORE stepHandler — the agent loop is suspended
             // server-side awaiting POST /api/mcp/confirm/:id. We surface the
             // modal; nothing should reach the chunk pipeline.
-            setPendingMCPConfirmation(data.data);
+            // Enqueue (don't overwrite) so parallel confirmations all surface;
+            // dedup by confirmationId so SSE reconnect mid-confirmation doesn't
+            // double-register.
+            setPendingMCPConfirmations((prev) =>
+              prev.some((p) => p.confirmationId === data.data.confirmationId)
+                ? prev
+                : [
+                    ...prev,
+                    {
+                      ...data.data,
+                      deadline: Date.now() + data.data.expiresInSeconds * 1000,
+                    },
+                  ],
+            );
             return;
           }
 
@@ -414,7 +427,18 @@ export default function useResumableSSE(
                 if (pendingEvent.event === 'mcp_confirmation_required') {
                   // Mid-confirmation reconnect: the server-side wait is still
                   // in flight, so re-surface the modal from the replayed event.
-                  setPendingMCPConfirmation(pendingEvent.data);
+                  // Dedup by confirmationId in case the same event surfaces twice.
+                  setPendingMCPConfirmations((prev) =>
+                    prev.some((p) => p.confirmationId === pendingEvent.data.confirmationId)
+                      ? prev
+                      : [
+                          ...prev,
+                          {
+                            ...pendingEvent.data,
+                            deadline: Date.now() + pendingEvent.data.expiresInSeconds * 1000,
+                          },
+                        ],
+                  );
                 } else if (pendingEvent.event != null) {
                   stepHandler(pendingEvent, submission);
                 } else if (pendingEvent.type != null) {
