@@ -92,7 +92,8 @@ import useEventHandlers, {
   keepLocalCodeApprovalMode,
 } from './useEventHandlers';
 import { pendingApprovalActionFamily } from '~/components/Chat/approval/state';
-import store, { pendingMCPConfirmationAtom } from '~/store';
+import { enqueueMCPConfirmation } from './enqueueMCPConfirmation';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
 import useSteerConvert from '~/hooks/Chat/useSteerConvert';
 import { useAuthContext } from '~/hooks/AuthContext';
 import { useFileMapContext } from '~/Providers';
@@ -904,7 +905,7 @@ export default function useResumableSSE(
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
   const setLiveAppliedSteerIds = useSetRecoilState(store.liveAppliedSteerIds);
-  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const sseRef = useRef<SSE | null>(null);
   /** Removes the foreground re-attach listener owned by the newest
@@ -2221,7 +2222,7 @@ export default function useResumableSSE(
           }
 
           if (data.event === 'mcp_confirmation_required') {
-            setPendingMCPConfirmation(data.data);
+            setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, data.data));
             return;
           }
 
@@ -2561,7 +2562,9 @@ export default function useResumableSSE(
               logger.log('ResumableSSE', `Replaying ${data.pendingEvents.length} pending events`);
               for (const pendingEvent of data.pendingEvents) {
                 if (pendingEvent.event === 'mcp_confirmation_required') {
-                  setPendingMCPConfirmation(pendingEvent.data);
+                  setPendingMCPConfirmations((prev) =>
+                    enqueueMCPConfirmation(prev, pendingEvent.data),
+                  );
                 } else if (pendingEvent.event === 'title') {
                   titleHandler(pendingEvent);
                 } else if (pendingEvent.event === UsageEvents.ON_CONTEXT_USAGE) {
@@ -3951,7 +3954,7 @@ export default function useResumableSSE(
       clearDrainAfterAbort,
       resolveSteerChip,
       setLiveAppliedSteerIds,
-      setPendingMCPConfirmation,
+      setPendingMCPConfirmations,
       updateSteerChips,
       seedSteerChips,
       settleAppliedSteerParts,
