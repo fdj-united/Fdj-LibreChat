@@ -42,7 +42,7 @@ import {
 import useEventHandlers, { buildCreatedInitialResponse } from './useEventHandlers';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useUsageHandler from './useUsageHandler';
-import store, { pendingMCPConfirmationAtom } from '~/store';
+import store, { pendingMCPConfirmationsAtom } from '~/store';
 
 type ChatHelpers = Pick<
   EventHandlerParams,
@@ -441,7 +441,7 @@ export default function useResumableSSE(
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setSubmission = useSetRecoilState(store.submissionByIndex(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
-  const setPendingMCPConfirmation = useSetRecoilState(pendingMCPConfirmationAtom);
+  const setPendingMCPConfirmations = useSetRecoilState(pendingMCPConfirmationsAtom);
 
   const sseRef = useRef<SSE | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -600,7 +600,17 @@ export default function useResumableSSE(
           }
 
           if (data.event === 'mcp_confirmation_required') {
-            setPendingMCPConfirmation(data.data);
+            setPendingMCPConfirmations((prev) =>
+              prev.some((p) => p.confirmationId === data.data.confirmationId)
+                ? prev
+                : [
+                    ...prev,
+                    {
+                      ...data.data,
+                      deadline: Date.now() + data.data.expiresInSeconds * 1000,
+                    },
+                  ],
+            );
             return;
           }
 
@@ -783,7 +793,17 @@ export default function useResumableSSE(
               console.log(`[ResumableSSE] Replaying ${data.pendingEvents.length} pending events`);
               for (const pendingEvent of data.pendingEvents) {
                 if (pendingEvent.event === 'mcp_confirmation_required') {
-                  setPendingMCPConfirmation(pendingEvent.data);
+                  setPendingMCPConfirmations((prev) =>
+                    prev.some((p) => p.confirmationId === pendingEvent.data.confirmationId)
+                      ? prev
+                      : [
+                          ...prev,
+                          {
+                            ...pendingEvent.data,
+                            deadline: Date.now() + pendingEvent.data.expiresInSeconds * 1000,
+                          },
+                        ],
+                  );
                 } else if (pendingEvent.event === 'title') {
                   titleHandler(pendingEvent);
                 } else if (pendingEvent.event === UsageEvents.ON_CONTEXT_USAGE) {
