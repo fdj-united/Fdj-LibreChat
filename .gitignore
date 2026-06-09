@@ -137,9 +137,6 @@ helm/**/.values.yaml
 *.cert
 
 # AI Assistants
-/.claude/*
-!/.claude/skills/
-/.codex/
 /.cursor/
 /.copilot/
 /.aider/
