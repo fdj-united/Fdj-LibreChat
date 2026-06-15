@@ -2,10 +2,12 @@ import { Types } from 'mongoose';
 import { notificationTypes, type NotificationType } from 'librechat-data-provider';
 import type { FilterQuery, Model } from 'mongoose';
 import type { CreateNotificationParams, INotification } from '~/types/notification';
+import { isValidObjectIdString } from '~/utils/objectId';
 import logger from '~/config/winston';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+export const BROADCAST_USER_BATCH_SIZE = 500;
 
 export type NotificationListItem = {
   id: string;
@@ -46,7 +48,15 @@ export type NotificationMethods = {
   markNotificationRead: (userId: string, notificationId: string) => Promise<{ updated: boolean }>;
   markAllNotificationsRead: (userId: string) => Promise<{ count: number }>;
   deleteNotification: (userId: string, notificationId: string) => Promise<boolean>;
+  deleteAllUserNotifications: (userId: string) => Promise<number>;
 };
+
+export class InvalidNotificationCursorError extends Error {
+  constructor(message = 'Invalid cursor') {
+    super(message);
+    this.name = 'InvalidNotificationCursorError';
+  }
+}
 
 function toListItem(doc: {
   _id: Types.ObjectId;
@@ -70,6 +80,30 @@ function toListItem(doc: {
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };
+}
+
+function decodeNotificationCursor(cursor: string): { createdAt: Date; _id: Types.ObjectId } {
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as {
+      createdAt?: string;
+      _id?: string;
+    };
+    if (
+      !decoded.createdAt ||
+      !decoded._id ||
+      Number.isNaN(new Date(decoded.createdAt).getTime()) ||
+      !isValidObjectIdString(decoded._id)
+    ) {
+      throw new InvalidNotificationCursorError();
+    }
+    return { createdAt: new Date(decoded.createdAt), _id: new Types.ObjectId(decoded._id) };
+  } catch (error) {
+    if (error instanceof InvalidNotificationCursorError) {
+      throw error;
+    }
+    logger.warn('[listNotificationsForUser] Invalid cursor provided', error);
+    throw new InvalidNotificationCursorError();
+  }
 }
 
 export function createNotificationMethods(
@@ -127,23 +161,36 @@ export function createNotificationMethods(
 
     const User = mongoose.models.User as Model<{ _id: Types.ObjectId }>;
     const Notification = mongoose.models.Notification as Model<INotification>;
-    const users = await User.find({}, { _id: 1 }).lean();
 
-    if (users.length === 0) {
-      return { createdCount: 0 };
+    let createdCount = 0;
+    let lastId: Types.ObjectId | null = null;
+
+    while (true) {
+      const filter: FilterQuery<{ _id: Types.ObjectId }> = lastId ? { _id: { $gt: lastId } } : {};
+      const users = await User.find(filter, { _id: 1 })
+        .sort({ _id: 1 })
+        .limit(BROADCAST_USER_BATCH_SIZE)
+        .lean<Array<{ _id: Types.ObjectId }>>();
+
+      if (users.length === 0) {
+        break;
+      }
+
+      const docs = users.map((user) => ({
+        user: user._id.toString(),
+        type,
+        title,
+        message,
+        link,
+        read: false,
+      }));
+
+      const inserted = await Notification.insertMany(docs, { ordered: false });
+      createdCount += inserted.length;
+      lastId = users[users.length - 1]._id;
     }
 
-    const docs = users.map((user) => ({
-      user: user._id.toString(),
-      type,
-      title,
-      message,
-      link,
-      read: false,
-    }));
-
-    const inserted = await Notification.insertMany(docs, { ordered: false });
-    return { createdCount: inserted.length };
+    return { createdCount };
   }
 
   async function listNotificationsForUser(
@@ -160,23 +207,16 @@ export function createNotificationMethods(
     }
 
     if (options.cursor) {
-      try {
-        const cursor = JSON.parse(Buffer.from(options.cursor, 'base64').toString('utf8')) as {
-          createdAt: string;
-          _id: string;
-        };
-        andParts.push({
-          $or: [
-            { createdAt: { $lt: new Date(cursor.createdAt) } },
-            {
-              createdAt: new Date(cursor.createdAt),
-              _id: { $gt: new Types.ObjectId(cursor._id) },
-            },
-          ],
-        });
-      } catch (error) {
-        logger.warn('[listNotificationsForUser] Invalid cursor provided', error);
-      }
+      const cursor = decodeNotificationCursor(options.cursor);
+      andParts.push({
+        $or: [
+          { createdAt: { $lt: cursor.createdAt } },
+          {
+            createdAt: cursor.createdAt,
+            _id: { $gt: cursor._id },
+          },
+        ],
+      });
     }
 
     const baseQuery: FilterQuery<INotification> =
@@ -259,6 +299,12 @@ export function createNotificationMethods(
     return result.deletedCount > 0;
   }
 
+  async function deleteAllUserNotifications(userId: string): Promise<number> {
+    const Notification = mongoose.models.Notification as Model<INotification>;
+    const result = await Notification.deleteMany({ user: userId });
+    return result.deletedCount ?? 0;
+  }
+
   return {
     createNotification,
     createBroadcastNotification,
@@ -266,5 +312,6 @@ export function createNotificationMethods(
     markNotificationRead,
     markAllNotificationsRead,
     deleteNotification,
+    deleteAllUserNotifications,
   };
 }

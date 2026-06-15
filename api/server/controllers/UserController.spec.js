@@ -45,6 +45,7 @@ jest.mock('~/models', () => {
     deleteConversationTags: jest.fn().mockResolvedValue(undefined),
     deleteAllUserMemories: jest.fn().mockResolvedValue(undefined),
     deleteSchedulesByUser: jest.fn().mockResolvedValue(undefined),
+    deleteAllUserNotifications: jest.fn().mockResolvedValue(0),
     deleteTransactions: jest.fn().mockResolvedValue(undefined),
     deleteAclEntries: jest.fn().mockResolvedValue(undefined),
     updateUserPlugins: jest.fn(),
@@ -481,6 +482,7 @@ describe('deleteUserController', () => {
   it('should return 200 on successful deletion', async () => {
     const userId = new mongoose.Types.ObjectId();
     const req = { user: { id: userId.toString(), _id: userId, email: 'test@test.com' } };
+    const { deleteAllUserNotifications } = require('~/models');
 
     await deleteUserController(req, mockRes);
 
@@ -527,6 +529,7 @@ describe('deleteUserController', () => {
     expect(mockCancelAgentTriggerUserPurge).not.toHaveBeenCalled();
     // A successful deletion hard-deletes the schedules; it must never restore them.
     expect(mockRestoreUserSchedules).not.toHaveBeenCalled();
+    expect(deleteAllUserNotifications).toHaveBeenCalledWith(userId.toString());
   });
 
   it('does not erase checkpoint payload when conversation deletion fails', async () => {

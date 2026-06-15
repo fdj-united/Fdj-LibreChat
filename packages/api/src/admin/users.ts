@@ -57,6 +57,7 @@ export interface AdminUsersDeps {
     principalType: PrincipalType;
     principalId: string | Types.ObjectId;
   }) => Promise<void>;
+  deleteAllUserNotifications: (userId: string) => Promise<number>;
 }
 
 export function createAdminUsersHandlers(deps: AdminUsersDeps): {
@@ -79,6 +80,7 @@ export function createAdminUsersHandlers(deps: AdminUsersDeps): {
     invalidateCodeEnvironmentConfigCache,
     deleteConfig,
     deleteAclEntries,
+    deleteAllUserNotifications,
   } = deps;
 
   async function listUsersHandler(req: ServerRequest, res: Response) {
@@ -229,6 +231,7 @@ export function createAdminUsersHandlers(deps: AdminUsersDeps): {
         deleteConfig(PrincipalType.USER, id),
         ...(codeEnvironmentCleanupSafe ? [deleteUserCodeEnvironments(objectId)] : []),
         deleteAclEntries({ principalType: PrincipalType.USER, principalId: objectId }),
+        deleteAllUserNotifications(id),
       ]);
       for (const r of cleanupResults) {
         if (r.status === 'rejected') {

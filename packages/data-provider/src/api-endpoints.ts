@@ -584,15 +584,20 @@ export const memoryById = (id: string, agentId?: string) =>
   `${memories()}/id/${encodeURIComponent(id)}${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''}`;
 export const memoryPreferences = () => `${memories()}/preferences`;
 
+function notificationUnreadOnlyParam(unreadOnly?: boolean): string | undefined {
+  if (unreadOnly === undefined) {
+    return undefined;
+  }
+  return unreadOnly ? 'true' : 'false';
+}
+
 /* Notifications */
 export const notifications = (params?: q.NotificationsListParams) => {
-  const unreadOnly =
-    typeof params?.unreadOnly === 'boolean' ? String(params.unreadOnly) : undefined;
   const query = params
     ? buildQuery({
         cursor: params.cursor,
         limit: params.limit,
-        unreadOnly,
+        unreadOnly: notificationUnreadOnlyParam(params.unreadOnly),
       })
     : '';
   return `${BASE_URL}/api/notifications${query}`;

@@ -7,6 +7,7 @@ export * from './origin';
 export * from './balance';
 export * from './ban';
 export * from './json';
+export * from './bodySize';
 export * from './capabilities';
 export * from './auth';
 export {

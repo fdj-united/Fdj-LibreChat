@@ -67,6 +67,7 @@ function createDeps(overrides: Partial<AdminUsersDeps> = {}): AdminUsersDeps {
     invalidateCodeEnvironmentConfigCache: jest.fn().mockResolvedValue(undefined),
     deleteConfig: jest.fn().mockResolvedValue(null),
     deleteAclEntries: jest.fn().mockResolvedValue(undefined),
+    deleteAllUserNotifications: jest.fn().mockResolvedValue(0),
     ...overrides,
   };
 }
@@ -438,7 +439,7 @@ describe('createAdminUsersHandlers', () => {
       expect(deps.countUsers).not.toHaveBeenCalled();
     });
 
-    it('cascades cleanup of Config, code environments, and AclEntries', async () => {
+    it('cascades cleanup of Config, code environments, AclEntries, and notifications', async () => {
       const result: UserDeleteResult = {
         deletedCount: 1,
         message: 'User was deleted successfully.',
@@ -457,6 +458,7 @@ describe('createAdminUsersHandlers', () => {
         principalType: PrincipalType.USER,
         principalId: expect.any(Types.ObjectId),
       });
+      expect(deps.deleteAllUserNotifications).toHaveBeenCalledWith(validUserId);
     });
 
     it('returns success even when cascade cleanup partially fails', async () => {
@@ -508,6 +510,7 @@ describe('createAdminUsersHandlers', () => {
         expect.any(Date),
       );
       expect(deps.cancelAgentTriggerUserPurge).toHaveBeenCalledWith(validUserId, expect.any(Date));
+      expect(deps.deleteAllUserNotifications).not.toHaveBeenCalled();
     });
 
     it('returns 400 for invalid ObjectId', async () => {
