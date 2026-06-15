@@ -25,7 +25,11 @@ import {
   MAX_TOOL_FAVORITES,
   type ToolFavoriteMethods,
 } from './favorite';
-import { createNotificationMethods, type NotificationMethods } from './notification';
+import {
+  createNotificationMethods,
+  InvalidNotificationCursorError,
+  type NotificationMethods,
+} from './notification';
 /* Agent Categories */
 import { createAgentCategoryMethods, type AgentCategoryMethods } from './agentCategory';
 /* Agent API Keys */
@@ -192,6 +196,7 @@ import { createInsightsMethods, type InsightsMethods } from './insights';
 export {
   runAfterTransaction,
   RoleConflictError,
+  InvalidNotificationCursorError,
   MCPAuthorityProofError,
   MAX_MCP_AUTHORITY_TARGETS,
   DEFAULT_REFRESH_TOKEN_EXPIRY,
