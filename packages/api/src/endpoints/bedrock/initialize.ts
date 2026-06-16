@@ -11,11 +11,13 @@ import {
 } from 'librechat-data-provider';
 import type { BedrockRuntimeClientConfig } from '@aws-sdk/client-bedrock-runtime';
 import type {
+  GuardrailScope,
   InitializeResultBase,
   BedrockCredentials,
   GuardrailConfiguration,
   InferenceProfileConfig,
   ProviderInitializeParams,
+  ScopedGuardrailConfiguration,
 } from '~/types';
 import { getHttpsProxyAgent } from '~/utils/proxy';
 import { resolveEndpointRuntime } from '~/types';
@@ -82,6 +84,46 @@ function getUserCredentialValue(
 }
 
 /**
+ * Matches a model id against a pattern. A pattern without `*` is an exact match;
+ * `*` is a wildcard for any sequence (anchored full-match), so
+ * `*claude-sonnet-4-6*` matches `us.anthropic.claude-sonnet-4-6-v1:0`. All other
+ * characters (including `.`) are matched literally.
+ */
+function modelMatchesPattern(model: string, pattern: string): boolean {
+  if (!pattern.includes('*')) {
+    return model === pattern;
+  }
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*');
+  return new RegExp(`^${escaped}$`).test(model);
+}
+
+/**
+ * Determines whether the admin's global guardrail applies to this request.
+ * Each `appliesTo` filter is optional; when present, the request must match it.
+ * `models` entries support `*` wildcards; `agentIds` are matched exactly.
+ * An empty/absent scope applies the guardrail to every Bedrock conversation.
+ */
+function guardrailConfigApplies(
+  scope: GuardrailScope | undefined,
+  agentId: string | undefined,
+  model: string | undefined,
+): boolean {
+  if (!scope) {
+    return true;
+  }
+  if (scope.agentIds?.length && (agentId == null || !scope.agentIds.includes(agentId))) {
+    return false;
+  }
+  if (
+    scope.models?.length &&
+    (model == null || !scope.models.some((pattern) => modelMatchesPattern(model, pattern)))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Initializes Bedrock endpoint configuration.
  *
  * This module handles configuration for AWS Bedrock endpoints, including support for
@@ -108,12 +150,12 @@ function getUserCredentialValue(
 export async function initializeBedrock(
   params: ProviderInitializeParams,
 ): Promise<InitializeResultBase> {
-  const { endpoint, model_parameters, db } = params;
+  const { endpoint, model_parameters, agentId, db } = params;
   const { appConfig, user, requestBody } = resolveEndpointRuntime(params);
   void endpoint;
   const bedrockConfig = appConfig?.endpoints?.[EModelEndpoint.bedrock] as
     | ({
-        guardrailConfig?: GuardrailConfiguration;
+        guardrailConfig?: ScopedGuardrailConfiguration;
         inferenceProfiles?: InferenceProfileConfig;
       } & Record<string, unknown>)
     | undefined;
@@ -240,15 +282,20 @@ export async function initializeBedrock(
     applicationInferenceProfile?: string;
   };
 
-  if (bedrockConfig?.guardrailConfig) {
+  const model = model_parameters?.model as string | undefined;
+  const guardrailConfig = bedrockConfig?.guardrailConfig;
+  const scopedAgentId = agentId ?? (requestBody as { agent_id?: string } | undefined)?.agent_id;
+  if (guardrailConfig && guardrailConfigApplies(guardrailConfig.appliesTo, scopedAgentId, model)) {
     llmConfig.guardrailConfig = {
-      ...bedrockConfig.guardrailConfig,
-      guardrailIdentifier: extractEnvVariable(bedrockConfig.guardrailConfig.guardrailIdentifier),
-      guardrailVersion: extractEnvVariable(bedrockConfig.guardrailConfig.guardrailVersion),
+      guardrailIdentifier: extractEnvVariable(guardrailConfig.guardrailIdentifier),
+      guardrailVersion: extractEnvVariable(guardrailConfig.guardrailVersion),
+      ...(guardrailConfig.trace != null && { trace: guardrailConfig.trace }),
+      ...(guardrailConfig.streamProcessingMode != null && {
+        streamProcessingMode: guardrailConfig.streamProcessingMode,
+      }),
     };
   }
 
-  const model = model_parameters?.model as string | undefined;
   if (model && bedrockConfig?.inferenceProfiles?.[model]) {
     const applicationInferenceProfile = extractEnvVariable(bedrockConfig.inferenceProfiles[model]);
     llmConfig.applicationInferenceProfile = applicationInferenceProfile;

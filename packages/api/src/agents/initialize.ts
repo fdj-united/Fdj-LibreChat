@@ -1317,6 +1317,7 @@ export async function initializeAgent(
     },
     endpoint: provider,
     model_parameters: finalModelOptions,
+    agentId: agent.id,
     db,
   });
 
