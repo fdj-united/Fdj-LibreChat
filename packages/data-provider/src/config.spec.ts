@@ -348,6 +348,51 @@ describe('bedrockEndpointSchema', () => {
     }
     expect(result.data.endpoints?.bedrock?.guardrailConfig).toEqual(guardrailConfig);
   });
+
+  it('preserves guardrailConfig.appliesTo scoping from configSchema parsing', () => {
+    const guardrailConfig = {
+      guardrailIdentifier: 'gr-scoped',
+      guardrailVersion: '1',
+      appliesTo: {
+        agentIds: ['agent_abc123'],
+        models: ['anthropic.claude-sonnet-4-6'],
+      },
+    };
+
+    const result = configSchema.safeParse({
+      version: '1.0',
+      endpoints: { bedrock: { guardrailConfig } },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.endpoints?.bedrock?.guardrailConfig?.appliesTo).toEqual({
+      agentIds: ['agent_abc123'],
+      models: ['anthropic.claude-sonnet-4-6'],
+    });
+  });
+
+  it.each(['agentIds', 'models'])(
+    'rejects an empty appliesTo.%s array (would otherwise apply to all)',
+    (field) => {
+      const result = configSchema.safeParse({
+        version: '1.0',
+        endpoints: {
+          bedrock: {
+            guardrailConfig: {
+              guardrailIdentifier: 'gr-scoped',
+              guardrailVersion: '1',
+              appliesTo: { [field]: [] },
+            },
+          },
+        },
+      });
+
+      expect(result.success).toBe(false);
+    },
+  );
 });
 
 describe('Agent Management authentication config', () => {
