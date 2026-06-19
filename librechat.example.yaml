@@ -647,6 +647,9 @@ endpoints:
   #   # reasoningLabelUpdateIntervalMs: 3000 # minimum time between streaming revisions
   #   # A final rewrite may run immediately after a meaningful 120-character tail.
   #   # reasoningLabelMaxPerRun: 8        # provider-call cap per response
+  #   # (optional) When true, users with read:agents list all agents in their tenant
+  #   # (ACL bypass for listing only)
+  #   adminListAllAgents: false
   #   # (optional) Maximum total citations to include in agent responses, defaults to 30
   #   maxCitations: 30
   #   # (optional) Maximum citations per file to include in agent responses, defaults to 7
