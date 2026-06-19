@@ -1782,7 +1782,15 @@ const getListAgentsHandler = async (req, res) => {
       cachedRefreshEntry,
       accessibleSkillIds,
     ] = await Promise.all([
-      getAgentListAccess(req.user, requiredPermission, { hasCapability, findAccessibleResources }),
+      getAgentListAccess(
+        req.user,
+        requiredPermission,
+        { hasCapability, findAccessibleResources },
+        {
+          allowReadAllAgents:
+            req.config?.endpoints?.[EModelEndpoint.agents]?.adminListAllAgents === true,
+        },
+      ),
       findPubliclyAccessibleResources({
         resourceType: ResourceType.AGENT,
         requiredPermissions: PermissionBits.VIEW,
@@ -1830,6 +1838,7 @@ const getListAgentsHandler = async (req, res) => {
       try {
         const fullList = await db.getListAgentsByAccess({
           accessibleIds,
+          tenantId: req.user.tenantId ?? null,
           otherParams: { 'avatar.source': FileSources.s3 },
           limit: MAX_AVATAR_REFRESH_AGENTS,
           after: null,
