@@ -196,6 +196,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 'send_chat_message',
       serverName: 'ms365',
@@ -266,6 +267,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 'send_chat_message',
       serverName: 'ms365',
@@ -322,6 +324,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 't',
       serverName: 's',
@@ -350,6 +353,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 't',
       serverName: 's',
@@ -413,6 +417,7 @@ describe('MCP confirmation flow (integration)', () => {
 
       const res = makeFakeRes();
       const tool = createToolInstance({
+        mcpPermissionContext: { canUseServers: () => true },
         res,
         toolName: 'send_chat_message',
         serverName: 'ms365',
@@ -471,6 +476,7 @@ describe('MCP confirmation flow (integration)', () => {
 
       const res = makeFakeRes();
       const tool = createToolInstance({
+        mcpPermissionContext: { canUseServers: () => true },
         res,
         toolName: 'send_chat_message',
         serverName: 'ms365',

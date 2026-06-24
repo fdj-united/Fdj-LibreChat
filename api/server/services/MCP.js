@@ -19,6 +19,7 @@ const {
   resolveMCPServerContext,
   normalizeJsonSchema,
   GenerationJobManager,
+  getConfirmationStore,
   resolveJsonSchemaRefs,
   sanitizeGeminiSchema,
   buildMCPAuthStepId,
@@ -30,6 +31,7 @@ const {
   buildMCPAuthRunStepEndDeltaEvent,
   isUserSourced,
   hasCustomUserVars,
+  parseConfirmationEnvelope,
   checkAccessWithRequestCache,
   getMissingCustomUserVars,
   getUserMCPAuthMap,
@@ -1214,6 +1216,105 @@ async function createMCPTool({
   });
 }
 
+const ARRAY_CONTENT_PROVIDERS = new Set(['google', 'anthropic', 'azureopenai', 'openai']);
+
+/**
+ * Build a synthetic "canceled" tool result that mirrors the FormattedContentResult shape
+ * MCPManager.callTool returns. The agent loop sees this as a normal tool response and
+ * can continue conversationally.
+ */
+function buildCanceledToolResult(provider, reason) {
+  const text = JSON.stringify({ success: false, canceled: true, reason });
+  if (ARRAY_CONTENT_PROVIDERS.has(provider)) {
+    return [[{ type: 'text', text }], undefined];
+  }
+  return [text, undefined];
+}
+
+/** Emit an SSE event over the resumable stream when present, else directly to `res`. */
+async function emitMCPSSE(res, streamId, eventData, jobCreatedAt) {
+  if (streamId) {
+    await GenerationJobManager.emitChunk(streamId, eventData, {
+      expectedCreatedAt: jobCreatedAt,
+    });
+  } else if (res) {
+    sendEvent(res, eventData);
+  }
+}
+
+/**
+ * Suspends the agent loop while the user reviews a "confirmationRequired" envelope.
+ *
+ * Emits an `mcp_confirmation_required` SSE event, then awaits a decision posted to
+ * /api/mcp/confirm/:id by the originating user. On accept, the caller re-invokes the
+ * tool with identical args so the gateway's Phase 2 args-hash matches and forwards
+ * upstream. On cancel or timeout, the caller returns a synthesized canceled result.
+ *
+ * The LLM never observes the envelope: this function returns the decision but the
+ * envelope itself is dropped and replaced by either the real upstream result or a
+ * canceled stub. That asymmetry is the security property — the model has no path to
+ * issue the second tool call itself.
+ */
+async function awaitConfirmationDecision({
+  res,
+  streamId,
+  userId,
+  serverName,
+  toolName,
+  envelope,
+  signal,
+  jobCreatedAt,
+}) {
+  const store = getConfirmationStore();
+  const ttlMs = Math.max(1000, envelope.expiresInSeconds * 1000);
+  const { confirmationId, waitForDecision } = store.register(userId, ttlMs);
+
+  const eventData = {
+    event: 'mcp_confirmation_required',
+    data: {
+      confirmationId,
+      serverName,
+      toolName,
+      preview: envelope.preview,
+      expiresInSeconds: envelope.expiresInSeconds,
+      expiresAt: Date.now() + ttlMs,
+      // Optional structured rendering hints from the gateway. Forwarded
+      // verbatim; the client falls back to parsing `preview` when absent.
+      ...(envelope.presentation ? { presentation: envelope.presentation } : {}),
+    },
+  };
+
+  try {
+    await emitMCPSSE(res, streamId, eventData, jobCreatedAt);
+  } catch (err) {
+    logger.error(`[MCP][${serverName}][${toolName}] Failed to emit confirmation SSE event`, err);
+    store.resolve(confirmationId, userId, 'cancel');
+    return { decision: 'cancel' };
+  }
+
+  let abortListener = null;
+  if (signal) {
+    abortListener = () => {
+      // If the request is aborted (user navigates away, stops generation), drop
+      // the confirmation rather than leaking the deferred until TTL.
+      store.resolve(confirmationId, userId, 'cancel');
+    };
+    if (signal.aborted) {
+      abortListener();
+    } else {
+      signal.addEventListener('abort', abortListener, { once: true });
+    }
+  }
+
+  try {
+    return await waitForDecision;
+  } finally {
+    if (signal && abortListener) {
+      signal.removeEventListener('abort', abortListener);
+    }
+  }
+}
+
 function createToolInstance({
   res,
   mcpPermissionContext,
@@ -1320,7 +1421,7 @@ function createToolInstance({
        * is required for OBO since the grant sends the access token to the IdP
        * as the jwt-bearer assertion.
        */
-      const result = await mcpManager.callTool({
+      const callToolArgs = {
         serverName,
         serverConfig: capturedServerConfig,
         /** The upstream server never sees stripped names — a key that dropped
@@ -1361,7 +1462,57 @@ function createToolInstance({
         upstreamTokenProvider: capturedUpstreamTokenProvider,
         upstreamTokenProviderResolver: capturedUpstreamTokenProviderResolver,
         oboIdentityContext: capturedOboIdentityContext,
-      });
+      };
+
+      let result = await mcpManager.callTool(callToolArgs);
+
+      const envelope = parseConfirmationEnvelope(result);
+      if (envelope && userId) {
+        logger.info(
+          `[MCP][${serverName}][${toolName}][User: ${userId}] Confirmation required, suspending agent loop`,
+        );
+        const { decision } = await awaitConfirmationDecision({
+          res,
+          streamId,
+          userId,
+          serverName,
+          toolName,
+          envelope,
+          signal: derivedSignal,
+          jobCreatedAt,
+        });
+
+        if (decision === 'accept') {
+          result = await mcpManager.callTool(callToolArgs);
+          if (parseConfirmationEnvelope(result)) {
+            logger.warn(
+              `[MCP][${serverName}][${toolName}][User: ${userId}] Phase-2 call still returned a confirmation envelope; treating as canceled`,
+            );
+            result = buildCanceledToolResult(
+              provider,
+              'Confirmation could not be completed. Please retry.',
+            );
+          }
+        } else {
+          const reason =
+            decision === 'timeout' ? 'User did not confirm in time.' : 'User declined.';
+
+          const clearArgs = {
+            ...callToolArgs,
+            toolArguments: {
+              ...callToolArgs.toolArguments,
+              __mcp_clear_pending__: true,
+            },
+          };
+          mcpManager.callTool(clearArgs)?.catch((err) => {
+            logger.warn(
+              `[MCP][${serverName}][${toolName}][User: ${userId}] Failed to clear gateway-side pending approval (best-effort; TTL is fallback): ${err.message}`,
+            );
+          });
+
+          result = buildCanceledToolResult(provider, reason);
+        }
+      }
 
       if (isAssistantsEndpoint(provider) && Array.isArray(result)) {
         return result[0];
@@ -1737,6 +1888,7 @@ module.exports = {
   createMCPTool,
   createMCPTools,
   toProviderToolDefinition,
+  createToolInstance,
   createMCPPermissionContext,
   userCanUseMCPServers,
   getMCPSetupData,
