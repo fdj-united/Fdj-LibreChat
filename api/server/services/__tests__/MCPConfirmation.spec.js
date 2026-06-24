@@ -196,6 +196,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 'send_chat_message',
       serverName: 'ms365',
@@ -266,6 +267,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 'send_chat_message',
       serverName: 'ms365',
@@ -322,6 +324,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 't',
       serverName: 's',
@@ -350,6 +353,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     const res = makeFakeRes();
     const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
       res,
       toolName: 't',
       serverName: 's',
@@ -396,9 +400,7 @@ describe('MCP confirmation flow (integration)', () => {
   it('REST endpoint validates body and confirmationId', async () => {
     const app = buildApp();
 
-    const bad1 = await request(app)
-      .post('/api/mcp/confirm/some-id')
-      .send({ decision: 'maybe' });
+    const bad1 = await request(app).post('/api/mcp/confirm/some-id').send({ decision: 'maybe' });
     expect(bad1.status).toBe(400);
 
     const bad2 = await request(app)
@@ -415,6 +417,7 @@ describe('MCP confirmation flow (integration)', () => {
 
       const res = makeFakeRes();
       const tool = createToolInstance({
+        mcpPermissionContext: { canUseServers: () => true },
         res,
         toolName: 'send_chat_message',
         serverName: 'ms365',
@@ -473,6 +476,7 @@ describe('MCP confirmation flow (integration)', () => {
 
       const res = makeFakeRes();
       const tool = createToolInstance({
+        mcpPermissionContext: { canUseServers: () => true },
         res,
         toolName: 'send_chat_message',
         serverName: 'ms365',
