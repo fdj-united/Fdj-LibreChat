@@ -285,6 +285,9 @@ export type Agent = {
   edges?: GraphEdge[];
   end_after_tools?: boolean;
   hide_sequential_outputs?: boolean;
+  /** When true, hides the "Upload to Provider" file option and rejects
+   *  provider-direct (no tool_resource) uploads for this agent. */
+  disable_provider_upload?: boolean;
   artifacts?: ArtifactModes;
   recursion_limit?: number;
   isPublic?: boolean;
@@ -321,6 +324,7 @@ export type AgentCreateParams = {
   | 'edges'
   | 'end_after_tools'
   | 'hide_sequential_outputs'
+  | 'disable_provider_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'
@@ -348,6 +352,7 @@ export type AgentUpdateParams = {
   | 'edges'
   | 'end_after_tools'
   | 'hide_sequential_outputs'
+  | 'disable_provider_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'

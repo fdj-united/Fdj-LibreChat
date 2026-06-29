@@ -709,3 +709,28 @@ describe('createResponse controller', () => {
     });
   });
 });
+
+describe('stripImageContent - provider upload enforcement', () => {
+  let stripImageContent;
+
+  beforeEach(() => {
+    stripImageContent = require('../responses').stripImageContent;
+  });
+
+  it('removes input_image and image_url parts, leaving other content intact', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'hi' },
+          { type: 'input_image', image_url: 'data:image/png;base64,abc' },
+          { type: 'image_url', image_url: { url: 'y' } },
+        ],
+      },
+      { role: 'user', content: 'plain string is untouched' },
+    ];
+    const result = stripImageContent(messages);
+    expect(result[0].content).toEqual([{ type: 'input_text', text: 'hi' }]);
+    expect(result[1].content).toBe('plain string is untouched');
+  });
+});

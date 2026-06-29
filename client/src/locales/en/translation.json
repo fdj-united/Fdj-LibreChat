@@ -749,6 +749,7 @@
   "com_ui_agent_description": "Agent description",
   "com_ui_agent_duplicate_error": "There was an error duplicating the agent",
   "com_ui_agent_duplicated": "Agent duplicated successfully",
+  "com_ui_agent_enable_provider_upload": "Enable file upload to the model provider",
   "com_ui_agent_handoff_add": "Add handoff agent",
   "com_ui_agent_handoff_description": "Handoff description",
   "com_ui_agent_handoff_description_placeholder": "e.g., Transfer to data analyst for statistical analysis",

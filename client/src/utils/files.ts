@@ -335,6 +335,8 @@ export type UploadOptionContext = {
   contextEnabled: boolean;
   fileSearchAllowedByAgent: boolean;
   codeAllowedByAgent: boolean;
+  /** When false, the agent opts out of direct-to-provider attachments. Defaults to allowed. */
+  providerUploadAllowedByAgent?: boolean;
   fileConfig: FileConfig | null;
   endpointSupportedMimeTypes?: RegExp[];
 };
@@ -407,7 +409,10 @@ export const getViableUploadOptions = (
     types.every((type) => predicate(type as string));
 
   const options: (EToolResources | undefined)[] = [];
-  if (every((type) => isProviderAttachType(type, ctx))) {
+  if (
+    ctx.providerUploadAllowedByAgent !== false &&
+    every((type) => isProviderAttachType(type, ctx))
+  ) {
     options.push(undefined);
   }
   if (

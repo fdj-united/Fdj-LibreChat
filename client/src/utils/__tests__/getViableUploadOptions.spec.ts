@@ -58,6 +58,21 @@ describe('getViableUploadOptions', () => {
       ]);
     });
 
+    it('omits the provider option for a PDF when the agent disables provider upload', () => {
+      const ctx = baseCtx({ providerUploadAllowedByAgent: false });
+      expect(getViableUploadOptions([file('application/pdf', 'doc.pdf')], ctx)).toEqual([
+        EToolResources.file_search,
+        EToolResources.execute_code,
+        EToolResources.context,
+      ]);
+    });
+
+    it('omits the provider option for an image when the agent disables provider upload', () => {
+      const ctx = baseCtx({ providerUploadAllowedByAgent: false });
+      // Provider-direct (undefined) is removed; other viable destinations remain.
+      expect(getViableUploadOptions([file('image/png', 'pic.png')], ctx)).not.toContain(undefined);
+    });
+
     it('yields a single option for a zip (code only) so it can auto-route', () => {
       expect(getViableUploadOptions([file('application/zip', 'a.zip')], baseCtx())).toEqual([
         EToolResources.execute_code,

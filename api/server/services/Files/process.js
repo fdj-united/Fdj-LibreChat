@@ -681,6 +681,14 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
     throw new Error('No agent ID provided for agent file upload');
   }
 
+  /** Provider-direct uploads (no tool_resource) can be disabled per-agent. */
+  if (agent_id && !tool_resource) {
+    const agent = await db.getAgent({ id: agent_id });
+    if (agent?.disable_provider_upload === true) {
+      throw new Error('Direct file upload to the model provider is disabled for this agent');
+    }
+  }
+
   const isImage = file.mimetype.startsWith('image');
   let fileInfoMetadata;
   const entity_id = messageAttachment === true ? undefined : agent_id;

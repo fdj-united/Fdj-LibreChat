@@ -111,15 +111,20 @@ function convertContentPart(part) {
 /**
  * Convert OpenAI messages to internal format
  * @param {Array} messages - OpenAI format messages
+ * @param {Object} [options]
+ * @param {boolean} [options.allowImageContent=true] - When false, `image_url` content
+ *   parts are dropped (enforces the selected agent's `disable_provider_upload`).
  * @returns {Array} Internal format messages
  */
-function convertMessages(messages) {
+function convertMessages(messages, { allowImageContent = true } = {}) {
   return messages.map((msg) => {
     let content;
     if (typeof msg.content === 'string') {
       content = msg.content;
     } else if (msg.content) {
-      content = msg.content.map(convertContentPart);
+      content = msg.content
+        .filter((part) => allowImageContent || part?.type !== 'image_url')
+        .map(convertContentPart);
     } else {
       content = '';
     }
@@ -512,7 +517,9 @@ const OpenAIChatCompletionController = async (req, res) => {
 
     const summarizationConfig = appConfig?.summarization;
 
-    const openaiMessages = convertMessages(request.messages);
+    const openaiMessages = convertMessages(request.messages, {
+      allowImageContent: agent?.disable_provider_upload !== true,
+    });
 
     const toolSet = buildToolSet(primaryConfig);
     const formatted = formatAgentMessages(openaiMessages, {}, toolSet);
@@ -999,4 +1006,5 @@ module.exports = {
   OpenAIChatCompletionController,
   ListModelsController,
   GetModelController,
+  convertMessages,
 };
