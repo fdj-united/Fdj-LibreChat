@@ -103,10 +103,8 @@ const AttachFileMenu = ({
    * */
   const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
 
-  const { fileSearchAllowedByAgent, codeAllowedByAgent, provider } = useAgentToolPermissions(
-    agentId,
-    ephemeralAgent,
-  );
+  const { fileSearchAllowedByAgent, codeAllowedByAgent, providerUploadAllowedByAgent, provider } =
+    useAgentToolPermissions(agentId, ephemeralAgent);
 
   const handleUploadClick = (fileType?: FileUploadType) => {
     if (!inputRef.current) {
@@ -303,9 +301,10 @@ const AttachFileMenu = ({
         currentProvider === EModelEndpoint.azureOpenAI && useResponsesApi;
 
       if (
-        isDocumentSupportedProvider(endpointType) ||
-        isDocumentSupportedProvider(currentProvider) ||
-        isAzureWithResponsesApi
+        providerUploadAllowedByAgent &&
+        (isDocumentSupportedProvider(endpointType) ||
+          isDocumentSupportedProvider(currentProvider) ||
+          isAzureWithResponsesApi)
       ) {
         items.push({
           label: localize('com_ui_upload_provider'),
@@ -424,6 +423,7 @@ const AttachFileMenu = ({
     sharePointEnabled,
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
+    providerUploadAllowedByAgent,
     setIsSharePointDialogOpen,
     handleSmartUpload,
     allFiles,

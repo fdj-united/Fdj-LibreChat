@@ -68,6 +68,12 @@ const agentSchema = new Schema<IAgent>(
     end_after_tools: {
       type: Boolean,
     },
+    /** When true, hides the "Upload to Provider" file option and rejects
+     *  provider-direct (no tool_resource) uploads for this agent. */
+    disable_provider_upload: {
+      type: Boolean,
+      default: undefined,
+    },
     /** @deprecated Use edges instead */
     agent_ids: {
       type: [String],
