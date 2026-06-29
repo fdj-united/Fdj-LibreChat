@@ -94,6 +94,7 @@ export function composeAgentUpdatePayload(
     repositoryInstructions,
     code_workspace_id,
     git_identity,
+    disable_provider_upload,
     recursion_limit,
     category,
     support_contact,
@@ -166,6 +167,7 @@ export function composeAgentUpdatePayload(
       repositoryInstructions,
       code_workspace_id,
       git_identity: normalizedGitIdentity,
+      disable_provider_upload,
       recursion_limit,
       category,
       support_contact,
@@ -454,7 +456,7 @@ export default function AgentPanel() {
             (isAdmin || !['AI Studio', 'Text to SQL'].includes(key)),
         )
         .map((provider) => createProviderOption(provider)),
-    [endpointsConfig, allowedProviders],
+    [endpointsConfig, allowedProviders, isAdmin],
   );
   useEffect(() => {
     if (endpointsConfig == null || !modelsReady || !modelsQuery.isSuccess) {

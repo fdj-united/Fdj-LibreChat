@@ -9,6 +9,7 @@ interface AgentToolPermissionsResult {
   fileSearchAllowedByAgent: boolean;
   codeAllowedByAgent: boolean;
   statefulCodeSessionsAllowedByAgent: boolean;
+  providerUploadAllowedByAgent: boolean;
   tools: string[] | undefined;
   provider?: string;
   codeEnvironmentId?: string | null;
@@ -83,12 +84,24 @@ export default function useAgentToolPermissions(
     return { ...selectedAgent, ...agentData };
   }, [agentData, selectedAgent]);
 
+  const providerUploadAllowedByAgent = useMemo(() => {
+    // Ephemeral agents have no per-agent override; allow provider upload.
+    if (isEphemeralAgent(agentId)) {
+      return true;
+    }
+    // No specific agent in context (e.g. plain endpoint); allow by default.
+    if (!agent) return true;
+    // Disable only when the agent explicitly opts out.
+    return agent.disable_provider_upload !== true;
+  }, [agentId, agent]);
+
   return {
     fileSearchAllowedByAgent,
     codeAllowedByAgent,
     statefulCodeSessionsAllowedByAgent,
     codeEnvironmentId,
     agent,
+    providerUploadAllowedByAgent,
     provider,
     tools,
   };

@@ -8,6 +8,7 @@ import { useAgentFileEntries } from './Tools/hooks';
 import { useAgentPanelContext } from '~/Providers';
 import { useProviderIcon } from '~/hooks/Endpoint';
 import ToolsSection from './Tools/ToolsSection';
+import ProviderUpload from './ProviderUpload';
 import { validateEmail, cn } from '~/utils';
 import Instructions from './Instructions';
 import FileContext from './FileContext';
@@ -154,6 +155,11 @@ export default function AgentConfig() {
           <FileContext agent_id={agent_id} files={contextFiles} />
         </div>
       )}
+
+      {/* PROVIDER FILE UPLOAD */}
+      <div className="mb-3">
+        <ProviderUpload />
+      </div>
 
       {/* SUPPORT CONTACT */}
       <div className="mb-3 flex flex-col">
