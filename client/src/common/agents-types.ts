@@ -43,6 +43,8 @@ export type AgentForm = {
   agent_ids?: string[];
   edges?: GraphEdge[];
   [AgentCapabilities.artifacts]?: ArtifactModes | string;
+  /** When true, hides the "Upload to Provider" file option for this agent. */
+  disable_provider_upload?: boolean;
   recursion_limit?: number;
   support_contact?: SupportContact;
   category: string;

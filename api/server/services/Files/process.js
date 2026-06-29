@@ -31,6 +31,7 @@ const { addAgentResourceFile, removeAgentResourceFiles } = require('~/models/Age
 const { getOpenAIClient } = require('~/server/controllers/assistants/helpers');
 const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { createFile, updateFileUsage, deleteFiles } = require('~/models');
+const { getAgent } = require('~/models/Agent');
 const { getFileStrategy } = require('~/server/utils/getFileStrategy');
 const { checkCapability } = require('~/server/services/Config');
 const { LB_QueueAsyncCall } = require('~/server/utils/queue');
@@ -484,6 +485,14 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
 
   if (!messageAttachment && !agent_id) {
     throw new Error('No agent ID provided for agent file upload');
+  }
+
+  /** Provider-direct uploads (no tool_resource) can be disabled per-agent. */
+  if (agent_id && !tool_resource) {
+    const agent = await getAgent({ id: agent_id });
+    if (agent?.disable_provider_upload === true) {
+      throw new Error('Direct file upload to the model provider is disabled for this agent');
+    }
   }
 
   const isImage = file.mimetype.startsWith('image');
