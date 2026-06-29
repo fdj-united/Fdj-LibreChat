@@ -729,6 +729,8 @@
   "com_ui_advanced_settings": "Advanced Settings",
   "com_ui_agent": "Agent",
   "com_ui_agent_api_keys": "Agent API Keys",
+  "com_ui_agent_api_keys_description": "Create API keys to access agents remotely via the API",
+  "com_ui_agent_enable_provider_upload": "Enable file upload to the model provider",
   "com_ui_agent_category_aftersales": "After Sales",
   "com_ui_agent_category_finance": "Finance",
   "com_ui_agent_category_general": "General",
