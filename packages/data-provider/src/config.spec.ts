@@ -1,7 +1,7 @@
 import type { TEndpointsConfig } from './types';
 import { EModelEndpoint, isDocumentSupportedProvider } from './schemas';
 import { getEndpointFileConfig, mergeFileConfig } from './file-config';
-import { resolveEndpointType } from './config';
+import { resolveEndpointType, configSchema } from './config';
 
 const endpointsConfig: TEndpointsConfig = {
   [EModelEndpoint.openAI]: { userProvide: false, order: 0 },
@@ -12,6 +12,116 @@ const endpointsConfig: TEndpointsConfig = {
   'Some Endpoint': { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
   Gemini: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
 };
+
+describe('bedrockEndpointSchema', () => {
+  it('preserves guardrailConfig from configSchema parsing', () => {
+    const guardrailConfig = {
+      guardrailIdentifier: '${BEDROCK_GUARDRAIL_ID}',
+      guardrailVersion: '${BEDROCK_GUARDRAIL_VERSION}',
+      trace: 'enabled_full',
+      streamProcessingMode: 'sync',
+    };
+
+    const result = configSchema.safeParse({
+      version: '1.0',
+      endpoints: {
+        bedrock: {
+          streamRate: 25,
+          availableRegions: ['us-west-2'],
+          guardrailConfig,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.endpoints?.bedrock?.guardrailConfig).toEqual(guardrailConfig);
+  });
+
+  it('preserves guardrailConfig.appliesTo scoping from configSchema parsing', () => {
+    const guardrailConfig = {
+      guardrailIdentifier: 'gr-scoped',
+      guardrailVersion: '1',
+      appliesTo: {
+        agentIds: ['agent_abc123'],
+        models: ['anthropic.claude-sonnet-4-6'],
+      },
+    };
+
+    const result = configSchema.safeParse({
+      version: '1.0',
+      endpoints: { bedrock: { guardrailConfig } },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.endpoints?.bedrock?.guardrailConfig?.appliesTo).toEqual({
+      agentIds: ['agent_abc123'],
+      models: ['anthropic.claude-sonnet-4-6'],
+    });
+  });
+
+  it.each(['agentIds', 'models'])(
+    'rejects an empty appliesTo.%s array (would otherwise apply to all)',
+    (field) => {
+      const result = configSchema.safeParse({
+        version: '1.0',
+        endpoints: {
+          bedrock: {
+            guardrailConfig: {
+              guardrailIdentifier: 'gr-scoped',
+              guardrailVersion: '1',
+              appliesTo: { [field]: [] },
+            },
+          },
+        },
+      });
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it.each(['agentId', 'model', 'agents', 'modelIds'])(
+    'rejects a misspelled appliesTo key "%s" instead of silently applying to all',
+    (badKey) => {
+      const result = configSchema.safeParse({
+        version: '1.0',
+        endpoints: {
+          bedrock: {
+            guardrailConfig: {
+              guardrailIdentifier: 'gr-scoped',
+              guardrailVersion: '1',
+              appliesTo: { [badKey]: ['anthropic.claude-sonnet-4-6'] },
+            },
+          },
+        },
+      });
+
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it('rejects an empty appliesTo object (would otherwise apply to all)', () => {
+    const result = configSchema.safeParse({
+      version: '1.0',
+      endpoints: {
+        bedrock: {
+          guardrailConfig: {
+            guardrailIdentifier: 'gr-scoped',
+            guardrailVersion: '1',
+            appliesTo: {},
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
 
 describe('resolveEndpointType', () => {
   describe('non-agents endpoints', () => {
