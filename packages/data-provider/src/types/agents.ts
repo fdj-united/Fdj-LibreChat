@@ -1038,6 +1038,8 @@ export type Agent = {
   repositoryInstructions?: 'prefer' | 'defer' | 'off';
   /** Non-secret Git authorship injected into this agent's sandboxed commands. */
   git_identity?: AgentGitIdentity | null;
+  /** When true, provider-direct file uploads are hidden and rejected for this agent. */
+  disable_provider_upload?: boolean;
   artifacts?: ArtifactModes;
   recursion_limit?: number;
   isPublic?: boolean;
@@ -1101,6 +1103,7 @@ export type AgentCreateParams = {
   | 'code_environment_id'
   | 'code_workspace_id'
   | 'repositoryInstructions'
+  | 'disable_provider_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'
@@ -1137,6 +1140,7 @@ export type AgentUpdateParams = {
   | 'git_identity'
   | 'code_workspace_id'
   | 'repositoryInstructions'
+  | 'disable_provider_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'

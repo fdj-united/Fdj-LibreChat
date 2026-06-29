@@ -54,6 +54,9 @@ export interface IAgent extends Omit<Document, 'model'> {
   code_workspace_id?: string;
   repositoryInstructions?: 'prefer' | 'defer' | 'off';
   git_identity?: AgentGitIdentity | null;
+  /** When true, hides the "Upload to Provider" file option and rejects
+   *  provider-direct (no tool_resource) uploads for this agent. */
+  disable_provider_upload?: boolean;
   /** @deprecated Use edges instead */
   agent_ids?: string[];
   edges?: GraphEdge[];
