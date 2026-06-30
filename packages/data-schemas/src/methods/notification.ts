@@ -96,10 +96,7 @@ export function createNotificationMethods(mongoose: typeof import('mongoose')): 
     nextCursor: string | null;
     hasNextPage: boolean;
   }>;
-  markNotificationRead: (
-    userId: string,
-    notificationId: string,
-  ) => Promise<{ updated: boolean }>;
+  markNotificationRead: (userId: string, notificationId: string) => Promise<{ updated: boolean }>;
   markAllNotificationsRead: (userId: string) => Promise<{ count: number }>;
   deleteNotification: (userId: string, notificationId: string) => Promise<boolean>;
   deleteAllUserNotifications: (userId: string) => Promise<number>;

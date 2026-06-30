@@ -23,7 +23,9 @@ router.post(
     const { type, title, message, link } = req.body;
 
     if (type !== 'announcement') {
-      return res.status(400).json({ error: 'Broadcast notifications must use type "announcement".' });
+      return res
+        .status(400)
+        .json({ error: 'Broadcast notifications must use type "announcement".' });
     }
 
     if (typeof title !== 'string' || title.trim() === '') {
