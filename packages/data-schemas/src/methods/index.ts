@@ -101,7 +101,12 @@ import { createAgentMethods, type AgentMethods, type AgentDeps } from './agent';
 /* Config */
 import { createConfigMethods, type ConfigMethods } from './config';
 
-export { RoleConflictError, InvalidNotificationCursorError, DEFAULT_REFRESH_TOKEN_EXPIRY, DEFAULT_SESSION_EXPIRY };
+export {
+  RoleConflictError,
+  InvalidNotificationCursorError,
+  DEFAULT_REFRESH_TOKEN_EXPIRY,
+  DEFAULT_SESSION_EXPIRY,
+};
 export { tokenValues, cacheTokenValues, premiumTokenValues, defaultRate, createTxMethods };
 export { permissionBitSupersets };
 export {
