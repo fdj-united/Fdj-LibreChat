@@ -35,6 +35,7 @@ const {
 } = require('@librechat/agents');
 const {
   Constants,
+  FileSources,
   Permissions,
   VisionModes,
   ContentTypes,
@@ -94,6 +95,20 @@ class AgentClient extends BaseClient {
     this.options = Object.assign({ endpoint: options.endpoint }, clientOptions);
     /** @type {string} */
     this.model = this.options.agent.model_parameters.model;
+    /**
+     * True when the selected (primary) agent opts out of provider file uploads.
+     * Scoped to the selected agent to stay consistent with the client-side gate
+     * (`useAgentToolPermissions`), which checks only the selected agent — so an
+     * upload the UI allows is never silently discarded. When set, provider-direct
+     * attachments (images/documents) are stripped before they reach the model in
+     * `processAttachments`, covering current-request and historical files alike.
+     *
+     * Note: a run shares one attachment stream across all agents, so connected /
+     * handoff agents inherit the selected agent's policy rather than applying their
+     * own. Enforcing a handoff agent's opt-out independently would require
+     * per-agent message rewriting inside the graph (in `@librechat/agents`).
+     * @type {boolean} */
+    this.disableProviderUpload = this.options.agent?.disable_provider_upload === true;
     /** The key for the usage object's input tokens
      * @type {string} */
     this.inputTokensKey = 'input_tokens';
@@ -159,6 +174,31 @@ class AgentClient extends BaseClient {
    */
   getBuildMessagesOptions() {
     return {};
+  }
+
+  /**
+   * Strips provider-direct attachments (images/documents that would be sent straight
+   * to the model) when the selected agent opts out of provider uploads, then delegates
+   * to the base implementation. Both current-request and historical attachments funnel
+   * through here, so this is the authoritative enforcement point for
+   * `disable_provider_upload`. Tool-backed files are preserved: file_search (embedded),
+   * execute_code (codeEnvRef/fileIdentifier), and context (source: text).
+   * @param {TMessage} message
+   * @param {Array<MongoFile>} attachments
+   * @returns {Promise<Array<Partial<MongoFile>>>}
+   */
+  async processAttachments(message, attachments) {
+    if (this.disableProviderUpload === true && Array.isArray(attachments)) {
+      attachments = attachments.filter(
+        (file) =>
+          file == null ||
+          file.source === FileSources.text ||
+          file.embedded === true ||
+          file.metadata?.codeEnvRef != null ||
+          file.metadata?.fileIdentifier != null,
+      );
+    }
+    return super.processAttachments(message, attachments);
   }
 
   /**

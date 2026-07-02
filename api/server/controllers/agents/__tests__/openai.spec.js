@@ -299,3 +299,32 @@ describe('OpenAIChatCompletionController', () => {
     });
   });
 });
+
+describe('convertMessages - provider upload enforcement', () => {
+  let convertMessages;
+
+  beforeEach(() => {
+    convertMessages = require('../openai').convertMessages;
+  });
+
+  const imageMessage = {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'describe this' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+    ],
+  };
+
+  it('keeps image_url content when uploads are allowed', () => {
+    const [msg] = convertMessages([imageMessage], { allowImageContent: true });
+    expect(msg.content).toEqual([
+      { type: 'text', text: 'describe this' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+    ]);
+  });
+
+  it('drops image_url content when the agent disables provider upload', () => {
+    const [msg] = convertMessages([imageMessage], { allowImageContent: false });
+    expect(msg.content).toEqual([{ type: 'text', text: 'describe this' }]);
+  });
+});

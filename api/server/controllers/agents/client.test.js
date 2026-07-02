@@ -2258,3 +2258,87 @@ describe('AgentClient - titleConvo', () => {
     });
   });
 });
+
+describe('AgentClient - disableProviderUpload derivation', () => {
+  const baseReq = { user: { id: 'u1' }, body: {}, config: { endpoints: {} } };
+  const makeAgent = (over = {}) => ({
+    id: 'primary',
+    endpoint: EModelEndpoint.openAI,
+    provider: EModelEndpoint.openAI,
+    model_parameters: { model: 'gpt-4' },
+    ...over,
+  });
+
+  it('is true when the selected (primary) agent opts out', () => {
+    const client = new AgentClient({
+      req: baseReq,
+      res: {},
+      agent: makeAgent({ disable_provider_upload: true }),
+      endpointTokenConfig: {},
+    });
+    expect(client.disableProviderUpload).toBe(true);
+  });
+
+  it('is false when the primary agent does not opt out', () => {
+    const client = new AgentClient({
+      req: baseReq,
+      res: {},
+      agent: makeAgent(),
+      endpointTokenConfig: {},
+    });
+    expect(client.disableProviderUpload).toBe(false);
+  });
+
+  // Scoped to the selected agent to match the UI gate; connected/handoff agents
+  // inherit the selected agent's policy (shared attachment stream).
+  it('is derived from the selected agent only, not connected/handoff agents', () => {
+    const agentConfigs = new Map([
+      ['connected', makeAgent({ id: 'connected', disable_provider_upload: true })],
+    ]);
+    const client = new AgentClient({
+      req: baseReq,
+      res: {},
+      agent: makeAgent(),
+      agentConfigs,
+      endpointTokenConfig: {},
+    });
+    expect(client.disableProviderUpload).toBe(false);
+  });
+});
+
+describe('AgentClient - processAttachments provider-upload enforcement', () => {
+  const { FileSources } = require('librechat-data-provider');
+  const baseProto = Object.getPrototypeOf(AgentClient.prototype);
+
+  const message = {};
+  const providerImage = { file_id: 'img', type: 'image/png', source: FileSources.local };
+  const providerPdf = { file_id: 'pdf', type: 'application/pdf', source: FileSources.local };
+  const embedded = { file_id: 'emb', type: 'application/pdf', embedded: true };
+  const codeFile = { file_id: 'code', type: 'text/x-python', metadata: { codeEnvRef: {} } };
+  const textFile = { file_id: 'txt', type: 'text/plain', source: FileSources.text };
+
+  let superSpy;
+  beforeEach(() => {
+    superSpy = jest.spyOn(baseProto, 'processAttachments').mockResolvedValue([]);
+  });
+  afterEach(() => superSpy.mockRestore());
+
+  it('strips provider-direct attachments but keeps tool files when disabled', async () => {
+    const ctx = { disableProviderUpload: true };
+    await AgentClient.prototype.processAttachments.call(ctx, message, [
+      providerImage,
+      providerPdf,
+      embedded,
+      codeFile,
+      textFile,
+    ]);
+    expect(superSpy).toHaveBeenCalledWith(message, [embedded, codeFile, textFile]);
+  });
+
+  it('passes all attachments through when not disabled', async () => {
+    const ctx = { disableProviderUpload: false };
+    const all = [providerImage, embedded, textFile];
+    await AgentClient.prototype.processAttachments.call(ctx, message, all);
+    expect(superSpy).toHaveBeenCalledWith(message, all);
+  });
+});

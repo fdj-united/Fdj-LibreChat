@@ -97,6 +97,27 @@ function convertToInternalMessages(input) {
 }
 
 /**
+ * Removes provider-direct image content parts (`input_image`/`image_url`) from messages.
+ * Used to enforce the selected agent's `disable_provider_upload` on the Responses API,
+ * where image content is otherwise formatted straight to the provider.
+ * @param {Array} messages - Internal format messages
+ * @returns {Array} Messages with image content parts removed
+ */
+function stripImageContent(messages) {
+  return messages.map((msg) => {
+    if (!Array.isArray(msg?.content)) {
+      return msg;
+    }
+    return {
+      ...msg,
+      content: msg.content.filter(
+        (part) => part?.type !== 'input_image' && part?.type !== 'image_url',
+      ),
+    };
+  });
+}
+
+/**
  * Load messages from a previous response/conversation
  * @param {string} conversationId - The conversation/response ID
  * @param {string} userId - The user ID
@@ -384,7 +405,12 @@ const createResponse = async (req, res) => {
     );
 
     // Merge previous messages with new input
-    const allMessages = [...previousMessages, ...inputMessages];
+    let allMessages = [...previousMessages, ...inputMessages];
+    /** Enforce the selected agent's provider-upload policy: drop image content
+     * (current + historical) before it is formatted for the provider. */
+    if (agent?.disable_provider_upload === true) {
+      allMessages = stripImageContent(allMessages);
+    }
 
     const toolSet = buildToolSet(primaryConfig);
     const { messages: formattedMessages, indexTokenCountMap } = formatAgentMessages(
@@ -922,4 +948,5 @@ module.exports = {
   getResponse,
   listModels,
   setAppConfig,
+  stripImageContent,
 };
