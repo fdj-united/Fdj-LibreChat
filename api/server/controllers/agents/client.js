@@ -24,6 +24,8 @@ const {
   createMemoryProcessor,
   createMultiAgentMapper,
   filterMalformedContentParts,
+  extractFileContext,
+  partitionFileContextAttachments,
 } = require('@librechat/api');
 const {
   Callback,
@@ -234,6 +236,8 @@ class AgentClient extends BaseClient {
     let payload;
     /** @type {number | undefined} */
     let promptTokens;
+    /** @type {string | undefined} */
+    let latestUserTurnFileContext;
 
     /**
      * Extract base instructions for all agents (combines instructions + additional_instructions).
@@ -263,18 +267,67 @@ class AgentClient extends BaseClient {
       const attachments = await this.options.attachments;
       const latestMessage = orderedMessages[orderedMessages.length - 1];
 
+      /**
+       * Merge the current request's attachments with any already loaded for this
+       * message by `addPreviousAttachments` (via `loadHistory`), deduped by `file_id`.
+       * Production always supplies an array here — `[]` on a rerun/edit with no new
+       * files — so a plain assignment would clobber the stored file context and let
+       * it slip back into the run instructions unguarded. Merging preserves it.
+       */
+      const existingAttachments = this.message_file_map?.[latestMessage.messageId] ?? [];
+      const mergedById = new Map();
+      for (const file of [...existingAttachments, ...attachments]) {
+        if (file?.file_id) {
+          mergedById.set(file.file_id, file);
+        }
+      }
+      const mergedAttachments = Array.from(mergedById.values());
+
       if (this.message_file_map) {
-        this.message_file_map[latestMessage.messageId] = attachments;
+        this.message_file_map[latestMessage.messageId] = mergedAttachments;
       } else {
         this.message_file_map = {
-          [latestMessage.messageId]: attachments,
+          [latestMessage.messageId]: mergedAttachments,
         };
       }
 
-      await this.addFileContextToMessage(latestMessage, attachments);
       const files = await this.processAttachments(latestMessage, attachments);
 
       this.options.attachments = files;
+    }
+
+    /**
+     * Split the latest turn's file context by origin so chat uploads ("Upload as
+     * Text", context: message_attachment) are appended to the user turn — subject to
+     * provider guardrails, exactly like pasted text — while agent knowledge-base
+     * context (tool_resources.context) stays in the run instructions where prompt
+     * caching expects it. Driven off `message_file_map` rather than only the current
+     * request's attachments, so it also covers reruns/edits where the latest message
+     * already carries stored file context and no new attachments are supplied.
+     */
+    const latestFileContextMessage = orderedMessages[orderedMessages.length - 1];
+    const latestFileContextAttachments =
+      latestFileContextMessage && this.message_file_map?.[latestFileContextMessage.messageId];
+    if (Array.isArray(latestFileContextAttachments) && latestFileContextAttachments.length) {
+      const { userTurnAttachments, instructionAttachments } = partitionFileContextAttachments(
+        latestFileContextAttachments,
+      );
+      const tokenCountFn = (text) => this.getTokenCount(text);
+      latestUserTurnFileContext = await extractFileContext({
+        attachments: userTurnAttachments,
+        req: this.options?.req,
+        tokenCountFn,
+      });
+      /**
+       * Override any fileContext carried on the stored latest message so message-
+       * attachment text is never left in the run instructions (guardrail bypass on
+       * rerun/edit). Agent-context text, when present, is preserved here.
+       */
+      latestFileContextMessage.fileContext = await extractFileContext({
+        attachments: instructionAttachments,
+        req: this.options?.req,
+        tokenCountFn,
+      });
     }
 
     /** Note: Bedrock uses legacy RAG API handling */
@@ -292,20 +345,27 @@ class AgentClient extends BaseClient {
         assistantName: this.options?.modelLabel,
       });
 
-      /** For non-latest messages, prepend file context directly to message content */
-      if (message.fileContext && i !== orderedMessages.length - 1) {
+      /**
+       * Prepend file context to the user turn content:
+       *  - historical messages: their stored `fileContext`;
+       *  - the latest turn: only the locally extracted chat-upload context,
+       *    so it is guarded like pasted text (agent context stays in instructions).
+       */
+      const isLatestMessage = i === orderedMessages.length - 1;
+      const prependFileContext = isLatestMessage ? latestUserTurnFileContext : message.fileContext;
+      if (prependFileContext) {
         if (typeof formattedMessage.content === 'string') {
-          formattedMessage.content = message.fileContext + '\n' + formattedMessage.content;
+          formattedMessage.content = prependFileContext + '\n' + formattedMessage.content;
         } else {
           const textPart = formattedMessage.content.find((part) => part.type === 'text');
           textPart
-            ? (textPart.text = message.fileContext + '\n' + textPart.text)
-            : formattedMessage.content.unshift({ type: 'text', text: message.fileContext });
+            ? (textPart.text = prependFileContext + '\n' + textPart.text)
+            : formattedMessage.content.unshift({ type: 'text', text: prependFileContext });
         }
       }
 
       const needsTokenCount =
-        (this.contextStrategy && !orderedMessages[i].tokenCount) || message.fileContext;
+        (this.contextStrategy && !orderedMessages[i].tokenCount) || prependFileContext;
 
       /* If tokens were never counted, or, is a Vision request and the message has files, count again */
       if (needsTokenCount || (this.isVisionModel && (message.image_urls || message.files))) {

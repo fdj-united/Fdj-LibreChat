@@ -15,6 +15,7 @@ jest.mock('@librechat/api', () => ({
   checkAccess: jest.fn(),
   initializeAgent: jest.fn(),
   createMemoryProcessor: jest.fn(),
+  countTokens: jest.fn((text) => Math.ceil(String(text ?? '').length / 4)),
 }));
 
 jest.mock('~/models/Agent', () => ({
@@ -2340,5 +2341,153 @@ describe('AgentClient - processAttachments provider-upload enforcement', () => {
     const all = [providerImage, embedded, textFile];
     await AgentClient.prototype.processAttachments.call(ctx, message, all);
     expect(superSpy).toHaveBeenCalledWith(message, all);
+  });
+});
+
+describe('AgentClient - buildMessages routes chat uploads to the user turn', () => {
+  const { FileSources, FileContext } = require('librechat-data-provider');
+
+  let client;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFormatInstructions.mockResolvedValue('');
+    const mockAgent = {
+      id: 'agent-123',
+      endpoint: EModelEndpoint.openAI,
+      provider: EModelEndpoint.openAI,
+      instructions: 'Base agent instructions',
+      model_parameters: { model: 'gpt-4' },
+    };
+    const mockReq = {
+      user: { id: 'user-123' },
+      body: { endpoint: EModelEndpoint.openAI, fileTokenLimit: 100000 },
+      config: {},
+    };
+    client = new AgentClient({
+      req: mockReq,
+      res: {},
+      agent: mockAgent,
+      endpoint: EModelEndpoint.agents,
+    });
+    client.conversationId = 'convo-123';
+    client.responseMessageId = 'response-123';
+    client.shouldSummarize = false;
+    client.maxContextTokens = 4096;
+    // Avoid the async ai-tokenizer in the test environment.
+    client.getTokenCount = jest.fn((text) => Math.ceil(String(text ?? '').length / 4));
+  });
+
+  it('puts message_attachment text in the user turn and agent context in instructions', async () => {
+    const chatUpload = {
+      file_id: 'm1',
+      filename: 'chat.txt',
+      source: FileSources.text,
+      context: FileContext.message_attachment,
+      text: 'CHAT_UPLOAD_CONTENT',
+      type: 'text/plain',
+    };
+    const agentKb = {
+      file_id: 'a1',
+      filename: 'kb.txt',
+      source: FileSources.text,
+      context: FileContext.agents,
+      text: 'AGENT_KB_CONTENT',
+      type: 'text/plain',
+    };
+    client.options.attachments = Promise.resolve([chatUpload, agentKb]);
+
+    const userMessage = {
+      messageId: 'msg-1',
+      parentMessageId: null,
+      sender: 'User',
+      text: 'analyze',
+      isCreatedByUser: true,
+    };
+    const result = await client.buildMessages([userMessage], 'msg-1', {
+      instructions: 'Base',
+      additional_instructions: null,
+    });
+
+    const promptStr = JSON.stringify(result.prompt);
+    const instructions = client.options.agent.instructions || '';
+
+    // Chat upload ("Upload as Text") → user turn (guarded), not the instructions
+    expect(promptStr).toContain('CHAT_UPLOAD_CONTENT');
+    expect(instructions).not.toContain('CHAT_UPLOAD_CONTENT');
+
+    // Agent knowledge-base context → instructions, not the user turn
+    expect(instructions).toContain('AGENT_KB_CONTENT');
+    expect(promptStr).not.toContain('AGENT_KB_CONTENT');
+    expect(userMessage).not.toHaveProperty('userTurnFileContext');
+    expect(JSON.stringify(userMessage)).not.toContain('CHAT_UPLOAD_CONTENT');
+  });
+
+  it('guards a stored latest-message upload on rerun/edit when the request supplies an empty attachments array', async () => {
+    const chatUpload = {
+      file_id: 'm1',
+      filename: 'chat.txt',
+      source: FileSources.text,
+      context: FileContext.message_attachment,
+      text: 'RERUN_UPLOAD_CONTENT',
+      type: 'text/plain',
+    };
+    /** Simulate addPreviousAttachments (via loadHistory) having processed the stored
+     *  latest message — populating message_file_map with the full file plus a stale
+     *  fileContext. Production always resolves options.attachments to an array, and it
+     *  is `[]` on a rerun/edit with no new files: the merge must preserve the stored
+     *  upload rather than let the empty array clobber it. */
+    client.message_file_map = { 'msg-1': [chatUpload] };
+    client.options.attachments = Promise.resolve([]);
+
+    const userMessage = {
+      messageId: 'msg-1',
+      parentMessageId: null,
+      sender: 'User',
+      text: 'regenerate',
+      isCreatedByUser: true,
+      fileContext: 'STALE_INSTRUCTION_LEAK',
+    };
+    const result = await client.buildMessages([userMessage], 'msg-1', {
+      instructions: 'Base',
+      additional_instructions: null,
+    });
+
+    const promptStr = JSON.stringify(result.prompt);
+    const instructions = client.options.agent.instructions || '';
+
+    // The stored upload is guarded in the user turn, never left in the instructions.
+    expect(promptStr).toContain('RERUN_UPLOAD_CONTENT');
+    expect(instructions).not.toContain('RERUN_UPLOAD_CONTENT');
+    expect(instructions).not.toContain('STALE_INSTRUCTION_LEAK');
+  });
+
+  it('fails safe: a file with missing/unknown context goes to the user turn, not instructions', async () => {
+    const legacyUpload = {
+      file_id: 'l1',
+      filename: 'legacy.txt',
+      source: FileSources.text,
+      // no `context` field — legacy/imported upload
+      text: 'LEGACY_UNKNOWN_CONTEXT',
+      type: 'text/plain',
+    };
+    client.options.attachments = Promise.resolve([legacyUpload]);
+
+    const userMessage = {
+      messageId: 'msg-1',
+      parentMessageId: null,
+      sender: 'User',
+      text: 'analyze',
+      isCreatedByUser: true,
+    };
+    const result = await client.buildMessages([userMessage], 'msg-1', {
+      instructions: 'Base',
+      additional_instructions: null,
+    });
+
+    const promptStr = JSON.stringify(result.prompt);
+    const instructions = client.options.agent.instructions || '';
+
+    expect(promptStr).toContain('LEGACY_UNKNOWN_CONTEXT');
+    expect(instructions).not.toContain('LEGACY_UNKNOWN_CONTEXT');
   });
 });
