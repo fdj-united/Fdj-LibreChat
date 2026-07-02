@@ -1,8 +1,31 @@
 import { logger } from '@librechat/data-schemas';
-import { FileSources, mergeFileConfig } from 'librechat-data-provider';
+import { FileContext, FileSources, mergeFileConfig } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { ServerRequest } from '~/types';
 import { processTextWithTokenLimit } from '~/utils/text';
+
+/**
+ * Splits file-context attachments into those that belong in the user turn vs. the
+ * run instructions. Fails safe: only explicitly-trusted agent knowledge-base context
+ * (`FileContext.agents`) is routed to the instructions; everything else — chat uploads
+ * and any legacy/imported file with a missing or unknown `context` — defaults to the
+ * guarded user turn, so provider guardrails always apply to it.
+ */
+export function partitionFileContextAttachments(attachments: IMongoFile[]): {
+  userTurnAttachments: IMongoFile[];
+  instructionAttachments: IMongoFile[];
+} {
+  const userTurnAttachments: IMongoFile[] = [];
+  const instructionAttachments: IMongoFile[] = [];
+
+  for (const attachment of attachments) {
+    const destination =
+      attachment.context === FileContext.agents ? instructionAttachments : userTurnAttachments;
+    destination.push(attachment);
+  }
+
+  return { userTurnAttachments, instructionAttachments };
+}
 
 /**
  * Extracts text context from attachments and returns formatted text.
