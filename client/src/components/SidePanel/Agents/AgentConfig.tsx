@@ -9,6 +9,7 @@ import { useAgentPanelContext } from '~/Providers';
 import { useProviderIcon } from '~/hooks/Endpoint';
 import ToolsSection from './Tools/ToolsSection';
 import ProviderUpload from './ProviderUpload';
+import ContextUpload from './ContextUpload';
 import { validateEmail, cn } from '~/utils';
 import Instructions from './Instructions';
 import FileContext from './FileContext';
@@ -153,6 +154,9 @@ export default function AgentConfig() {
       {contextEnabled && (
         <div className="mb-3">
           <FileContext agent_id={agent_id} files={contextFiles} />
+          <div className="mt-2">
+            <ContextUpload />
+          </div>
         </div>
       )}
 

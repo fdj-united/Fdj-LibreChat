@@ -395,6 +395,7 @@ export const defaultAgentFormValues = {
   code_workspace_id: undefined as string | undefined,
   repositoryInstructions: undefined as 'prefer' | 'defer' | 'off' | undefined,
   disable_provider_upload: false,
+  disable_context_upload: false,
   category: 'General productivity',
   support_contact: {
     name: '',
