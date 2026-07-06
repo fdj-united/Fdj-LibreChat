@@ -283,6 +283,9 @@ export type Agent = {
   /** When true, hides the "Upload to Provider" file option and rejects
    *  provider-direct (no tool_resource) uploads for this agent. */
   disable_provider_upload?: boolean;
+  /** When true, hides the "Upload as Text" (context) file option and rejects
+   *  context (tool_resource: context) uploads for this agent. */
+  disable_context_upload?: boolean;
   artifacts?: ArtifactModes;
   recursion_limit?: number;
   isPublic?: boolean;
@@ -319,6 +322,7 @@ export type AgentCreateParams = {
   | 'end_after_tools'
   | 'hide_sequential_outputs'
   | 'disable_provider_upload'
+  | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'
@@ -347,6 +351,7 @@ export type AgentUpdateParams = {
   | 'end_after_tools'
   | 'hide_sequential_outputs'
   | 'disable_provider_upload'
+  | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'

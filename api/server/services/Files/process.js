@@ -689,6 +689,14 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
     }
   }
 
+  /** Context ("Upload as Text") uploads can be disabled per-agent. */
+  if (agent_id && tool_resource === EToolResources.context) {
+    const agent = await db.getAgent({ id: agent_id });
+    if (agent?.disable_context_upload === true) {
+      throw new Error('File context upload is disabled for this agent');
+    }
+  }
+
   const isImage = file.mimetype.startsWith('image');
   let fileInfoMetadata;
   const entity_id = messageAttachment === true ? undefined : agent_id;

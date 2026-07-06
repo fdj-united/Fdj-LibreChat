@@ -535,6 +535,7 @@ const getAgentHandler = async (req, res, expandProperties = false) => {
         isPublic: agent.isPublic,
         version: agent.version,
         disable_provider_upload: agent.disable_provider_upload,
+        disable_context_upload: agent.disable_context_upload,
         // Safe metadata
         createdAt: agent.createdAt,
         updatedAt: agent.updatedAt,

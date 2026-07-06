@@ -50,10 +50,8 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
   const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
   const { conversationId, agentId, endpoint, endpointType, useResponsesApi } = useDragDropContext();
   const ephemeralAgent = useRecoilValue(ephemeralAgentByConvoId(conversationId ?? ''));
-  const { fileSearchAllowedByAgent, codeAllowedByAgent, provider } = useAgentToolPermissions(
-    agentId,
-    ephemeralAgent,
-  );
+  const { fileSearchAllowedByAgent, codeAllowedByAgent, contextUploadAllowedByAgent, provider } =
+    useAgentToolPermissions(agentId, ephemeralAgent);
 
   const options = useMemo(() => {
     const _options: FileOption[] = [];
@@ -131,7 +129,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         icon: <TerminalSquareIcon className="icon-md" />,
       });
     }
-    if (capabilities.contextEnabled) {
+    if (capabilities.contextEnabled && contextUploadAllowedByAgent) {
       _options.push({
         label: localize('com_ui_upload_file'),
         value: files.every((file) => file.type?.startsWith('image/'))
@@ -152,6 +150,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
     useResponsesApi,
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
+    contextUploadAllowedByAgent,
   ]);
 
   if (!isVisible) {

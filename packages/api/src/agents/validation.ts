@@ -694,6 +694,7 @@ export const agentBaseSchema: z.ZodObject<
   end_after_tools: z.boolean().optional(),
   hide_sequential_outputs: z.boolean().optional(),
   disable_provider_upload: z.boolean().optional(),
+  disable_context_upload: z.boolean().optional(),
   artifacts: z.string().optional(),
   recursion_limit: z.number().optional(),
   conversation_starters: z.array(z.string()).optional(),

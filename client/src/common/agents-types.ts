@@ -49,6 +49,8 @@ export type AgentForm = {
   [AgentCapabilities.artifacts]?: ArtifactModes | string;
   /** When true, hides the "Upload to Provider" file option for this agent. */
   disable_provider_upload?: boolean;
+  /** When true, hides the "Upload as Text" (context) file option for this agent. */
+  disable_context_upload?: boolean;
   recursion_limit?: number;
   support_contact?: SupportContact;
   category: string;

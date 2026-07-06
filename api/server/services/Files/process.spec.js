@@ -89,6 +89,7 @@ jest.mock('~/models', () => ({
   addAgentResourceFile: jest.fn().mockResolvedValue({}),
   removeAgentResourceFiles: jest.fn(),
   removeAgentResourceFilesFromAllAgents: jest.fn(),
+  getAgent: jest.fn().mockResolvedValue(null),
 }));
 
 jest.mock('~/server/utils/getFileStrategy', () => ({
@@ -1334,5 +1335,38 @@ describe('startExpiredFileSweep', () => {
       }),
     );
     expect(interval).toBe('sweep-interval');
+  });
+});
+
+describe('processAgentFileUpload - disable_context_upload enforcement', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockRes.status.mockReturnThis();
+    mockRes.json.mockReturnValue({});
+    checkCapability.mockResolvedValue(true);
+    getStrategyFunctions.mockReturnValue({
+      handleFileUpload: jest
+        .fn()
+        .mockResolvedValue({ text: 'extracted text', bytes: 42, filepath: 'doc://result' }),
+    });
+    mergeFileConfig.mockReturnValue(makeFileConfig());
+  });
+
+  test('rejects a context upload when the agent opts out', async () => {
+    db.getAgent.mockResolvedValueOnce({ id: 'agent-abc', disable_context_upload: true });
+    const req = makeReq({ mimetype: PDF_MIME, ocrConfig: null });
+
+    await expect(
+      processAgentFileUpload({ req, res: mockRes, metadata: makeMetadata() }),
+    ).rejects.toThrow('File context upload is disabled for this agent');
+  });
+
+  test('allows a context upload when the agent does not opt out', async () => {
+    db.getAgent.mockResolvedValueOnce({ id: 'agent-abc', disable_context_upload: false });
+    const req = makeReq({ mimetype: PDF_MIME, ocrConfig: null });
+
+    await expect(
+      processAgentFileUpload({ req, res: mockRes, metadata: makeMetadata() }),
+    ).resolves.not.toThrow();
   });
 });

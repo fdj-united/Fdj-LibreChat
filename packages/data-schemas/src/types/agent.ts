@@ -46,6 +46,9 @@ export interface IAgent extends Omit<Document, 'model'> {
   /** When true, hides the "Upload to Provider" file option and rejects
    *  provider-direct (no tool_resource) uploads for this agent. */
   disable_provider_upload?: boolean;
+  /** When true, hides the "Upload as Text" (context) file option and rejects
+   *  context (tool_resource: context) uploads for this agent. */
+  disable_context_upload?: boolean;
   /** @deprecated Use edges instead */
   agent_ids?: string[];
   edges?: GraphEdge[];

@@ -109,8 +109,13 @@ const AttachFileMenu = ({
    * */
   const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
 
-  const { fileSearchAllowedByAgent, codeAllowedByAgent, providerUploadAllowedByAgent, provider } =
-    useAgentToolPermissions(agentId, ephemeralAgent);
+  const {
+    fileSearchAllowedByAgent,
+    codeAllowedByAgent,
+    providerUploadAllowedByAgent,
+    contextUploadAllowedByAgent,
+    provider,
+  } = useAgentToolPermissions(agentId, ephemeralAgent);
 
   const handleUploadClick = useCallback(
     (fileType?: FileUploadType) => {
@@ -196,7 +201,7 @@ const AttachFileMenu = ({
         });
       }
 
-      if (capabilities.contextEnabled) {
+      if (capabilities.contextEnabled && contextUploadAllowedByAgent) {
         items.push({
           label: localize('com_ui_upload_ocr_text'),
           onClick: () => {
@@ -268,6 +273,7 @@ const AttachFileMenu = ({
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
     providerUploadAllowedByAgent,
+    contextUploadAllowedByAgent,
     setIsSharePointDialogOpen,
   ]);
 

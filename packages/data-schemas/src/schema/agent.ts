@@ -80,6 +80,12 @@ const agentSchema: Schema<IAgent> = new Schema<IAgent>(
       type: Boolean,
       default: undefined,
     },
+    /** When true, hides the "Upload as Text" (context) file option and rejects
+     *  context (tool_resource: context) uploads for this agent. */
+    disable_context_upload: {
+      type: Boolean,
+      default: undefined,
+    },
     /** @deprecated Use edges instead */
     agent_ids: {
       type: [String],
