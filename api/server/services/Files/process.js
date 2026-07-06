@@ -875,11 +875,17 @@ const processAgentFileUpload = async ({ req, res, metadata, sseStream }) => {
     tool_resource: effectiveToolResource,
   });
 
-  /** Provider-direct uploads (no resolved tool resource) can be disabled per-agent. */
-  if (agent_id && !effectiveToolResource) {
+  /** Provider-direct and context uploads can be disabled independently per-agent. */
+  if (agent_id && (!effectiveToolResource || effectiveToolResource === EToolResources.context)) {
     const agent = await db.getAgent({ id: agent_id });
-    if (agent?.disable_provider_upload === true) {
+    if (!effectiveToolResource && agent?.disable_provider_upload === true) {
       throw new Error('Direct file upload to the model provider is disabled for this agent');
+    }
+    if (
+      effectiveToolResource === EToolResources.context &&
+      agent?.disable_context_upload === true
+    ) {
+      throw new Error('File context upload is disabled for this agent');
     }
   }
 

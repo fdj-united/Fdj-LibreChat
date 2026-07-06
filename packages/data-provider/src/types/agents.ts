@@ -1040,6 +1040,8 @@ export type Agent = {
   git_identity?: AgentGitIdentity | null;
   /** When true, provider-direct file uploads are hidden and rejected for this agent. */
   disable_provider_upload?: boolean;
+  /** When true, context file uploads are hidden and rejected for this agent. */
+  disable_context_upload?: boolean;
   artifacts?: ArtifactModes;
   recursion_limit?: number;
   isPublic?: boolean;
@@ -1104,6 +1106,7 @@ export type AgentCreateParams = {
   | 'code_workspace_id'
   | 'repositoryInstructions'
   | 'disable_provider_upload'
+  | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'
@@ -1141,6 +1144,7 @@ export type AgentUpdateParams = {
   | 'code_workspace_id'
   | 'repositoryInstructions'
   | 'disable_provider_upload'
+  | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
   | 'category'

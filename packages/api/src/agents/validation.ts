@@ -589,6 +589,7 @@ export const agentBaseSchema: z.ZodObject<
   repositoryInstructions: z.enum(['prefer', 'defer', 'off']).optional(),
   git_identity: agentGitIdentitySchema,
   disable_provider_upload: z.boolean().optional(),
+  disable_context_upload: z.boolean().optional(),
   artifacts: z.string().optional(),
   recursion_limit: z.number().optional(),
   conversation_starters: z.array(z.string()).optional(),

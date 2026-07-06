@@ -25,6 +25,8 @@ const baseCtx = (over: Partial<UploadOptionContext> = {}): UploadOptionContext =
   fileSearchEnabled: true,
   codeEnabled: true,
   contextEnabled: true,
+  providerUploadAllowedByAgent: true,
+  contextUploadAllowedByAgent: true,
   fileSearchAllowedByAgent: true,
   codeAllowedByAgent: true,
   fileConfig,
@@ -178,5 +180,19 @@ describe('getViableUploadOptions', () => {
     expect(getViableUploadOptions([file(XLSX, 'report.xlsx')], ctx)).toEqual([
       EToolResources.execute_code,
     ]);
+  });
+
+  it('drops direct provider upload when the agent disables it', () => {
+    const ctx = baseCtx({ providerUploadAllowedByAgent: false });
+    expect(getViableUploadOptions([file('application/pdf', 'doc.pdf')], ctx)).not.toContain(
+      undefined,
+    );
+  });
+
+  it('drops context upload when the agent disables it', () => {
+    const ctx = baseCtx({ contextUploadAllowedByAgent: false });
+    expect(getViableUploadOptions([file(XLSX, 'report.xlsx')], ctx)).not.toContain(
+      EToolResources.context,
+    );
   });
 });
