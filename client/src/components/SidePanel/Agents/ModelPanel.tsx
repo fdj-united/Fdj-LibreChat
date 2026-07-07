@@ -15,9 +15,9 @@ import { pruneAgentModelParameters, resolveAgentParameterSettings } from './para
 import { componentMapping } from '~/components/SidePanel/Parameters/components';
 import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import { useLocalize, useHasAccess } from '~/hooks';
+import { cn, getModelDisplayName } from '~/utils';
 import { useLiveAnnouncer } from '~/Providers';
 import { Panel } from '~/common';
-import { cn } from '~/utils';
 
 function getModelPlaceholderKey(modelsPending: boolean, provider: string) {
   if (modelsPending) {
@@ -223,6 +223,7 @@ export default function ModelPanel({
                   <ControlCombobox
                     selectId="model"
                     selectedValue={field.value || ''}
+                    displayValue={getModelDisplayName(field.value || '')}
                     selectPlaceholder={localize(getModelPlaceholderKey(modelsPending, provider))}
                     searchPlaceholder={localize('com_ui_select_model')}
                     setValue={(value) => {
@@ -235,7 +236,7 @@ export default function ModelPanel({
                       }
                     }}
                     items={models.map((model) => ({
-                      label: model,
+                      label: getModelDisplayName(model),
                       value: model,
                     }))}
                     disabled={!provider || selectionDisabled}
