@@ -18,6 +18,33 @@ import { Panel } from '~/common';
 
 const fieldClass = 'h-9';
 
+/** Friendly labels for raw model IDs and Bedrock inference-profile ARNs. */
+const MODEL_DISPLAY_NAMES: ReadonlyArray<readonly [string, string]> = [
+  ['claude-opus-4-8', 'Claude Opus 4.8'],
+  ['claude-opus-4-6', 'Claude Opus 4.6'],
+  ['claude-sonnet-4-6', 'Claude Sonnet 4.6'],
+  ['claude-sonnet-5', 'Claude Sonnet 5'],
+  ['claude-haiku-4-5', 'Claude Haiku 4.5'],
+  ['claude-fable-5', 'Claude Fable 5'],
+  ['fable-5', 'Claude Fable 5'],
+  ['qwen3-32b', 'Qwen 3.32B'],
+  ['gpt-5.4', 'GPT-5.4'],
+  ['gpt-5-4', 'GPT-5.4'],
+  ['gpt-5-nano', 'GPT-5 nano'],
+  ['gpt-4o-mini', 'GPT-4o mini'],
+  ['chatgpt-4o-latest', 'GPT-4o'],
+  ['gpt-4o', 'GPT-4o'],
+];
+
+const getModelDisplayName = (modelId: string): string => {
+  for (const [needle, label] of MODEL_DISPLAY_NAMES) {
+    if (modelId.includes(needle)) {
+      return label;
+    }
+  }
+  return modelId;
+};
+
 export default function AgentConfig() {
   const localize = useLocalize();
   const methods = useFormContext<AgentForm>();
@@ -128,7 +155,9 @@ export default function AgentConfig() {
                 </div>
               )}
               <span className="truncate">
-                {model != null && model ? model : localize('com_ui_select_model')}
+                {model != null && model
+                  ? getModelDisplayName(model)
+                  : localize('com_ui_select_model')}
               </span>
             </div>
           </button>
