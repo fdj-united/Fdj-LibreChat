@@ -57,6 +57,37 @@ const inputClass = cn(
   removeFocusOutlines,
 );
 
+/**
+ * Maps a model id/ARN to a friendly display name for the agent builder, so bedrock
+ * inference-profile ARNs and raw ids don't leak into the UI. Ordered specific→general
+ * (e.g. `gpt-4o-mini` before `gpt-4o`); falls back to the raw id when unmatched.
+ */
+const MODEL_DISPLAY_NAMES: ReadonlyArray<readonly [string, string]> = [
+  ['claude-opus-4-8', 'Claude Opus 4.8'],
+  ['claude-opus-4-6', 'Claude Opus 4.6'],
+  ['claude-sonnet-4-6', 'Claude Sonnet 4.6'],
+  ['claude-sonnet-5', 'Claude Sonnet 5'],
+  ['claude-haiku-4-5', 'Claude Haiku 4.5'],
+  ['claude-fable-5', 'Claude Fable 5'],
+  ['fable-5', 'Claude Fable 5'],
+  ['qwen3-32b', 'Qwen 3.32B'],
+  ['gpt-5.4', 'GPT-5.4'],
+  ['gpt-5-4', 'GPT-5.4'],
+  ['gpt-5-nano', 'GPT-5 nano'],
+  ['gpt-4o-mini', 'GPT-4o mini'],
+  ['chatgpt-4o-latest', 'GPT-4o'],
+  ['gpt-4o', 'GPT-4o'],
+];
+
+const getModelDisplayName = (modelId: string): string => {
+  for (const [needle, label] of MODEL_DISPLAY_NAMES) {
+    if (modelId.includes(needle)) {
+      return label;
+    }
+  }
+  return modelId;
+};
+
 export default function AgentConfig() {
   const localize = useLocalize();
   const fileMap = useFileMapContext();
@@ -359,7 +390,11 @@ export default function AgentConfig() {
                   />
                 </div>
               )}
-              <span>{model != null && model ? model : localize('com_ui_select_model')}</span>
+              <span>
+                {model != null && model
+                  ? getModelDisplayName(model)
+                  : localize('com_ui_select_model')}
+              </span>
             </div>
           </button>
         </div>
