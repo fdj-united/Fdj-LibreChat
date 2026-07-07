@@ -942,7 +942,7 @@ function createToolInstance({
         graphTokenResolver: getGraphApiToken,
         oboTokenResolver: exchangeOboToken,
         oboTrustChecker: createOboTrustChecker(),
-      });
+      };
 
       let result = await mcpManager.callTool(callToolArgs);
 
