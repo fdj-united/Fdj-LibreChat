@@ -322,23 +322,22 @@ describe('MCPConfirmationDialog queue mechanics', () => {
       }),
     ]);
 
-    // Initial state: chevron-down + "Show 1 more detail"
-    const toggle = screen.getByRole('button', { name: /Show 1 more detail/ });
+    // Details are open by default: chevron-up + "Hide details" + detail field visible
+    const toggle = screen.getByRole('button', { name: /Hide details/ });
     expect(toggle).toBeInTheDocument();
-    expect(screen.getByTestId('chevron-down')).toBeInTheDocument();
-    expect(screen.queryByTestId('chevron-up')).toBeNull();
-    // Detail field NOT visible yet.
-    expect(screen.queryByText(/Hidden/)).toBeNull();
+    expect(screen.getByTestId('chevron-up')).toBeInTheDocument();
+    expect(screen.queryByTestId('chevron-down')).toBeNull();
+    expect(screen.getByText(/Hidden/)).toBeInTheDocument();
 
-    // Click → expand
+    // Click → collapse
     await act(async () => {
       fireEvent.click(toggle);
     });
 
-    // After click: chevron-up + "Hide details" + detail field visible
-    expect(screen.getByRole('button', { name: /Hide details/ })).toBeInTheDocument();
-    expect(screen.getByTestId('chevron-up')).toBeInTheDocument();
-    expect(screen.queryByTestId('chevron-down')).toBeNull();
-    expect(screen.getByText(/Hidden/)).toBeInTheDocument();
+    // After click: chevron-down + "Show 1 more detail" + detail field hidden
+    expect(screen.getByRole('button', { name: /Show 1 more detail/ })).toBeInTheDocument();
+    expect(screen.getByTestId('chevron-down')).toBeInTheDocument();
+    expect(screen.queryByTestId('chevron-up')).toBeNull();
+    expect(screen.queryByText(/Hidden/)).toBeNull();
   });
 });
