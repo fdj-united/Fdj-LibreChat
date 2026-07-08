@@ -2525,6 +2525,12 @@ export type EndpointsDropParamsMap = Record<string, string[] | Record<string, st
 
 export type TStartupConfig = {
   appTitle: string;
+  /** Azure Storage SAS config for the feedback widget (FeedbackButton). */
+  tableSasToken?: string;
+  blobSasToken?: string;
+  SAS_STORAGE_ACCOUNT?: string;
+  SAS_TABLE_NAME?: string;
+  SAS_CONTAINER_NAME?: string;
   socialLogins?: string[];
   langfuseFanoutEnabled?: boolean;
   langfuseConnectionAccess?: boolean;
