@@ -320,6 +320,12 @@ router.get('/', async function (req, res) {
       ...(codeEnvironmentDecisionVersion != null ? { codeEnvironmentDecisionVersion } : {}),
       ...codeEnvironmentMoveCapabilities,
       ...(codeEnvironmentTransitionVersion != null ? { codeEnvironmentTransitionVersion } : {}),
+      // Azure Storage SAS config for the feedback widget (FeedbackButton).
+      tableSasToken: process.env.TABLE_SAS_TOKEN,
+      blobSasToken: process.env.BLOB_SAS_TOKEN,
+      SAS_STORAGE_ACCOUNT: process.env.SAS_STORAGE_ACCOUNT,
+      SAS_TABLE_NAME: process.env.SAS_TABLE_NAME,
+      SAS_CONTAINER_NAME: process.env.SAS_CONTAINER_NAME,
       ...(cloudFront ? { cloudFront } : {}),
       ...(rum ? { rum } : {}),
       fileUploadSseEnabled: isEnabled(process.env.FILE_UPLOAD_SSE_ENABLED),
