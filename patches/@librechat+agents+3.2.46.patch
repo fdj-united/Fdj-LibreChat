@@ -1,0 +1,366 @@
+diff --git a/node_modules/@librechat/agents/dist/cjs/messages/prune.cjs b/node_modules/@librechat/agents/dist/cjs/messages/prune.cjs
+index a75ee9b..1857ff7 100644
+--- a/node_modules/@librechat/agents/dist/cjs/messages/prune.cjs
++++ b/node_modules/@librechat/agents/dist/cjs/messages/prune.cjs
+@@ -742,7 +742,8 @@ function createPruneMessages(factoryParams) {
+ 		}
+ 		if (currentUsage && params.totalTokensFresh !== false) {
+ 			const instructionOverhead = factoryParams.getInstructionTokens?.() ?? 0;
+-			const providerInputTokens = params.lastCallUsage?.inputTokens ?? currentUsage.input_tokens;
++			const rawProviderInputTokens = Number(params.usageMetadata?.input_tokens);
++			const providerInputTokens = checkValidNumber(rawProviderInputTokens) ? rawProviderInputTokens : params.lastCallUsage?.inputTokens ?? currentUsage.input_tokens;
+ 			let rawSentThisTurn = 0;
+ 			const firstIsSystem = params.messages.length > 0 && params.messages[0].getType() === "system";
+ 			if (firstIsSystem) rawSentThisTurn += indexTokenCountMap[0] ?? 0;
+@@ -751,29 +752,42 @@ function createPruneMessages(factoryParams) {
+ 				rawSentThisTurn += indexTokenCountMap[i] ?? 0;
+ 			}
+ 			const providerMessageTokens = Math.max(0, providerInputTokens - instructionOverhead);
+-			if (rawSentThisTurn > 0 && providerMessageTokens > 0) {
++			const minimumComparableInputTokens = instructionOverhead + rawSentThisTurn * CALIBRATION_RATIO_MIN;
++			let calibrationSkipReason;
++			if (rawSentThisTurn <= 0) calibrationSkipReason = "no_sent_messages";
++			else if (providerMessageTokens <= 0) calibrationSkipReason = "input_below_instruction_overhead";
++			else if (providerInputTokens < minimumComparableInputTokens) calibrationSkipReason = "input_below_calibration_floor";
++			else if (providerInputTokens > factoryParams.maxTokens) calibrationSkipReason = "input_exceeds_context_window";
++			if (calibrationSkipReason == null) {
+ 				cumulativeRawSent += rawSentThisTurn;
+ 				cumulativeProviderReported += providerMessageTokens;
+ 				const newRatio = cumulativeProviderReported / cumulativeRawSent;
+ 				calibrationRatio = Math.max(CALIBRATION_RATIO_MIN, Math.min(CALIBRATION_RATIO_MAX, newRatio));
+-			}
+-			const calibratedOurTotal = instructionOverhead + rawSentThisTurn * calibrationRatio;
+-			const overallRatio = calibratedOurTotal > 0 ? providerInputTokens / calibratedOurTotal : 0;
+-			const variancePct = Math.round((overallRatio - 1) * 100);
+-			const absVariance = Math.abs(overallRatio - 1);
+-			if (absVariance < bestVarianceAbs && rawSentThisTurn > 0) {
+-				bestVarianceAbs = absVariance;
+-				bestInstructionOverhead = Math.max(0, Math.round(providerInputTokens - rawSentThisTurn * calibrationRatio));
+-				bestInstructionEstimate = factoryParams.getInstructionTokens?.() ?? 0;
+-			}
+-			factoryParams.log?.("debug", "Calibration observed", {
++				const calibratedOurTotal = instructionOverhead + rawSentThisTurn * calibrationRatio;
++				const overallRatio = calibratedOurTotal > 0 ? providerInputTokens / calibratedOurTotal : 0;
++				const variancePct = Math.round((overallRatio - 1) * 100);
++				const absVariance = Math.abs(overallRatio - 1);
++				if (absVariance < bestVarianceAbs) {
++					bestVarianceAbs = absVariance;
++					bestInstructionOverhead = Math.max(0, Math.round(providerInputTokens - rawSentThisTurn * calibrationRatio));
++					bestInstructionEstimate = factoryParams.getInstructionTokens?.() ?? 0;
++				}
++				factoryParams.log?.("debug", "Calibration observed", {
++					providerInputTokens,
++					calibratedEstimate: Math.round(calibratedOurTotal),
++					variance: `${variancePct > 0 ? "+" : ""}${variancePct}%`,
++					calibrationRatio: Math.round(calibrationRatio * 100) / 100,
++					instructionOverhead,
++					cumulativeRawSent,
++					cumulativeProviderReported
++				});
++			} else factoryParams.log?.("debug", "Calibration skipped", {
++				reason: calibrationSkipReason,
+ 				providerInputTokens,
+-				calibratedEstimate: Math.round(calibratedOurTotal),
+-				variance: `${variancePct > 0 ? "+" : ""}${variancePct}%`,
+-				calibrationRatio: Math.round(calibrationRatio * 100) / 100,
+-				instructionOverhead,
+-				cumulativeRawSent,
+-				cumulativeProviderReported
++				minimumComparableInputTokens: Math.round(minimumComparableInputTokens),
++				maxContextTokens: factoryParams.maxTokens,
++				rawSentThisTurn,
++				instructionOverhead
+ 			});
+ 		}
+ 		const estimatedInstructionTokens = factoryParams.getInstructionTokens?.() ?? 0;
+diff --git a/node_modules/@librechat/agents/dist/esm/messages/prune.mjs b/node_modules/@librechat/agents/dist/esm/messages/prune.mjs
+index 9b1e20b..c04f9a2 100644
+--- a/node_modules/@librechat/agents/dist/esm/messages/prune.mjs
++++ b/node_modules/@librechat/agents/dist/esm/messages/prune.mjs
+@@ -742,7 +742,8 @@ function createPruneMessages(factoryParams) {
+ 		}
+ 		if (currentUsage && params.totalTokensFresh !== false) {
+ 			const instructionOverhead = factoryParams.getInstructionTokens?.() ?? 0;
+-			const providerInputTokens = params.lastCallUsage?.inputTokens ?? currentUsage.input_tokens;
++			const rawProviderInputTokens = Number(params.usageMetadata?.input_tokens);
++			const providerInputTokens = checkValidNumber(rawProviderInputTokens) ? rawProviderInputTokens : params.lastCallUsage?.inputTokens ?? currentUsage.input_tokens;
+ 			let rawSentThisTurn = 0;
+ 			const firstIsSystem = params.messages.length > 0 && params.messages[0].getType() === "system";
+ 			if (firstIsSystem) rawSentThisTurn += indexTokenCountMap[0] ?? 0;
+@@ -751,29 +752,42 @@ function createPruneMessages(factoryParams) {
+ 				rawSentThisTurn += indexTokenCountMap[i] ?? 0;
+ 			}
+ 			const providerMessageTokens = Math.max(0, providerInputTokens - instructionOverhead);
+-			if (rawSentThisTurn > 0 && providerMessageTokens > 0) {
++			const minimumComparableInputTokens = instructionOverhead + rawSentThisTurn * CALIBRATION_RATIO_MIN;
++			let calibrationSkipReason;
++			if (rawSentThisTurn <= 0) calibrationSkipReason = "no_sent_messages";
++			else if (providerMessageTokens <= 0) calibrationSkipReason = "input_below_instruction_overhead";
++			else if (providerInputTokens < minimumComparableInputTokens) calibrationSkipReason = "input_below_calibration_floor";
++			else if (providerInputTokens > factoryParams.maxTokens) calibrationSkipReason = "input_exceeds_context_window";
++			if (calibrationSkipReason == null) {
+ 				cumulativeRawSent += rawSentThisTurn;
+ 				cumulativeProviderReported += providerMessageTokens;
+ 				const newRatio = cumulativeProviderReported / cumulativeRawSent;
+ 				calibrationRatio = Math.max(CALIBRATION_RATIO_MIN, Math.min(CALIBRATION_RATIO_MAX, newRatio));
+-			}
+-			const calibratedOurTotal = instructionOverhead + rawSentThisTurn * calibrationRatio;
+-			const overallRatio = calibratedOurTotal > 0 ? providerInputTokens / calibratedOurTotal : 0;
+-			const variancePct = Math.round((overallRatio - 1) * 100);
+-			const absVariance = Math.abs(overallRatio - 1);
+-			if (absVariance < bestVarianceAbs && rawSentThisTurn > 0) {
+-				bestVarianceAbs = absVariance;
+-				bestInstructionOverhead = Math.max(0, Math.round(providerInputTokens - rawSentThisTurn * calibrationRatio));
+-				bestInstructionEstimate = factoryParams.getInstructionTokens?.() ?? 0;
+-			}
+-			factoryParams.log?.("debug", "Calibration observed", {
++				const calibratedOurTotal = instructionOverhead + rawSentThisTurn * calibrationRatio;
++				const overallRatio = calibratedOurTotal > 0 ? providerInputTokens / calibratedOurTotal : 0;
++				const variancePct = Math.round((overallRatio - 1) * 100);
++				const absVariance = Math.abs(overallRatio - 1);
++				if (absVariance < bestVarianceAbs) {
++					bestVarianceAbs = absVariance;
++					bestInstructionOverhead = Math.max(0, Math.round(providerInputTokens - rawSentThisTurn * calibrationRatio));
++					bestInstructionEstimate = factoryParams.getInstructionTokens?.() ?? 0;
++				}
++				factoryParams.log?.("debug", "Calibration observed", {
++					providerInputTokens,
++					calibratedEstimate: Math.round(calibratedOurTotal),
++					variance: `${variancePct > 0 ? "+" : ""}${variancePct}%`,
++					calibrationRatio: Math.round(calibrationRatio * 100) / 100,
++					instructionOverhead,
++					cumulativeRawSent,
++					cumulativeProviderReported
++				});
++			} else factoryParams.log?.("debug", "Calibration skipped", {
++				reason: calibrationSkipReason,
+ 				providerInputTokens,
+-				calibratedEstimate: Math.round(calibratedOurTotal),
+-				variance: `${variancePct > 0 ? "+" : ""}${variancePct}%`,
+-				calibrationRatio: Math.round(calibrationRatio * 100) / 100,
+-				instructionOverhead,
+-				cumulativeRawSent,
+-				cumulativeProviderReported
++				minimumComparableInputTokens: Math.round(minimumComparableInputTokens),
++				maxContextTokens: factoryParams.maxTokens,
++				rawSentThisTurn,
++				instructionOverhead
+ 			});
+ 		}
+ 		const estimatedInstructionTokens = factoryParams.getInstructionTokens?.() ?? 0;
+diff --git a/node_modules/@librechat/agents/src/messages/prune.ts b/node_modules/@librechat/agents/src/messages/prune.ts
+index 920da1e..48ab329 100644
+--- a/node_modules/@librechat/agents/src/messages/prune.ts
++++ b/node_modules/@librechat/agents/src/messages/prune.ts
+@@ -135,9 +135,10 @@ export type PruneMessagesParams = {
+   usageMetadata?: Partial<UsageMetadata>;
+   startType?: ReturnType<BaseMessage['getType']>;
+   /**
+-   * Usage from the most recent LLM call only (not accumulated).
+-   * When provided, calibration uses this instead of usageMetadata
+-   * to avoid inflated ratios from N×cacheRead accumulation.
++   * Fallback usage from the most recent LLM call only (not accumulated).
++   * Calibration prefers the provider's raw `usageMetadata.input_tokens`
++   * when available, because cache detail fields may use non-window
++   * accounting units.
+    */
+   lastCallUsage?: {
+     totalTokens: number;
+@@ -1436,8 +1437,10 @@ export function createPruneMessages(factoryParams: PruneMessagesFactoryParams) {
+     // no per-turn oscillation, no map mutation.
+     if (currentUsage && params.totalTokensFresh !== false) {
+       const instructionOverhead = factoryParams.getInstructionTokens?.() ?? 0;
+-      const providerInputTokens =
+-        params.lastCallUsage?.inputTokens ?? currentUsage.input_tokens;
++      const rawProviderInputTokens = Number(params.usageMetadata?.input_tokens);
++      const providerInputTokens = checkValidNumber(rawProviderInputTokens)
++        ? rawProviderInputTokens
++        : (params.lastCallUsage?.inputTokens ?? currentUsage.input_tokens);
+ 
+       // Sum raw tiktoken counts for messages the provider saw (excludes
+       // new outputs from this turn — the provider hasn't seen them yet).
+@@ -1458,8 +1461,20 @@ export function createPruneMessages(factoryParams: PruneMessagesFactoryParams) {
+         0,
+         providerInputTokens - instructionOverhead
+       );
++      const minimumComparableInputTokens =
++        instructionOverhead + rawSentThisTurn * CALIBRATION_RATIO_MIN;
++      let calibrationSkipReason: string | undefined;
++      if (rawSentThisTurn <= 0) {
++        calibrationSkipReason = 'no_sent_messages';
++      } else if (providerMessageTokens <= 0) {
++        calibrationSkipReason = 'input_below_instruction_overhead';
++      } else if (providerInputTokens < minimumComparableInputTokens) {
++        calibrationSkipReason = 'input_below_calibration_floor';
++      } else if (providerInputTokens > factoryParams.maxTokens) {
++        calibrationSkipReason = 'input_exceeds_context_window';
++      }
+ 
+-      if (rawSentThisTurn > 0 && providerMessageTokens > 0) {
++      if (calibrationSkipReason == null) {
+         cumulativeRawSent += rawSentThisTurn;
+         cumulativeProviderReported += providerMessageTokens;
+         const newRatio = cumulativeProviderReported / cumulativeRawSent;
+@@ -1467,33 +1482,44 @@ export function createPruneMessages(factoryParams: PruneMessagesFactoryParams) {
+           CALIBRATION_RATIO_MIN,
+           Math.min(CALIBRATION_RATIO_MAX, newRatio)
+         );
+-      }
+ 
+-      const calibratedOurTotal =
+-        instructionOverhead + rawSentThisTurn * calibrationRatio;
+-      const overallRatio =
+-        calibratedOurTotal > 0 ? providerInputTokens / calibratedOurTotal : 0;
+-      const variancePct = Math.round((overallRatio - 1) * 100);
++        const calibratedOurTotal =
++          instructionOverhead + rawSentThisTurn * calibrationRatio;
++        const overallRatio =
++          calibratedOurTotal > 0 ? providerInputTokens / calibratedOurTotal : 0;
++        const variancePct = Math.round((overallRatio - 1) * 100);
++
++        const absVariance = Math.abs(overallRatio - 1);
++        if (absVariance < bestVarianceAbs) {
++          bestVarianceAbs = absVariance;
++          bestInstructionOverhead = Math.max(
++            0,
++            Math.round(providerInputTokens - rawSentThisTurn * calibrationRatio)
++          );
++          bestInstructionEstimate = factoryParams.getInstructionTokens?.() ?? 0;
++        }
+ 
+-      const absVariance = Math.abs(overallRatio - 1);
+-      if (absVariance < bestVarianceAbs && rawSentThisTurn > 0) {
+-        bestVarianceAbs = absVariance;
+-        bestInstructionOverhead = Math.max(
+-          0,
+-          Math.round(providerInputTokens - rawSentThisTurn * calibrationRatio)
+-        );
+-        bestInstructionEstimate = factoryParams.getInstructionTokens?.() ?? 0;
++        factoryParams.log?.('debug', 'Calibration observed', {
++          providerInputTokens,
++          calibratedEstimate: Math.round(calibratedOurTotal),
++          variance: `${variancePct > 0 ? '+' : ''}${variancePct}%`,
++          calibrationRatio: Math.round(calibrationRatio * 100) / 100,
++          instructionOverhead,
++          cumulativeRawSent,
++          cumulativeProviderReported,
++        });
++      } else {
++        factoryParams.log?.('debug', 'Calibration skipped', {
++          reason: calibrationSkipReason,
++          providerInputTokens,
++          minimumComparableInputTokens: Math.round(
++            minimumComparableInputTokens
++          ),
++          maxContextTokens: factoryParams.maxTokens,
++          rawSentThisTurn,
++          instructionOverhead,
++        });
+       }
+-
+-      factoryParams.log?.('debug', 'Calibration observed', {
+-        providerInputTokens,
+-        calibratedEstimate: Math.round(calibratedOurTotal),
+-        variance: `${variancePct > 0 ? '+' : ''}${variancePct}%`,
+-        calibrationRatio: Math.round(calibrationRatio * 100) / 100,
+-        instructionOverhead,
+-        cumulativeRawSent,
+-        cumulativeProviderReported,
+-      });
+     }
+ 
+     // Computed BEFORE pre-flight truncation so the effective budget can drive
+diff --git a/node_modules/@librechat/agents/src/specs/token-accounting-pipeline.test.ts b/node_modules/@librechat/agents/src/specs/token-accounting-pipeline.test.ts
+index 1feb42d..6aee245 100644
+--- a/node_modules/@librechat/agents/src/specs/token-accounting-pipeline.test.ts
++++ b/node_modules/@librechat/agents/src/specs/token-accounting-pipeline.test.ts
+@@ -727,7 +727,7 @@ describe('Token accounting pipeline — end-to-end multi-turn with calibration',
+ });
+ 
+ describe('Token accounting pipeline — Anthropic vs OpenAI cache semantics', () => {
+-  it('Anthropic additive cache inflates calibration input correctly', () => {
++  it('Anthropic normalized cache input calibrates from input_tokens only', () => {
+     const messages = [new HumanMessage('Hello'), new AIMessage('Hi')];
+ 
+     const indexTokenCountMap: Record<string, number | undefined> = {
+@@ -744,12 +744,12 @@ describe('Token accounting pipeline — Anthropic vs OpenAI cache semantics', ()
+       reserveRatio: 0,
+     });
+ 
+-    // Anthropic: input_tokens=30, cache_read=60, cache_creation=20
+-    // cacheSum=80 > baseInput=30 → additive → totalInput=30+80=110
++    // Anthropic output normalization stores cache-inclusive prompt tokens in
++    // input_tokens and repeats the cache components in input_token_details.
+     const result = pruneMessages({
+       messages,
+       usageMetadata: {
+-        input_tokens: 30,
++        input_tokens: 110,
+         output_tokens: 15,
+         input_token_details: { cache_read: 60, cache_creation: 20 },
+       },
+@@ -761,6 +761,64 @@ describe('Token accounting pipeline — Anthropic vs OpenAI cache semantics', ()
+     expect(result.calibrationRatio).toBeCloseTo(1.1, 1);
+   });
+ 
++  it('skips Bedrock cache-artifact turns instead of poisoning instruction overhead', () => {
++    const messages = [
++      new SystemMessage('system instructions'),
++      new HumanMessage('first user turn'),
++      new AIMessage('first response'),
++      new HumanMessage('second user turn'),
++      new AIMessage('second response'),
++    ];
++    const indexTokenCountMap: Record<string, number | undefined> = {
++      0: 3197,
++      1: 8000,
++      2: 7000,
++      3: 9506,
++      4: 1,
++    };
++    const instructionTokens = 5450;
++    const logs: Array<{
++      level: string;
++      message: string;
++      data?: Record<string, unknown>;
++    }> = [];
++
++    const pruneMessages = createPruneMessages({
++      provider: Providers.BEDROCK,
++      maxTokens: 126935,
++      startIndex: messages.length,
++      tokenCounter: charCounter,
++      indexTokenCountMap,
++      reserveRatio: 0.05,
++      getInstructionTokens: () => instructionTokens,
++      log: (level, message, data) => logs.push({ level, message, data }),
++    });
++
++    const result = pruneMessages({
++      messages,
++      usageMetadata: {
++        input_tokens: 6,
++        output_tokens: 1,
++        input_token_details: {
++          cache_creation: 380974,
++          cache_read: 13165,
++        },
++      },
++    });
++
++    expect(result.calibrationRatio).toBe(1);
++    expect(result.resolvedInstructionOverhead).toBeUndefined();
++    expect(result.effectiveInstructionTokens).toBe(instructionTokens);
++    expect(result.remainingContextTokens).toBeGreaterThan(0);
++    expect(
++      logs.find((entry) => entry.message === 'Calibration skipped')?.data
++    ).toMatchObject({
++      reason: 'input_below_instruction_overhead',
++      providerInputTokens: 6,
++      instructionOverhead: instructionTokens,
++    });
++  });
++
+   it('OpenAI inclusive cache does NOT inflate calibration input', () => {
+     const messages = [new HumanMessage('Hello'), new AIMessage('Hi')];
+ 
