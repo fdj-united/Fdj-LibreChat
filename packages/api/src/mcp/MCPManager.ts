@@ -26,12 +26,14 @@ import {
   isUserSourced,
   requiresEphemeralUserConnection,
   requiresOAuthMachinery,
+  requiresUserScopedConnection,
   resolveServerInstructions,
 } from './utils';
 import { getMCPAppToolsPublicationGeneration, getMCPToolsChangedGeneration } from './toolsChanged';
 import { MCPAuthenticationRejectedError, isMCPTransportAuthenticationError } from './errors';
 import { resolveDirectOpenIDBearerConfig, usesDirectOpenIDBearerRecovery } from './openid';
 import { createLazyOboUpstreamTokenProvider, awaitOboOperation } from '~/mcp/oauth/obo';
+import { processMCPEnv, encodeHeaderValue, isPluginSourced } from '~/utils/env';
 import { MCPServersInitializer } from './registry/MCPServersInitializer';
 import { OboTokenResolutionError, resolveOboToken } from '~/mcp/oauth';
 import { MCPServerCatalogRecoveryTracker } from './catalog/recovery';
@@ -40,7 +42,6 @@ import { MCPServersRegistry } from './registry/MCPServersRegistry';
 import { UserConnectionManager } from './UserConnectionManager';
 import { ConnectionsRepository } from './ConnectionsRepository';
 import { MCPConnectionFactory } from './MCPConnectionFactory';
-import { processMCPEnv, isPluginSourced } from '~/utils/env';
 import { OAuthLifecycleRelay } from './oauth/pending';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { isOwnedAbortError } from '~/utils/errors';
@@ -1302,6 +1303,18 @@ Please follow these instructions when using tools from the respective MCP server
 
         const resolvedHeaders: Record<string, string> =
           'headers' in currentOptions ? { ...(currentOptions.headers || {}) } : {};
+
+        /**
+         * Add user attribution only to user-scoped connections. Shared application
+         * connections carry mutable headers and must never receive per-user state.
+         */
+        const username = user?.username || user?.name;
+        const hasUsernameHeader = Object.keys(resolvedHeaders).some(
+          (key) => key.toLowerCase() === 'x-librechat-username',
+        );
+        if (username && requiresUserScopedConnection(rawConfig) && !hasUsernameHeader) {
+          resolvedHeaders['x-librechat-username'] = encodeHeaderValue(username);
+        }
 
         const oboConfig = rawConfig.obo;
         const usesObo = Boolean(oboConfig && oboTokenResolver && user);
