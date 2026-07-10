@@ -36,6 +36,7 @@ jest.mock('~/mcp/oauth', () => ({
 
 jest.mock('~/utils/env', () => ({
   processMCPEnv: jest.fn((params) => params.options),
+  encodeHeaderValue: jest.fn((value) => value),
 }));
 
 jest.mock('~/auth/domain', () => ({
@@ -927,6 +928,91 @@ describe('MCPManager', () => {
           Authorization: 'Bearer static-token',
         }),
       );
+    });
+
+    const callToolWith = async (
+      user: Partial<IUser>,
+      options: { headers?: Record<string, string>; userScoped?: boolean } = {},
+    ): Promise<Record<string, string>> => {
+      const { headers, userScoped = true } = options;
+      const serverConfig: t.SSEOptions & {
+        customUserVars?: Record<string, { title: string; description: string }>;
+      } = {
+        type: 'sse',
+        url: 'https://api.example.com',
+        ...(headers ? { headers } : {}),
+        /** customUserVars forces requiresUserScopedConnection() -> true */
+        ...(userScoped
+          ? { customUserVars: { LC_TOKEN: { title: 'Token', description: 'API token' } } }
+          : {}),
+      };
+      mockAppConnections({ get: jest.fn().mockResolvedValue(mockConnection) });
+      (mockRegistryInstance.getServerConfig as jest.Mock).mockResolvedValue(serverConfig);
+
+      const manager = await MCPManager.createInstance(newMCPServersConfig());
+      jest.spyOn(manager, 'getUserConnection').mockResolvedValue(mockConnection);
+      await manager.callTool({
+        user: user as IUser,
+        serverName,
+        toolName: 'test_tool',
+        provider: 'openai',
+        flowManager: mockFlowManager as unknown as Parameters<
+          typeof manager.callTool
+        >[0]['flowManager'],
+      });
+      return (mockConnection.setRequestHeaders as jest.Mock).mock.calls.at(-1)?.[0] ?? {};
+    };
+
+    it('injects x-librechat-username from the user username', async () => {
+      const headers = await callToolWith({
+        id: 'u1',
+        email: 'bob@kindredgroup.com',
+        username: 'bob',
+      });
+      expect(headers['x-librechat-username']).toBe('bob');
+    });
+
+    it('falls back to the user name when username is absent', async () => {
+      const headers = await callToolWith({ id: 'u2', email: 'c@kindredgroup.com', name: 'Carla' });
+      expect(headers['x-librechat-username']).toBe('Carla');
+    });
+
+    it('does not inject on a shared (non-user-scoped) app connection', async () => {
+      const headers = await callToolWith(
+        { id: 'u1b', email: 'bob@kindredgroup.com', username: 'bob' },
+        { userScoped: false },
+      );
+      expect('x-librechat-username' in headers).toBe(false);
+    });
+
+    it('leaves an explicitly-configured x-librechat-username untouched', async () => {
+      const headers = await callToolWith(
+        { id: 'u3', email: 'me@kindredgroup.com', username: 'me' },
+        { headers: { 'x-librechat-username': 'preset' } },
+      );
+      expect(headers['x-librechat-username']).toBe('preset');
+    });
+
+    it('does not duplicate an explicit header configured with different casing', async () => {
+      const headers = await callToolWith(
+        { id: 'u3b', email: 'me@kindredgroup.com', username: 'me' },
+        { headers: { 'X-LibreChat-Username': 'preset' } },
+      );
+      expect(headers['X-LibreChat-Username']).toBe('preset');
+      expect('x-librechat-username' in headers).toBe(false);
+    });
+
+    it('does not inject x-librechat-username when the user has neither username nor name', async () => {
+      const headers = await callToolWith({ id: 'u4', email: 'noname@kindredgroup.com' });
+      expect('x-librechat-username' in headers).toBe(false);
+    });
+
+    it('passes a config-provided X-User-Email through untouched (email stays config-driven)', async () => {
+      const headers = await callToolWith(
+        { id: 'u5', email: 'me@kindredgroup.com', username: 'me' },
+        { headers: { 'X-User-Email': 'alice@kindredgroup.com' } },
+      );
+      expect(headers['X-User-Email']).toBe('alice@kindredgroup.com');
     });
   });
 
