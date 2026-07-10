@@ -28,7 +28,7 @@ import { MCPConnectionFactory } from './MCPConnectionFactory';
 import { preProcessGraphTokens } from '~/utils/graph';
 import { formatToolContent } from './parsers';
 import { MCPConnection } from './connection';
-import { processMCPEnv } from '~/utils/env';
+import { processMCPEnv, encodeHeaderValue } from '~/utils/env';
 
 function createOboToolCallErrorMessage(
   logPrefix: string,
@@ -442,6 +442,28 @@ Please follow these instructions when using tools from the respective MCP server
 
       const resolvedHeaders: Record<string, string> =
         'headers' in currentOptions ? { ...(currentOptions.headers || {}) } : {};
+
+      /**
+       * Attach the caller's username on every MCP tool call (mirrors v0.8.4-fdj15) so
+       * downstream servers / the gateway can attribute the user. Only inject on
+       * user-scoped connections: the shared app connection is reused across users and
+       * its request headers are mutable connection state, so writing a per-user value
+       * there could misattribute a concurrent caller. The presence check is
+       * case-insensitive so an explicitly-configured header (any casing) is not
+       * duplicated and then clobbered by `setRequestHeaders`' key normalization. The
+       * caller's email is carried by the config header `X-User-Email:
+       * {{LIBRECHAT_USER_EMAIL}}`, which `processMCPEnv` substitutes above.
+       */
+      const username = user?.username || user?.name;
+      const hasHeader = (name: string): boolean =>
+        Object.keys(resolvedHeaders).some((key) => key.toLowerCase() === name);
+      if (
+        username &&
+        requiresUserScopedConnection(rawConfig) &&
+        !hasHeader('x-librechat-username')
+      ) {
+        resolvedHeaders['x-librechat-username'] = encodeHeaderValue(username);
+      }
 
       /** Refresh OBO token on each tool call to ensure it's current */
       const oboConfig = rawConfig.obo;
