@@ -1920,6 +1920,9 @@ export const alternateName = {
 };
 
 const sharedOpenAIModels = [
+  'gpt-5.6',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
   'gpt-5.5',
   'gpt-5.5-pro',
   'chat-latest',
