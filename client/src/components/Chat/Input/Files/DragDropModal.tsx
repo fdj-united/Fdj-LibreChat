@@ -50,8 +50,13 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
   const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
   const { conversationId, agentId, endpoint, endpointType, useResponsesApi } = useDragDropContext();
   const ephemeralAgent = useRecoilValue(ephemeralAgentByConvoId(conversationId ?? ''));
-  const { fileSearchAllowedByAgent, codeAllowedByAgent, contextUploadAllowedByAgent, provider } =
-    useAgentToolPermissions(agentId, ephemeralAgent);
+  const {
+    fileSearchAllowedByAgent,
+    codeAllowedByAgent,
+    providerUploadAllowedByAgent,
+    contextUploadAllowedByAgent,
+    provider,
+  } = useAgentToolPermissions(agentId, ephemeralAgent);
 
   const options = useMemo(() => {
     const _options: FileOption[] = [];
@@ -70,11 +75,12 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         endpointType === EModelEndpoint.azureOpenAI) &&
       useResponsesApi === true;
 
-    // Check if provider supports document upload
+    // Check the agent allows direct provider upload, and that the provider supports documents
     if (
-      isDocumentSupportedProvider(endpointType) ||
-      isDocumentSupportedProvider(currentProvider) ||
-      isAzureWithResponsesApi
+      providerUploadAllowedByAgent &&
+      (isDocumentSupportedProvider(endpointType) ||
+        isDocumentSupportedProvider(currentProvider) ||
+        isAzureWithResponsesApi)
     ) {
       const supportsImageDocVideoAudio =
         currentProvider === EModelEndpoint.google || currentProvider === Providers.OPENROUTER;
@@ -150,6 +156,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
     useResponsesApi,
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
+    providerUploadAllowedByAgent,
     contextUploadAllowedByAgent,
   ]);
 

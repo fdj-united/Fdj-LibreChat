@@ -1,8 +1,46 @@
+import { render, screen } from '@testing-library/react';
 import {
   EModelEndpoint,
   isDocumentSupportedProvider,
   inferMimeType,
 } from 'librechat-data-provider';
+import DragDropModal from '../DragDropModal';
+
+jest.mock('~/hooks', () => ({
+  useAgentToolPermissions: jest.fn(),
+  useAgentCapabilities: jest.fn(),
+  useGetAgentsConfig: jest.fn(),
+  useLocalize: jest.fn(),
+}));
+
+jest.mock('~/Providers', () => ({
+  useDragDropContext: jest.fn(),
+}));
+
+jest.mock('~/store', () => ({
+  ephemeralAgentByConvoId: jest.fn(() => 'ephemeralAgent'),
+}));
+
+jest.mock('recoil', () => ({
+  useRecoilValue: jest.fn(() => null),
+}));
+
+jest.mock('@librechat/client', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const R = require('react');
+  return {
+    OGDialog: (props: { children?: React.ReactNode }) =>
+      R.createElement('div', null, props.children),
+    OGDialogTemplate: (props: { main?: React.ReactNode }) =>
+      R.createElement('div', null, props.main),
+  };
+});
+
+const mockUseAgentToolPermissions = jest.requireMock('~/hooks').useAgentToolPermissions;
+const mockUseAgentCapabilities = jest.requireMock('~/hooks').useAgentCapabilities;
+const mockUseGetAgentsConfig = jest.requireMock('~/hooks').useGetAgentsConfig;
+const mockUseLocalize = jest.requireMock('~/hooks').useLocalize;
+const mockUseDragDropContext = jest.requireMock('~/Providers').useDragDropContext;
 
 describe('DragDropModal - Provider Detection', () => {
   describe('endpointType priority over currentProvider', () => {
@@ -198,5 +236,62 @@ describe('DragDropModal - Provider Detection', () => {
       const inferredType = inferMimeType(fileName, browserType);
       expect(inferredType).toBe('');
     });
+  });
+});
+
+describe('DragDropModal - per-agent upload opt-outs', () => {
+  const renderModal = (permissions: Record<string, unknown> = {}) => {
+    mockUseLocalize.mockReturnValue((key: string) => key);
+    mockUseGetAgentsConfig.mockReturnValue({ agentsConfig: {} });
+    mockUseAgentCapabilities.mockReturnValue({
+      contextEnabled: true,
+      fileSearchEnabled: false,
+      codeEnabled: false,
+    });
+    /** openAI endpointType is document-supported, so the provider option is offered unless the
+     * agent opts out — which is exactly what these tests pin. */
+    mockUseDragDropContext.mockReturnValue({
+      conversationId: 'convo-1',
+      agentId: 'agent_123',
+      endpoint: EModelEndpoint.agents,
+      endpointType: EModelEndpoint.openAI,
+      useResponsesApi: false,
+    });
+    mockUseAgentToolPermissions.mockReturnValue({
+      fileSearchAllowedByAgent: false,
+      codeAllowedByAgent: false,
+      providerUploadAllowedByAgent: true,
+      contextUploadAllowedByAgent: true,
+      provider: EModelEndpoint.openAI,
+      ...permissions,
+    });
+
+    render(
+      <DragDropModal
+        isVisible
+        files={[new File(['x'], 'doc.pdf', { type: 'application/pdf' })]}
+        onOptionSelect={jest.fn()}
+        setShowModal={jest.fn()}
+      />,
+    );
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('offers the provider upload option when the agent allows it', () => {
+    renderModal();
+    expect(screen.queryByText('com_ui_upload_provider')).not.toBeNull();
+  });
+
+  it('does not offer the provider upload option when the agent disables it', () => {
+    renderModal({ providerUploadAllowedByAgent: false });
+    expect(screen.queryByText('com_ui_upload_provider')).toBeNull();
+  });
+
+  it('does not offer the context upload option when the agent disables it', () => {
+    renderModal({ contextUploadAllowedByAgent: false });
+    expect(screen.queryByText('com_ui_upload_file')).toBeNull();
   });
 });
