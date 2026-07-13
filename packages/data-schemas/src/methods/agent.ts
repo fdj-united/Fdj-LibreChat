@@ -872,6 +872,7 @@ export function createAgentMethods(
       support_contact: 1,
       is_promoted: 1,
       disable_provider_upload: 1,
+      disable_context_upload: 1,
     };
 
     if (includeSkillConfig) {

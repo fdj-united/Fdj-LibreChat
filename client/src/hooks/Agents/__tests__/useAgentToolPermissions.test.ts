@@ -247,4 +247,79 @@ describe('useAgentToolPermissions', () => {
       expect(result.current.tools).toEqual([Tools.file_search]);
     });
   });
+
+  describe('upload permissions', () => {
+    const agentId = 'agent_123';
+
+    it('should allow both uploads when the agent opts out of neither', () => {
+      mockUseAgentsMapContext.mockReturnValue({});
+      mockUseGetAgentByIdQuery.mockReturnValue({ data: { id: agentId, tools: [] } });
+
+      const { result } = renderHook(() => useAgentToolPermissions(agentId));
+
+      expect(result.current.providerUploadAllowedByAgent).toBe(true);
+      expect(result.current.contextUploadAllowedByAgent).toBe(true);
+    });
+
+    it('should disallow provider upload when the agent opts out', () => {
+      mockUseAgentsMapContext.mockReturnValue({});
+      mockUseGetAgentByIdQuery.mockReturnValue({
+        data: { id: agentId, tools: [], disable_provider_upload: true },
+      });
+
+      const { result } = renderHook(() => useAgentToolPermissions(agentId));
+
+      expect(result.current.providerUploadAllowedByAgent).toBe(false);
+      expect(result.current.contextUploadAllowedByAgent).toBe(true);
+    });
+
+    it('should disallow context upload when the agent opts out', () => {
+      mockUseAgentsMapContext.mockReturnValue({});
+      mockUseGetAgentByIdQuery.mockReturnValue({
+        data: { id: agentId, tools: [], disable_context_upload: true },
+      });
+
+      const { result } = renderHook(() => useAgentToolPermissions(agentId));
+
+      expect(result.current.contextUploadAllowedByAgent).toBe(false);
+      expect(result.current.providerUploadAllowedByAgent).toBe(true);
+    });
+
+    it('should honor both opt-outs sourced from the agents map when the query has no data', () => {
+      mockUseAgentsMapContext.mockReturnValue({
+        [agentId]: {
+          id: agentId,
+          tools: [],
+          disable_provider_upload: true,
+          disable_context_upload: true,
+        },
+      });
+      mockUseGetAgentByIdQuery.mockReturnValue({ data: undefined });
+
+      const { result } = renderHook(() => useAgentToolPermissions(agentId));
+
+      expect(result.current.providerUploadAllowedByAgent).toBe(false);
+      expect(result.current.contextUploadAllowedByAgent).toBe(false);
+    });
+
+    it('should fail closed while a persisted agent is still unresolved', () => {
+      mockUseAgentsMapContext.mockReturnValue({});
+      mockUseGetAgentByIdQuery.mockReturnValue({ data: undefined });
+
+      const { result } = renderHook(() => useAgentToolPermissions(agentId));
+
+      expect(result.current.providerUploadAllowedByAgent).toBe(false);
+      expect(result.current.contextUploadAllowedByAgent).toBe(false);
+    });
+
+    it('should allow both uploads when there is no persisted agent (plain endpoint)', () => {
+      mockUseAgentsMapContext.mockReturnValue({});
+      mockUseGetAgentByIdQuery.mockReturnValue({ data: undefined });
+
+      const { result } = renderHook(() => useAgentToolPermissions(undefined));
+
+      expect(result.current.providerUploadAllowedByAgent).toBe(true);
+      expect(result.current.contextUploadAllowedByAgent).toBe(true);
+    });
+  });
 });

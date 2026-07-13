@@ -67,26 +67,28 @@ export default function useAgentToolPermissions(
   }, [agentId, selectedAgent, tools, ephemeralAgent]);
 
   const providerUploadAllowedByAgent = useMemo(() => {
-    // Ephemeral agents have no per-agent override; allow provider upload.
+    /** No persisted agent in context (plain endpoint or ephemeral agent); allow by default. */
     if (isEphemeralAgent(agentId)) {
       return true;
     }
-    // No specific agent in context (e.g. plain endpoint); allow by default.
+    /**
+     * A persisted agent is selected, so its restrictions must be honored. Fail closed while it is
+     * still unresolved — allowing here would surface an upload option the agent has disabled (and
+     * which the server rejects anyway) until the agent lands.
+     */
     const agent = agentData ?? selectedAgent;
-    if (!agent) return true;
-    // Disable only when the agent explicitly opts out.
+    if (!agent) return false;
     return agent.disable_provider_upload !== true;
   }, [agentId, agentData, selectedAgent]);
 
   const contextUploadAllowedByAgent = useMemo(() => {
-    // Ephemeral agents have no per-agent override; allow context upload.
+    /** No persisted agent in context (plain endpoint or ephemeral agent); allow by default. */
     if (isEphemeralAgent(agentId)) {
       return true;
     }
-    // No specific agent in context (e.g. plain endpoint); allow by default.
+    /** Fail closed while a persisted agent is unresolved; see `providerUploadAllowedByAgent`. */
     const agent = agentData ?? selectedAgent;
-    if (!agent) return true;
-    // Disable only when the agent explicitly opts out.
+    if (!agent) return false;
     return agent.disable_context_upload !== true;
   }, [agentId, agentData, selectedAgent]);
 
