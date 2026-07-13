@@ -3454,6 +3454,33 @@ describe('Support Contact Field', () => {
       });
     });
 
+    test('should project the per-agent upload opt-out flags', async () => {
+      const restricted = await createAgent({
+        id: `agent_${uuidv4().slice(0, 12)}`,
+        name: 'Restricted Uploads',
+        provider: 'openai',
+        model: 'gpt-4',
+        author: userA,
+        disable_provider_upload: true,
+        disable_context_upload: true,
+      });
+
+      const result = await getListAgentsByAccess({
+        accessibleIds: [restricted._id] as mongoose.Types.ObjectId[],
+        otherParams: {},
+      });
+
+      expect(result.data).toHaveLength(1);
+      /** Both flags must survive the projection: the client falls back to this list when the
+       * by-id query has not resolved, and a missing flag silently reads as "upload allowed". */
+      expect(result.data[0]).toEqual(
+        expect.objectContaining({
+          disable_provider_upload: true,
+          disable_context_upload: true,
+        }),
+      );
+    });
+
     test('should return empty list when user has no accessible agents (empty accessibleIds)', async () => {
       // User B has no agents and no shared agents
       const result = await getListAgentsByAccess({

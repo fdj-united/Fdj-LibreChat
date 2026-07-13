@@ -50,8 +50,13 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
   const capabilities = useAgentCapabilities(agentsConfig?.capabilities ?? defaultAgentCapabilities);
   const { conversationId, agentId, endpoint, endpointType, useResponsesApi } = useDragDropContext();
   const ephemeralAgent = useRecoilValue(ephemeralAgentByConvoId(conversationId ?? ''));
-  const { fileSearchAllowedByAgent, codeAllowedByAgent, contextUploadAllowedByAgent, provider } =
-    useAgentToolPermissions(agentId, ephemeralAgent);
+  const {
+    fileSearchAllowedByAgent,
+    codeAllowedByAgent,
+    providerUploadAllowedByAgent,
+    contextUploadAllowedByAgent,
+    provider,
+  } = useAgentToolPermissions(agentId, ephemeralAgent);
 
   const options = useMemo(() => {
     const _options: FileOption[] = [];
@@ -70,11 +75,12 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         endpointType === EModelEndpoint.azureOpenAI) &&
       useResponsesApi === true;
 
-    // Check if provider supports document upload
+    // Check the agent allows direct provider upload, and that the provider supports documents
     if (
-      isDocumentSupportedProvider(endpointType) ||
-      isDocumentSupportedProvider(currentProvider) ||
-      isAzureWithResponsesApi
+      providerUploadAllowedByAgent &&
+      (isDocumentSupportedProvider(endpointType) ||
+        isDocumentSupportedProvider(currentProvider) ||
+        isAzureWithResponsesApi)
     ) {
       const supportsImageDocVideoAudio =
         currentProvider === EModelEndpoint.google || currentProvider === Providers.OPENROUTER;
@@ -129,14 +135,22 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         icon: <TerminalSquareIcon className="icon-md" />,
       });
     }
-    if (capabilities.contextEnabled && contextUploadAllowedByAgent) {
-      _options.push({
-        label: localize('com_ui_upload_file'),
-        value: files.every((file) => file.type?.startsWith('image/'))
-          ? undefined
-          : EToolResources.context,
-        icon: <FileType2Icon className="icon-md" />,
-      });
+    if (capabilities.contextEnabled) {
+      /**
+       * For an image-only drop this row resolves to `value: undefined`, i.e. the same direct
+       * provider upload the "Upload to Provider" row performs (no `tool_resource` is appended
+       * downstream). It is therefore governed by the provider opt-out in that case, not the
+       * context one.
+       */
+      const allImages = files.every((file) => file.type?.startsWith('image/'));
+      const allowedByAgent = allImages ? providerUploadAllowedByAgent : contextUploadAllowedByAgent;
+      if (allowedByAgent) {
+        _options.push({
+          label: localize('com_ui_upload_file'),
+          value: allImages ? undefined : EToolResources.context,
+          icon: <FileType2Icon className="icon-md" />,
+        });
+      }
     }
 
     return _options;
@@ -150,6 +164,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
     useResponsesApi,
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
+    providerUploadAllowedByAgent,
     contextUploadAllowedByAgent,
   ]);
 
