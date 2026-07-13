@@ -110,5 +110,7 @@ export default function useUploadOptions() {
     isConfigPending,
     isConfigResolved,
     isUnifiedMode,
+    providerUploadAllowedByAgent,
+    contextUploadAllowedByAgent,
   };
 }

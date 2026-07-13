@@ -20,7 +20,14 @@ export default function useDragHelpers() {
     [conversation?.endpoint],
   );
 
-  const { getOptions, isConfigResolved, isUnifiedMode, uploadsDisabled } = useUploadOptions();
+  const {
+    getOptions,
+    isConfigResolved,
+    isUnifiedMode,
+    uploadsDisabled,
+    providerUploadAllowedByAgent,
+    contextUploadAllowedByAgent,
+  } = useUploadOptions();
   const routeFiles = useFileUploadRouter();
   const { openModal } = useUploadModalContext();
 
@@ -30,6 +37,8 @@ export default function useDragHelpers() {
   const isConfigResolvedRef = useRef(isConfigResolved);
   const isUnifiedModeRef = useRef(isUnifiedMode);
   const uploadsDisabledRef = useRef(uploadsDisabled);
+  const providerUploadAllowedRef = useRef(providerUploadAllowedByAgent);
+  const contextUploadAllowedRef = useRef(contextUploadAllowedByAgent);
   const routeFilesRef = useRef(routeFiles);
   const openModalRef = useRef(openModal);
   const isAssistantsRef = useRef(isAssistants);
@@ -39,6 +48,8 @@ export default function useDragHelpers() {
   isConfigResolvedRef.current = isConfigResolved;
   isUnifiedModeRef.current = isUnifiedMode;
   uploadsDisabledRef.current = uploadsDisabled;
+  providerUploadAllowedRef.current = providerUploadAllowedByAgent;
+  contextUploadAllowedRef.current = contextUploadAllowedByAgent;
   routeFilesRef.current = routeFiles;
   openModalRef.current = openModal;
   isAssistantsRef.current = isAssistants;
@@ -66,19 +77,36 @@ export default function useDragHelpers() {
         return;
       }
 
+      const options = getOptionsRef.current(item.files);
+      if (options.length === 0) {
+        const agentRestricted =
+          !providerUploadAllowedRef.current || !contextUploadAllowedRef.current;
+        showToast({
+          message: localize(
+            agentRestricted ? 'com_ui_attach_error_agent_disabled' : 'com_error_files_unsupported',
+          ),
+          status: 'error',
+        });
+        return;
+      }
+
       /* Unified mode decides the destination from the file itself, so a drop must not
-       * present the chooser the attach button no longer shows. Offering it here would let
-       * the same file be delivered differently depending on how it was added. */
+       * present the chooser unless an agent opt-out removes one of those implicit paths.
+       * In that case an explicit destination prevents the server from selecting the
+       * disabled route before it reaches another viable one. */
       if (isUnifiedModeRef.current) {
+        if (!providerUploadAllowedRef.current || !contextUploadAllowedRef.current) {
+          if (options.length === 1) {
+            routeFilesRef.current(item.files, options[0]);
+          } else {
+            openModalRef.current(item.files);
+          }
+          return;
+        }
         routeFilesRef.current(item.files);
         return;
       }
 
-      const options = getOptionsRef.current(item.files);
-      if (options.length === 0) {
-        showToast({ message: localize('com_error_files_unsupported'), status: 'error' });
-        return;
-      }
       if (options.length === 1) {
         routeFilesRef.current(item.files, options[0]);
         return;
