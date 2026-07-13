@@ -240,7 +240,10 @@ describe('DragDropModal - Provider Detection', () => {
 });
 
 describe('DragDropModal - per-agent upload opt-outs', () => {
-  const renderModal = (permissions: Record<string, unknown> = {}) => {
+  const pdf = () => new File(['x'], 'doc.pdf', { type: 'application/pdf' });
+  const png = () => new File(['x'], 'pic.png', { type: 'image/png' });
+
+  const renderModal = (permissions: Record<string, unknown> = {}, files: File[] = [pdf()]) => {
     mockUseLocalize.mockReturnValue((key: string) => key);
     mockUseGetAgentsConfig.mockReturnValue({ agentsConfig: {} });
     mockUseAgentCapabilities.mockReturnValue({
@@ -267,12 +270,7 @@ describe('DragDropModal - per-agent upload opt-outs', () => {
     });
 
     render(
-      <DragDropModal
-        isVisible
-        files={[new File(['x'], 'doc.pdf', { type: 'application/pdf' })]}
-        onOptionSelect={jest.fn()}
-        setShowModal={jest.fn()}
-      />,
+      <DragDropModal isVisible files={files} onOptionSelect={jest.fn()} setShowModal={jest.fn()} />,
     );
   };
 
@@ -293,5 +291,36 @@ describe('DragDropModal - per-agent upload opt-outs', () => {
   it('does not offer the context upload option when the agent disables it', () => {
     renderModal({ contextUploadAllowedByAgent: false });
     expect(screen.queryByText('com_ui_upload_file')).toBeNull();
+  });
+
+  /**
+   * For an image-only drop the context row is emitted with `value: undefined`, which is the same
+   * direct provider upload the provider row performs (no `tool_resource` is appended downstream).
+   * It must therefore follow the provider opt-out, not the context one.
+   */
+  it('hides the context row for an image-only drop when provider upload is disabled', () => {
+    renderModal({ providerUploadAllowedByAgent: false, contextUploadAllowedByAgent: true }, [
+      png(),
+    ]);
+
+    expect(screen.queryByText('com_ui_upload_provider')).toBeNull();
+    expect(screen.queryByText('com_ui_upload_file')).toBeNull();
+  });
+
+  it('still offers the context row for an image-only drop when provider upload is allowed', () => {
+    renderModal({ providerUploadAllowedByAgent: true, contextUploadAllowedByAgent: true }, [png()]);
+
+    expect(screen.queryByText('com_ui_upload_file')).not.toBeNull();
+  });
+
+  it('offers the context row for a non-image drop even when provider upload is disabled', () => {
+    /** A PDF maps to `EToolResources.context`, a genuine context upload, so it is governed by the
+     * context opt-out and remains available. */
+    renderModal({ providerUploadAllowedByAgent: false, contextUploadAllowedByAgent: true }, [
+      pdf(),
+    ]);
+
+    expect(screen.queryByText('com_ui_upload_provider')).toBeNull();
+    expect(screen.queryByText('com_ui_upload_file')).not.toBeNull();
   });
 });

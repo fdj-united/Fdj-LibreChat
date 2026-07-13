@@ -113,15 +113,21 @@ export default function useDragHelpers() {
 
       let fileSearchAllowedByAgent = true;
       let codeAllowedByAgent = true;
+      let providerUploadAllowedByAgent = true;
+      let contextUploadAllowedByAgent = true;
 
       if (agentId && !isEphemeralAgent(agentId)) {
         if (agent) {
           const agentTools = agent.tools as string[] | undefined;
           fileSearchAllowedByAgent = agentTools?.includes(Tools.file_search) ?? false;
           codeAllowedByAgent = agentTools?.includes(Tools.execute_code) ?? false;
+          providerUploadAllowedByAgent = agent.disable_provider_upload !== true;
+          contextUploadAllowedByAgent = agent.disable_context_upload !== true;
         } else {
           fileSearchAllowedByAgent = false;
           codeAllowedByAgent = false;
+          providerUploadAllowedByAgent = false;
+          contextUploadAllowedByAgent = false;
         }
       }
 
@@ -130,13 +136,32 @@ export default function useDragHelpers() {
         inferMimeType(f.name, f.type)?.startsWith('image/'),
       );
 
+      /**
+       * An image-only drop is uploaded straight to the provider (no `tool_resource`), so both the
+       * image row and the context row collapse onto the provider opt-out for that case.
+       */
+      const contextOptionAvailable =
+        contextEnabled && (allImages ? providerUploadAllowedByAgent : contextUploadAllowedByAgent);
+
       const shouldShowModal =
-        allImages ||
+        (allImages && providerUploadAllowedByAgent) ||
         (fileSearchEnabled && fileSearchAllowedByAgent) ||
         (codeEnabled && codeAllowedByAgent) ||
-        contextEnabled;
+        contextOptionAvailable;
 
       if (!shouldShowModal) {
+        /**
+         * Falling through to `handleFiles` uploads directly to the provider with no
+         * `tool_resource`. Only do that when the agent still permits provider upload; otherwise
+         * the drop has no permitted destination and the server would reject it anyway.
+         */
+        if (!providerUploadAllowedByAgent) {
+          showToast({
+            message: localize('com_ui_attach_error_agent_disabled'),
+            status: 'error',
+          });
+          return;
+        }
         // Fallback: directly handle files without showing modal
         handleFilesRef.current(item.files);
         return;
