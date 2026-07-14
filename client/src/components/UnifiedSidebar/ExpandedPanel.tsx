@@ -1,6 +1,7 @@
-import { memo, useCallback, lazy, Suspense, useMemo } from 'react';
+import { memo, useCallback, lazy, Suspense, useMemo, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRecoilValue } from 'recoil';
+import { useSearchParams } from 'react-router-dom';
 import { SquarePen } from 'lucide-react';
 import { getConfigDefaults, QueryKeys } from 'librechat-data-provider';
 import { Skeleton, Sidebar, Button, TooltipAnchor } from '@librechat/client';
@@ -8,6 +9,7 @@ import type { NavLink } from '~/common';
 import { useShortcutAriaKey, useShortcutHint } from '~/hooks/useKeyboardShortcuts';
 import { useActivePanel, resolveActivePanel, DEFAULT_PANEL } from '~/Providers';
 import { CLOSE_SIDEBAR_ID } from '~/components/Chat/Menus/OpenSidebar';
+import { REVIEW_AGENT_PANEL_ID } from '~/components/SidePanel/Review';
 import { useGetStartupConfig } from '~/data-provider';
 import { useLocalize, useNewConvo } from '~/hooks';
 import { clearMessagesCache, cn } from '~/utils';
@@ -139,6 +141,7 @@ function ExpandedPanel({
   onExpand?: () => void;
 }) {
   const localize = useLocalize();
+  const [searchParams] = useSearchParams();
   const { data: startupConfig } = useGetStartupConfig();
   const { active, setActive } = useActivePanel();
   const effectiveActive = resolveActivePanel(active, links);
@@ -146,6 +149,13 @@ function ExpandedPanel({
     () => startupConfig?.interface ?? defaultInterface,
     [startupConfig],
   );
+
+  useEffect(() => {
+    const panel = searchParams.get('panel');
+    if (panel === REVIEW_AGENT_PANEL_ID) {
+      setActive(REVIEW_AGENT_PANEL_ID);
+    }
+  }, [searchParams, setActive]);
 
   const toggleLabel = expanded ? 'com_nav_close_sidebar' : 'com_nav_open_sidebar';
   const toggleClick = expanded ? onCollapse : onExpand;

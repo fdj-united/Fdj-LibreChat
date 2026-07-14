@@ -78,6 +78,13 @@ function decodeNotificationCursor(cursor: string): { createdAt: Date; _id: Types
 
 export function createNotificationMethods(mongoose: typeof import('mongoose')): {
   createNotification: (params: CreateNotificationParams) => Promise<NotificationListItem>;
+  createNotificationsForUsers: (params: {
+    userIds: string[];
+    type: NotificationType;
+    title: string;
+    message: string;
+    link?: string;
+  }) => Promise<{ createdCount: number }>;
   createBroadcastNotification: (params: {
     type: NotificationType;
     title: string;
@@ -134,6 +141,42 @@ export function createNotificationMethods(mongoose: typeof import('mongoose')): 
       createdAt: lean.createdAt,
       updatedAt: lean.updatedAt,
     });
+  }
+
+  async function createNotificationsForUsers({
+    userIds,
+    type,
+    title,
+    message,
+    link,
+  }: {
+    userIds: string[];
+    type: NotificationType;
+    title: string;
+    message: string;
+    link?: string;
+  }): Promise<{ createdCount: number }> {
+    if (!notificationTypes.includes(type)) {
+      throw new Error('Invalid notification type');
+    }
+
+    const uniqueUserIds = [...new Set(userIds.filter((id) => id.length > 0))];
+    if (uniqueUserIds.length === 0) {
+      return { createdCount: 0 };
+    }
+
+    const Notification = mongoose.models.Notification as Model<INotification>;
+    const docs = uniqueUserIds.map((userId) => ({
+      user: userId,
+      type,
+      title,
+      message,
+      link,
+      read: false,
+    }));
+
+    const inserted = await Notification.insertMany(docs);
+    return { createdCount: inserted.length };
   }
 
   async function createBroadcastNotification({
@@ -307,6 +350,7 @@ export function createNotificationMethods(mongoose: typeof import('mongoose')): 
 
   return {
     createNotification,
+    createNotificationsForUsers,
     createBroadcastNotification,
     listNotificationsForUser,
     markNotificationRead,

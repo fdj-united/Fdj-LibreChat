@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import * as Ariakit from '@ariakit/react';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { Bell, BellDot, ExternalLink, Megaphone, ShieldAlert } from 'lucide-react';
+import { Bell, BellDot, ExternalLink, Megaphone, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
   Accordion,
   AccordionContent,
@@ -18,6 +18,8 @@ import {
   useNotificationsQuery,
   useUnreadNotificationCount,
 } from '~/data-provider';
+import { useActivePanel } from '~/Providers';
+import { REVIEW_AGENT_PANEL_ID } from '~/components/SidePanel/Review';
 import { cn } from '~/utils';
 
 const READ_SECTION_VALUE = 'read-notifications';
@@ -47,6 +49,9 @@ function resolvePopoverPlacement(
 function resolveTypeIcon(type: TNotification['type']) {
   if (type === 'announcement') {
     return <Megaphone className="size-4" aria-hidden="true" />;
+  }
+  if (type === 'agent_verification') {
+    return <ShieldCheck className="size-4" aria-hidden="true" />;
   }
   if (type === 'system') {
     return <ShieldAlert className="size-4" aria-hidden="true" />;
@@ -105,15 +110,29 @@ function NotificationCard({
         <span className="text-text-secondary" aria-hidden="true">
           {resolveTypeIcon(notification.type)}
         </span>
-        <span
-          id={titleId}
-          className={cn(
-            'line-clamp-1 text-sm text-text-primary',
-            notification.read ? 'font-medium' : 'font-semibold',
-          )}
-        >
-          {notification.title}
-        </span>
+        {hasLink ? (
+          <button
+            type="button"
+            id={titleId}
+            className={cn(
+              'line-clamp-1 text-left text-sm text-text-primary underline-offset-2 hover:underline',
+              notification.read ? 'font-medium' : 'font-semibold',
+            )}
+            onClick={() => onOpenLink(notification)}
+          >
+            {notification.title}
+          </button>
+        ) : (
+          <span
+            id={titleId}
+            className={cn(
+              'line-clamp-1 text-sm text-text-primary',
+              notification.read ? 'font-medium' : 'font-semibold',
+            )}
+          >
+            {notification.title}
+          </span>
+        )}
       </div>
       <p className="line-clamp-2 text-xs text-text-secondary">{notification.message}</p>
       <div className="mt-1 flex items-end justify-between gap-2">
@@ -228,6 +247,7 @@ export default function HeaderBell({
 }) {
   const localize = useLocalize();
   const navigate = useNavigate();
+  const { setActive } = useActivePanel();
   const cardIdPrefix = useId();
   const bellButtonRef = useRef<HTMLButtonElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -319,9 +339,16 @@ export default function HeaderBell({
         window.location.assign(link);
         return;
       }
-      navigate(link);
+
+      const url = new URL(link, window.location.origin);
+      const panel = url.searchParams.get('panel');
+      if (panel === REVIEW_AGENT_PANEL_ID) {
+        setActive(REVIEW_AGENT_PANEL_ID);
+      }
+
+      navigate(`${url.pathname}${url.search}`);
     },
-    [navigate],
+    [navigate, setActive],
   );
 
   return (

@@ -16,6 +16,9 @@ jest.mock('~/config/winston', () => ({
 
 let mongoServer: MongoMemoryServer | undefined;
 let createNotification: ReturnType<typeof createNotificationMethods>['createNotification'];
+let createNotificationsForUsers: ReturnType<
+  typeof createNotificationMethods
+>['createNotificationsForUsers'];
 let createBroadcastNotification: ReturnType<
   typeof createNotificationMethods
 >['createBroadcastNotification'];
@@ -38,6 +41,7 @@ beforeAll(async () => {
 
   const methods = createNotificationMethods(mongoose);
   createNotification = methods.createNotification;
+  createNotificationsForUsers = methods.createNotificationsForUsers;
   createBroadcastNotification = methods.createBroadcastNotification;
   listNotificationsForUser = methods.listNotificationsForUser;
   markNotificationRead = methods.markNotificationRead;
@@ -313,5 +317,25 @@ describe('Notification methods', () => {
 
     const unread = await listNotificationsForUser(userId, { unreadOnly: true, limit: 10 });
     expect(unread.notifications).toHaveLength(0);
+  });
+
+  it('creates notifications for multiple users in bulk', async () => {
+    const result = await createNotificationsForUsers({
+      userIds: ['user-a', 'user-b', 'user-a'],
+      type: 'agent_verification',
+      title: 'Agent update',
+      message: 'Verification changed',
+      link: '/agents/all',
+    });
+
+    expect(result.createdCount).toBe(2);
+
+    const userAPage = await listNotificationsForUser('user-a', { limit: 10 });
+    const userBPage = await listNotificationsForUser('user-b', { limit: 10 });
+
+    expect(userAPage.notifications).toHaveLength(1);
+    expect(userBPage.notifications).toHaveLength(1);
+    expect(userAPage.notifications[0].type).toBe('agent_verification');
+    expect(userAPage.notifications[0].link).toBe('/agents/all');
   });
 });
