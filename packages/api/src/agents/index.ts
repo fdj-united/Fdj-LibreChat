@@ -71,6 +71,7 @@ export * from './convoPersistence';
 export * from './testHook';
 export * from './tools';
 export * from './validation';
+export * from './verificationNotifications';
 export * from './added';
 export * from './load';
 export * from './sender';

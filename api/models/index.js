@@ -9,6 +9,16 @@ const methods = createMethods(mongoose, {
   isExternalSkillId: isDeploymentSkillId,
   getCache: getLogStores,
 });
+const {
+  AgentReview,
+  getAgentReview,
+  addOrUpdateReview,
+  getLatestReview,
+  getVerifiedAgentIds,
+  getAllReviews,
+  deleteReview,
+  deleteAgentReviews,
+} = require('./AgentReview');
 
 const seedDatabase = async () => {
   await methods.initializeRoles();
@@ -20,4 +30,12 @@ const seedDatabase = async () => {
 module.exports = {
   ...methods,
   seedDatabase,
+  AgentReview,
+  getAgentReview,
+  addOrUpdateReview,
+  getLatestReview,
+  getVerifiedAgentIds,
+  getAllReviews,
+  deleteReview,
+  deleteAgentReviews,
 };

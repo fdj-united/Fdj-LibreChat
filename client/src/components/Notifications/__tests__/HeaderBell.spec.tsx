@@ -37,6 +37,15 @@ jest.mock('@librechat/client', () => ({
   TooltipAnchor: ({ render }: { render: React.ReactElement }) => render,
 }));
 
+const mockSetActive = jest.fn();
+
+jest.mock('~/Providers', () => ({
+  useActivePanel: () => ({
+    active: 'conversations',
+    setActive: mockSetActive,
+  }),
+}));
+
 import HeaderBell from '../HeaderBell';
 
 const unreadNotification: TNotification = {
@@ -149,5 +158,35 @@ describe('HeaderBell', () => {
     await waitFor(() => {
       expect(trigger).toHaveAttribute('aria-expanded', 'false');
     });
+  });
+
+  it('opens agent review when a notification link is clicked', () => {
+    const verificationNotification: TNotification = {
+      ...unreadNotification,
+      id: 'n-verification',
+      type: 'agent_verification',
+      title: 'New comment on Test Agent',
+      message: 'Reviewer: Looks good',
+      link: '/c/new?agent_id=agent_abc&panel=review-agent',
+    };
+
+    mockUseNotificationsQuery.mockImplementation((params: { unreadOnly?: boolean }) => {
+      if (params?.unreadOnly === true) {
+        return {
+          data: { notifications: [verificationNotification], nextCursor: null, hasNextPage: false },
+          isLoading: false,
+        };
+      }
+      return {
+        data: { notifications: [verificationNotification], nextCursor: null, hasNextPage: false },
+        isLoading: false,
+      };
+    });
+
+    renderBell();
+    fireEvent.click(getBellButton());
+    fireEvent.click(screen.getByRole('button', { name: 'New comment on Test Agent' }));
+
+    expect(mockSetActive).toHaveBeenCalledWith('review-agent');
   });
 });
