@@ -160,7 +160,7 @@ export default function ReviewAgentPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 py-2 px-2">
+    <div className="flex h-full flex-col gap-4 px-2 py-2">
       {/* Part 1: Comment history — visible to everyone (read-only for non-admins) */}
       <ControlCombobox
         containerClassName="px-0"
@@ -195,7 +195,9 @@ export default function ReviewAgentPanel() {
           {/* Comment / verification form — add comment (non-admins) or full verification (admins) */}
           <ReviewCommentForm
             agentId={selectedReviewAgentId}
-            agentName={agents?.find((agent) => agent.id === selectedReviewAgentId)?.name ?? undefined}
+            agentName={
+              agents?.find((agent) => agent.id === selectedReviewAgentId)?.name ?? undefined
+            }
             comment={comment}
             onCommentChange={setComment}
             isVerified={isVerified}

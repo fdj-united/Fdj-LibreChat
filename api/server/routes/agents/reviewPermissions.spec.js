@@ -4,8 +4,8 @@ const { SystemRoles } = require('librechat-data-provider');
 
 jest.mock('@librechat/api', () => ({
   generateCheckAccess: jest.fn(() => (_req, _res, next) => next()),
-  checkAccess: jest.fn(async (params) =>
-    params?.req?.headers?.['x-test-marketplace-access'] === 'true',
+  checkAccess: jest.fn(
+    async (params) => params?.req?.headers?.['x-test-marketplace-access'] === 'true',
   ),
 }));
 

@@ -330,7 +330,7 @@ export const defaultAgentFormValues = {
   [Tools.web_search]: false,
   disable_provider_upload: false,
   disable_context_upload: false,
-  category: 'General productivity',
+  category: 'general',
   support_contact: {
     name: '',
     email: '',

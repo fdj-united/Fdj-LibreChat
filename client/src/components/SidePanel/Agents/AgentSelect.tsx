@@ -78,7 +78,7 @@ function AgentSelect({
         model: update.model,
         tools: agentTools,
         // Ensure the category is properly set for the form
-        category: fullAgent.category || 'General productivity',
+        category: fullAgent.category || 'general',
         // Make sure support_contact is properly loaded
         support_contact: fullAgent.support_contact,
         avatar_file: null,
