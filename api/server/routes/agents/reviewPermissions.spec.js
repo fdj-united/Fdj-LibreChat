@@ -21,8 +21,9 @@ jest.mock('~/server/controllers/agents/v1', () => ({
   getAgentCategories: jest.fn(),
 }));
 
-jest.mock('~/models/Agent', () => ({
+jest.mock('~/models', () => ({
   getAgent: jest.fn(),
+  getRoleByName: jest.fn(),
 }));
 
 jest.mock('~/models/AgentReview', () => ({
@@ -31,10 +32,6 @@ jest.mock('~/models/AgentReview', () => ({
   getLatestReview: jest.fn(),
   getAllReviews: jest.fn(),
   deleteReview: jest.fn(),
-}));
-
-jest.mock('~/models/Role', () => ({
-  getRoleByName: jest.fn(),
 }));
 
 jest.mock('./actions', () => {
