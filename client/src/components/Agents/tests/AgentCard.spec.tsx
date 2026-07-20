@@ -1,9 +1,9 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import AgentCard from '../AgentCard';
-import type t from 'librechat-data-provider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type t from 'librechat-data-provider';
+import AgentCard from '../AgentCard';
 
 // Mock useLocalize hook
 jest.mock('~/hooks/useLocalize', () => () => (key: string) => {
