@@ -112,6 +112,13 @@ jest.mock('~/Providers', () => ({
   })),
 }));
 
+jest.mock('~/data-provider', () => ({
+  ...jest.requireActual('~/data-provider'),
+  useGetStartupConfig: () => ({
+    data: { interface: { marketplace: { verification: false } } },
+  }),
+}));
+
 // Mock @librechat/client toast context
 jest.mock('@librechat/client', () => ({
   ...jest.requireActual('@librechat/client'),
