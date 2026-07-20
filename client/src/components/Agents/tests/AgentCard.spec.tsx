@@ -72,6 +72,13 @@ jest.mock('~/Providers', () => ({
   })),
 }));
 
+jest.mock('~/data-provider', () => ({
+  ...jest.requireActual('~/data-provider'),
+  useGetStartupConfig: () => ({
+    data: { interface: { marketplace: { verification: false } } },
+  }),
+}));
+
 // Mock @librechat/client with proper Dialog behavior
 jest.mock('@librechat/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
