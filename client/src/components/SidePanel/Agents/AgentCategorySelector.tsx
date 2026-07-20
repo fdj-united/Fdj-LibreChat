@@ -23,7 +23,7 @@ const useCategorySync = (agent_id: string | null) => {
     ) => {
       // Only run once and only for new agents
       if (!handled && agent_id === '' && !field.value) {
-        field.onChange('General productivity');
+        field.onChange('general');
         setHandled(true);
       }
     },
@@ -68,7 +68,7 @@ const AgentCategorySelector: React.FC<{ className?: string }> = ({ className }) 
     <Controller
       name="category"
       control={formContext.control}
-      defaultValue="aftersales"
+      defaultValue="general"
       render={({ field }) => {
         // Sync category if needed (without using useEffect in render)
         syncCategory(field);

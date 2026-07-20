@@ -397,7 +397,7 @@ export const defaultAgentFormValues = {
   repositoryInstructions: undefined as 'prefer' | 'defer' | 'off' | undefined,
   disable_provider_upload: false,
   disable_context_upload: false,
-  category: 'General productivity',
+  category: 'general',
   support_contact: {
     name: '',
     email: '',
