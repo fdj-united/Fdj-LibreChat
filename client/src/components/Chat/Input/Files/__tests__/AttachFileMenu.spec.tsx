@@ -103,7 +103,13 @@ const mockUseGetStartupConfig = jest.requireMock('~/data-provider').useGetStartu
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-function setupMocks(overrides: { provider?: string } = {}) {
+function setupMocks(
+  overrides: {
+    provider?: string;
+    providerUploadAllowedByAgent?: boolean;
+    contextUploadAllowedByAgent?: boolean;
+  } = {},
+) {
   const translations: Record<string, string> = {
     com_files_upload_local_machine: 'From Local Computer',
     com_files_upload_sharepoint: 'Upload from SharePoint',
@@ -134,6 +140,8 @@ function setupMocks(overrides: { provider?: string } = {}) {
   mockUseAgentToolPermissions.mockReturnValue({
     fileSearchAllowedByAgent: false,
     codeAllowedByAgent: false,
+    providerUploadAllowedByAgent: overrides.providerUploadAllowedByAgent ?? true,
+    contextUploadAllowedByAgent: overrides.contextUploadAllowedByAgent ?? true,
     provider: overrides.provider ?? undefined,
   });
 }
@@ -400,6 +408,8 @@ describe('AttachFileMenu', () => {
       mockUseAgentToolPermissions.mockReturnValue({
         fileSearchAllowedByAgent: true,
         codeAllowedByAgent: false,
+        providerUploadAllowedByAgent: true,
+        contextUploadAllowedByAgent: true,
         provider: undefined,
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
@@ -429,6 +439,8 @@ describe('AttachFileMenu', () => {
       mockUseAgentToolPermissions.mockReturnValue({
         fileSearchAllowedByAgent: false,
         codeAllowedByAgent: true,
+        providerUploadAllowedByAgent: true,
+        contextUploadAllowedByAgent: true,
         provider: undefined,
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
@@ -446,6 +458,8 @@ describe('AttachFileMenu', () => {
       mockUseAgentToolPermissions.mockReturnValue({
         fileSearchAllowedByAgent: true,
         codeAllowedByAgent: true,
+        providerUploadAllowedByAgent: true,
+        contextUploadAllowedByAgent: true,
         provider: undefined,
       });
       renderMenu({ endpointType: EModelEndpoint.openAI });
@@ -468,6 +482,8 @@ describe('AttachFileMenu', () => {
       mockUseAgentToolPermissions.mockReturnValue({
         fileSearchAllowedByAgent: true,
         codeAllowedByAgent: false,
+        providerUploadAllowedByAgent: true,
+        contextUploadAllowedByAgent: true,
         provider: undefined,
       });
       const originalClick = HTMLInputElement.prototype.click;

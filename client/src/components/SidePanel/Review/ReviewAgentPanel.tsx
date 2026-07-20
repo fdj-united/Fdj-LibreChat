@@ -200,7 +200,9 @@ export default function ReviewAgentPanel() {
           {/* Comment / verification form — add comment (non-admins) or full verification (admins) */}
           <ReviewCommentForm
             agentId={selectedReviewAgentId}
-            agentName={agents?.find((agent) => agent.id === selectedReviewAgentId)?.name ?? undefined}
+            agentName={
+              agents?.find((agent) => agent.id === selectedReviewAgentId)?.name ?? undefined
+            }
             comment={comment}
             onCommentChange={setComment}
             isVerified={isVerified}
