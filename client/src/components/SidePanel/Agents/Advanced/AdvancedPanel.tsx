@@ -5,6 +5,7 @@ import { Button, TooltipAnchor, labelVariants, useToastContext } from '@librecha
 import type { AgentForm } from '~/common';
 import { useAgentPanelContext } from '~/Providers';
 import OrchestrationHub from './OrchestrationHub';
+import EagerExecution from './EagerExecution';
 import MaxAgentSteps from './MaxAgentSteps';
 import { groupHeadingClass } from './ui';
 import { useLocalize } from '~/hooks';
@@ -53,6 +54,7 @@ export default function AdvancedPanel() {
         <section className="flex flex-col gap-3">
           <span className={groupHeadingClass}>{localize('com_ui_essentials')}</span>
           <MaxAgentSteps />
+          <EagerExecution />
         </section>
 
         <OrchestrationHub currentAgentId={currentAgentId} />

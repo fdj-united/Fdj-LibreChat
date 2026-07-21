@@ -512,6 +512,7 @@ export const agentBaseSchema: z.ZodObject<
     git_identity: typeof agentGitIdentitySchema;
     artifacts: z.ZodOptional<z.ZodString>;
     recursion_limit: z.ZodOptional<z.ZodNumber>;
+    eager_execution: z.ZodOptional<z.ZodBoolean>;
     conversation_starters: z.ZodOptional<z.ZodArray<z.ZodString, 'many'>>;
     tool_resources: typeof agentToolResourcesSchema;
     tool_options: z.ZodOptional<
@@ -592,6 +593,7 @@ export const agentBaseSchema: z.ZodObject<
   disable_context_upload: z.boolean().optional(),
   artifacts: z.string().optional(),
   recursion_limit: z.number().optional(),
+  eager_execution: z.boolean().optional(),
   conversation_starters: z.array(z.string()).optional(),
   tool_resources: agentToolResourcesSchema,
   tool_options: agentToolOptionsSchema,
@@ -693,6 +695,7 @@ export const agentCreateSchema: z.ZodObject<
     repositoryInstructions: z.ZodOptional<z.ZodEnum<['prefer', 'defer', 'off']>>;
     artifacts: z.ZodOptional<z.ZodString>;
     recursion_limit: z.ZodOptional<z.ZodNumber>;
+    eager_execution: z.ZodOptional<z.ZodBoolean>;
     conversation_starters: z.ZodOptional<z.ZodArray<z.ZodString, 'many'>>;
     tool_resources: typeof agentToolResourcesSchema;
     tool_options: z.ZodOptional<
@@ -830,6 +833,7 @@ export const agentUpdateSchema: z.ZodObject<
     git_identity: typeof agentGitIdentityUpdateSchema;
     artifacts: z.ZodOptional<z.ZodString>;
     recursion_limit: z.ZodOptional<z.ZodNumber>;
+    eager_execution: z.ZodOptional<z.ZodBoolean>;
     conversation_starters: z.ZodOptional<z.ZodArray<z.ZodString, 'many'>>;
     tool_resources: typeof agentToolResourcesSchema;
     tool_options: z.ZodOptional<

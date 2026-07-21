@@ -1044,6 +1044,7 @@ export type Agent = {
   disable_context_upload?: boolean;
   artifacts?: ArtifactModes;
   recursion_limit?: number;
+  eager_execution?: boolean;
   isPublic?: boolean;
   /**
    * Whether the requesting user holds EDIT on this agent, so a single VIEW-scoped fetch can
@@ -1109,6 +1110,7 @@ export type AgentCreateParams = {
   | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
+  | 'eager_execution'
   | 'category'
   | 'support_contact'
   | 'tool_options'
@@ -1147,6 +1149,7 @@ export type AgentUpdateParams = {
   | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
+  | 'eager_execution'
   | 'category'
   | 'support_contact'
   | 'tool_options'
