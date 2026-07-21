@@ -2931,8 +2931,10 @@ export async function createRun({
     // versions ignore the field. ask_user_question raises a LangGraph
     // `interrupt()` from its tool body, which must run inside the Pregel task
     // frame — a speculative eager execution could never pause the run.
+    // Preserve eager execution by default, but let the primary agent opt out when
+    // streamed large arguments repeatedly diverge from their final tool call.
     eagerEventToolExecution: {
-      enabled: true,
+      enabled: agents[0]?.eager_execution !== false,
       excludeToolNames: [
         CREATE_FILE_TOOL_NAME,
         EDIT_FILE_TOOL_NAME,
