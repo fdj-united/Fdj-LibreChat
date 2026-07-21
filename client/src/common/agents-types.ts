@@ -52,6 +52,7 @@ export type AgentForm = {
   /** When true, hides the "Upload as Text" (context) file option for this agent. */
   disable_context_upload?: boolean;
   recursion_limit?: number;
+  eager_execution?: boolean;
   support_contact?: SupportContact;
   category: string;
   // Avatar management fields

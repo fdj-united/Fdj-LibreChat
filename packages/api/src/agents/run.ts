@@ -1160,7 +1160,19 @@ export async function createRun({
     calibrationRatio,
     indexTokenCountMap,
     subagentUsageSink,
-    eagerEventToolExecution: { enabled: true },
+    /**
+     * Eager tool execution prestarts a tool the moment its arguments can be
+     * parsed from the stream, before the model finishes emitting them. When
+     * the finally-assembled arguments differ from the prestarted ones the SDK
+     * refuses to re-run and surfaces a "Tool call changed after eager
+     * execution started" error, which the model then retries — a loop that
+     * exhausts the recursion limit on agents that emit large tool arguments
+     * (big SQL, multi-line bash) at high temperature. The primary agent's
+     * `eager_execution` flag gates this: unset (the default) preserves the
+     * prestart optimization, and `false` disables it so tools only run once
+     * the full arguments are assembled.
+     */
+    eagerEventToolExecution: { enabled: agents[0]?.eager_execution !== false },
     // Derive the Langfuse trace id deterministically from runId so message
     // feedback can be scored against the trace without a lookup (see the
     // feedback route in api/server/routes/messages.js). No-op unless Langfuse
