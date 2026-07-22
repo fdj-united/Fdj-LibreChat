@@ -7,11 +7,13 @@ jest.mock('@librechat/api', () => ({
   checkAccess: jest.fn(
     async (params) => params?.req?.headers?.['x-test-marketplace-access'] === 'true',
   ),
+  notifyAgentVerificationActivity: jest.fn().mockResolvedValue({ createdCount: 0 }),
 }));
 
 jest.mock('~/server/controllers/agents/v1', () => ({
   createAgent: jest.fn(),
   getAgent: jest.fn(),
+  getAgentVersions: jest.fn(),
   updateAgent: jest.fn(),
   duplicateAgent: jest.fn(),
   deleteAgent: jest.fn(),
@@ -44,18 +46,6 @@ jest.mock('./tools', () => {
 });
 
 jest.mock('~/server/middleware', () => ({
-  requireJwtAuth: jest.fn((req, _res, next) => {
-    const role = req.headers['x-test-role'] || 'USER';
-    const id = req.headers['x-test-user-id'];
-    req.user = {
-      id: id || 'user-id',
-      role,
-      name: role === 'ADMIN' ? 'Admin User' : 'Standard User',
-      username: role === 'ADMIN' ? 'admin' : 'user',
-      email: role === 'ADMIN' ? 'admin@example.com' : 'user@example.com',
-    };
-    next();
-  }),
   configMiddleware: jest.fn((_req, _res, next) => next()),
   canAccessAgentResource: jest.fn(() => (_req, _res, next) => next()),
 }));
@@ -100,6 +90,18 @@ describe('Agent review permissions', () => {
     const { v1: agentRoutes } = require('./v1');
     app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      const role = req.headers['x-test-role'] || SystemRoles.USER;
+      const id = req.headers['x-test-user-id'];
+      req.user = {
+        id: id || 'user-id',
+        role,
+        name: role === SystemRoles.ADMIN ? 'Admin User' : 'Standard User',
+        username: role === SystemRoles.ADMIN ? 'admin' : 'user',
+        email: role === SystemRoles.ADMIN ? 'admin@example.com' : 'user@example.com',
+      };
+      next();
+    });
     app.use('/agents', agentRoutes);
   });
 
