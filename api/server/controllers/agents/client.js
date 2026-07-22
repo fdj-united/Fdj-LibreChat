@@ -219,6 +219,7 @@ const { filterFilesByAgentAccess } = require('~/server/services/Files/permission
 const { encodeAndFormat } = require('~/server/services/Files/images/encode');
 const { createContextHandlers } = require('~/app/clients/prompts');
 const { resolveConfigServers, getAccessibleMcpServerNames } = require('~/server/services/MCP');
+const { getContextLimitErrorText } = require('~/server/utils/contextLimitError');
 const { getMCPServerTools } = require('~/server/services/Config');
 const { getAccessibleMCPServers } = require('~/server/services/MCP');
 const BaseClient = require('~/app/clients/BaseClient');
@@ -5170,7 +5171,15 @@ class AgentClient extends BaseClient {
           },
         );
       } else {
-        terminalRunError.log(err, abortController.signal);
+        const contextLimitErrorText = getContextLimitErrorText(err);
+        if (contextLimitErrorText) {
+          logger.warn(
+            '[api/server/controllers/agents/client.js #sendCompletion] Context window too small',
+            { conversationId: this.conversationId, error: err?.message },
+          );
+        } else {
+          terminalRunError.log(err, abortController.signal);
+        }
         const videoError = resolveGoogleVideoError({
           error: err,
           provider: this.options.agent?.provider,
@@ -5179,6 +5188,7 @@ class AgentClient extends BaseClient {
         this.contentParts.push({
           type: ContentTypes.ERROR,
           [ContentTypes.ERROR]:
+            contextLimitErrorText ??
             videoError ??
             terminalRunError.getUserFacingError(err, () =>
               getUserFacingRequestError(
