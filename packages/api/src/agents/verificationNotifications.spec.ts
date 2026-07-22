@@ -11,7 +11,9 @@ import {
   buildAgentVerificationReviewLink,
 } from './verificationNotifications';
 
-function createDeps(overrides: Partial<Parameters<typeof notifyAgentVerificationActivity>[0]['deps']> = {}) {
+function createDeps(
+  overrides: Partial<Parameters<typeof notifyAgentVerificationActivity>[0]['deps']> = {},
+) {
   const createNotificationsForUsers = jest.fn().mockResolvedValue({ createdCount: 1 });
 
   return {
@@ -187,10 +189,12 @@ describe('notifyAgentVerificationActivity', () => {
           permBits: PermissionBits.DELETE,
         },
       ]),
-      findUsers: jest.fn().mockResolvedValue([
-        { _id: { toString: () => 'owner-admin' } },
-        { _id: { toString: () => 'admin-only' } },
-      ]),
+      findUsers: jest
+        .fn()
+        .mockResolvedValue([
+          { _id: { toString: () => 'owner-admin' } },
+          { _id: { toString: () => 'admin-only' } },
+        ]),
     });
 
     await notifyAgentVerificationActivity({
@@ -263,10 +267,7 @@ describe('notifyAgentVerificationActivity', () => {
       deps,
     });
 
-    expect(findEntriesByResource).toHaveBeenCalledWith(
-      ResourceType.AGENT,
-      baseAgent._id,
-    );
+    expect(findEntriesByResource).toHaveBeenCalledWith(ResourceType.AGENT, baseAgent._id);
     expect(deps.getRoleByName).not.toHaveBeenCalledWith(SystemRoles.ADMIN);
   });
 });

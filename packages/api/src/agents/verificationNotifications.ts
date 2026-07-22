@@ -109,7 +109,12 @@ async function resolveAdminUserIds(deps: VerificationNotificationDeps): Promise<
   return admins.map((user) => user._id.toString());
 }
 
-function buildStatusContent(agentName: string, actorName: string, comment: string, newVerified: boolean) {
+function buildStatusContent(
+  agentName: string,
+  actorName: string,
+  comment: string,
+  newVerified: boolean,
+) {
   const statusLabel = newVerified ? 'verified' : 'unverified';
   const title = `${agentName} verification ${statusLabel}`;
   const trimmedComment = comment.trim();

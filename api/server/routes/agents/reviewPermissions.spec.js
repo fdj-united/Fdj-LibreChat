@@ -7,6 +7,7 @@ jest.mock('@librechat/api', () => ({
   checkAccess: jest.fn(
     async (params) => params?.req?.headers?.['x-test-marketplace-access'] === 'true',
   ),
+  notifyAgentVerificationActivity: jest.fn().mockResolvedValue({ createdCount: 0 }),
 }));
 
 jest.mock('~/server/controllers/agents/v1', () => ({

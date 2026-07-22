@@ -5,7 +5,6 @@ import {
   Eye,
   Brain,
   Bookmark,
-  Eye,
   NotebookPen,
   ScrollText,
   ArrowRightToLine,
@@ -22,6 +21,11 @@ import {
 import type { TInterfaceConfig, TEndpointsConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
 import {
+  ReviewPanel,
+  ReviewVerificationIcon,
+  REVIEW_AGENT_PANEL_ID,
+} from '~/components/SidePanel/Review';
+import {
   useAgentCapabilities,
   useMCPServerManager,
   useGetAgentsConfig,
@@ -34,7 +38,6 @@ import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
-import { ReviewPanel, ReviewVerificationIcon, REVIEW_AGENT_PANEL_ID } from '~/components/SidePanel/Review';
 import { PromptsAccordion } from '~/components/Prompts';
 import { SkillsAccordion } from '~/components/Skills';
 

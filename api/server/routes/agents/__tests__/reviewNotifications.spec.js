@@ -24,15 +24,18 @@ jest.mock('@librechat/data-schemas', () => ({
 
 jest.mock('~/models', () => ({
   getAgent: (...args) => mockGetAgent(...args),
+  findEntriesByResource: jest.fn(),
+  findUsers: jest.fn(),
+  getRoleByName: jest.fn(),
+  createNotificationsForUsers: jest.fn(),
+}));
+
+jest.mock('~/models/AgentReview', () => ({
   getLatestReview: (...args) => mockGetLatestReview(...args),
   addOrUpdateReview: (...args) => mockAddOrUpdateReview(...args),
   getAgentReview: jest.fn(),
   getAllReviews: jest.fn(),
   deleteReview: jest.fn(),
-  findEntriesByResource: jest.fn(),
-  findUsers: jest.fn(),
-  getRoleByName: jest.fn(),
-  createNotificationsForUsers: jest.fn(),
 }));
 
 jest.mock('~/server/middleware', () => ({

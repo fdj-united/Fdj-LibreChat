@@ -234,8 +234,12 @@ router.post('/:id/review', configMiddleware, requireMarketplaceVerification, asy
       return res.status(404).json({ error: 'Agent not found' });
     }
     const previousReview = await getLatestReview(id);
-    const previousVerified =
-      previousReview?.verified === true ? true : previousReview?.verified === false ? false : null;
+    let previousVerified = null;
+    if (previousReview?.verified === true) {
+      previousVerified = true;
+    } else if (previousReview?.verified === false) {
+      previousVerified = false;
+    }
 
     const isAdmin = req.user?.role === SystemRoles.ADMIN;
     const canUseMarketplace = await checkAccess({
