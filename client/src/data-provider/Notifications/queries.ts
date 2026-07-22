@@ -1,10 +1,5 @@
 /* Notifications */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  QueryObserverResult,
-  UseMutationOptions,
-  UseQueryOptions,
-} from '@tanstack/react-query';
 import { MutationKeys, QueryKeys, dataService } from 'librechat-data-provider';
 import type {
   CreateNotificationBody,
@@ -12,6 +7,11 @@ import type {
   NotificationsListResponse,
   TNotification,
 } from 'librechat-data-provider';
+import type {
+  QueryObserverResult,
+  UseMutationOptions,
+  UseQueryOptions,
+} from '@tanstack/react-query';
 
 export const useNotificationsQuery = (
   params?: NotificationsListParams,

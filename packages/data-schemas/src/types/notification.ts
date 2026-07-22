@@ -1,5 +1,5 @@
-import type { Document } from 'mongoose';
 import type { NotificationType } from 'librechat-data-provider';
+import type { Document } from 'mongoose';
 
 export interface INotification extends Document {
   user: string;
