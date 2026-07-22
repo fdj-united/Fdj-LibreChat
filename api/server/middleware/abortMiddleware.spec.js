@@ -42,7 +42,11 @@ jest.mock('@librechat/api', () => ({
 
 jest.mock('librechat-data-provider', () => ({
   isAssistantsEndpoint: jest.fn().mockReturnValue(false),
-  ErrorTypes: { INVALID_REQUEST: 'INVALID_REQUEST', NO_SYSTEM_MESSAGES: 'NO_SYSTEM_MESSAGES' },
+  ErrorTypes: {
+    INPUT_LENGTH: 'INPUT_LENGTH',
+    INVALID_REQUEST: 'INVALID_REQUEST',
+    NO_SYSTEM_MESSAGES: 'NO_SYSTEM_MESSAGES',
+  },
 }));
 
 jest.mock('~/app/clients/prompts', () => ({
@@ -308,5 +312,32 @@ describe('abortMiddleware - handleAbortError', () => {
     );
     expect(logger.debug).not.toHaveBeenCalled();
     expect(sendError).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps empty_messages pruning failures to a typed input length error', async () => {
+    const error = new Error(
+      '{"type":"empty_messages","info":"Token budget breakdown:\\n maxContextTokens: 500\\n instructionTokens: 613\\n messageTokens: 261\\n availableForMessages: -138"}',
+    );
+
+    await handleAbortError({}, buildAbortRequest(), error, {
+      sender: 'AI',
+      conversationId: 'convo-123',
+      messageId: 'message-123',
+      parentMessageId: 'parent-123',
+      userMessageId: 'user-message-123',
+    });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[handleAbortError] Context window too small for request',
+      expect.objectContaining({ conversationId: 'convo-123' }),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(sendError).toHaveBeenCalledWith(
+      buildAbortRequest(),
+      {},
+      expect.objectContaining({
+        text: expect.stringContaining('"type":"INPUT_LENGTH"'),
+      }),
+    );
   });
 });

@@ -12,6 +12,7 @@ const {
 const { truncateText, smartTruncateText } = require('~/app/clients/prompts');
 const clearPendingReq = require('~/cache/clearPendingReq');
 const { sendError } = require('~/server/middleware/error');
+const { getContextLimitErrorText } = require('~/server/utils/contextLimitError');
 const { abortRun } = require('./abortRun');
 const db = require('~/models');
 
@@ -231,6 +232,7 @@ const handleAbort = function () {
  */
 const handleAbortError = async (res, req, error, data) => {
   const { sender, conversationId, messageId, parentMessageId, userMessageId, partialText } = data;
+  const contextLimitErrorText = getContextLimitErrorText(error);
 
   if (error?.message?.includes('base64')) {
     logger.error('[handleAbortError] Error in base64 encoding', {
@@ -245,6 +247,11 @@ const handleAbortError = async (res, req, error, data) => {
       name: error?.name,
       message: truncateText(error?.message ?? 'AbortError', 350),
     });
+  } else if (contextLimitErrorText) {
+    logger.warn('[handleAbortError] Context window too small for request', {
+      conversationId,
+      message: truncateText(error?.message ?? '', 350),
+    });
   } else {
     logger.error('[handleAbortError] AI response error; aborting request:', error);
   }
@@ -255,9 +262,12 @@ const handleAbortError = async (res, req, error, data) => {
     );
   }
 
-  let errorText = error?.message?.includes('"type"')
-    ? error.message
-    : 'An error occurred while processing your request. Please contact the Admin.';
+  let errorText = contextLimitErrorText;
+  if (!errorText) {
+    errorText = error?.message?.includes('"type"')
+      ? error.message
+      : 'An error occurred while processing your request. Please contact the Admin.';
+  }
 
   if (error?.type === ErrorTypes.INVALID_REQUEST) {
     errorText = `{"type":"${ErrorTypes.INVALID_REQUEST}"}`;
