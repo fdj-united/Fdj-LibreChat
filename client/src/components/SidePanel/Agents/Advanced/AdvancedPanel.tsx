@@ -6,6 +6,7 @@ import type { AgentForm } from '~/common';
 import { useAgentPanelContext } from '~/Providers';
 import AgentSubagents from './AgentSubagents';
 import MaxAgentSteps from './MaxAgentSteps';
+import EagerExecution from './EagerExecution';
 import AgentHandoffs from './AgentHandoffs';
 import { useLocalize } from '~/hooks';
 import AgentChain from './AgentChain';
@@ -48,6 +49,7 @@ export default function AdvancedPanel() {
       </div>
       <div className="flex flex-col gap-4 px-2 pb-2">
         <MaxAgentSteps />
+        <EagerExecution />
         {subagentsEnabled && (
           <Controller
             name="subagents"
