@@ -444,6 +444,7 @@ export const agentBaseSchema: z.ZodObject<
     hide_sequential_outputs: z.ZodOptional<z.ZodBoolean>;
     artifacts: z.ZodOptional<z.ZodString>;
     recursion_limit: z.ZodOptional<z.ZodNumber>;
+    eager_execution: z.ZodOptional<z.ZodBoolean>;
     conversation_starters: z.ZodOptional<z.ZodArray<z.ZodString, 'many'>>;
     tool_resources: z.ZodOptional<
       z.ZodObject<
@@ -697,6 +698,7 @@ export const agentBaseSchema: z.ZodObject<
   disable_context_upload: z.boolean().optional(),
   artifacts: z.string().optional(),
   recursion_limit: z.number().optional(),
+  eager_execution: z.boolean().optional(),
   conversation_starters: z.array(z.string()).optional(),
   tool_resources: agentToolResourcesSchema,
   tool_options: agentToolOptionsSchema,
@@ -789,6 +791,7 @@ export const agentCreateSchema: z.ZodObject<
     hide_sequential_outputs: z.ZodOptional<z.ZodBoolean>;
     artifacts: z.ZodOptional<z.ZodString>;
     recursion_limit: z.ZodOptional<z.ZodNumber>;
+    eager_execution: z.ZodOptional<z.ZodBoolean>;
     conversation_starters: z.ZodOptional<z.ZodArray<z.ZodString, 'many'>>;
     tool_resources: z.ZodOptional<
       z.ZodObject<
@@ -1099,6 +1102,7 @@ export const agentUpdateSchema: z.ZodObject<
     hide_sequential_outputs: z.ZodOptional<z.ZodBoolean>;
     artifacts: z.ZodOptional<z.ZodString>;
     recursion_limit: z.ZodOptional<z.ZodNumber>;
+    eager_execution: z.ZodOptional<z.ZodBoolean>;
     conversation_starters: z.ZodOptional<z.ZodArray<z.ZodString, 'many'>>;
     tool_resources: z.ZodOptional<
       z.ZodObject<
