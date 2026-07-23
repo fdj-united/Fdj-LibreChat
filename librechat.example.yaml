@@ -778,6 +778,23 @@ endpoints:
 #         endpoint: "openAI"
 #         model: "gpt-4o-mini"
 
+# Per-agent, disk-only file retention.
+# For each listed agent, user-uploaded local files (message attachments under
+# the uploads directory) are removed FROM DISK once they are older than
+# `retentionHours`. Only the physical file is unlinked — the database record and
+# everything else (RAG vectors, agent skill/code-env files, images, message and
+# transaction records) are left untouched. Independent of the conversation
+# `expiredAt` sweep (FILE_RETENTION_SWEEP_INTERVAL_MS); the two never touch the
+# same files. Applies only to the local file strategy.
+# fileRetention:
+#   intervalMs: 3600000   # sweep cadence in ms (default hourly); 0 disables
+#   dryRun: false         # true = log what would be deleted without deleting
+#   agents:
+#     - agentId: agent_YourBankStatementAgentId
+#       retentionHours: 8
+#     - agentId: agent_AnotherAgentId
+#       retentionHours: 24
+
 # fileConfig:
 #   endpoints:
 #     assistants:

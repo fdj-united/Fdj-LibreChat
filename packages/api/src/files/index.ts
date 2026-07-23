@@ -11,5 +11,6 @@ export * from './parse';
 export * from './rag';
 export * from './retention';
 export * from './sweep';
+export * from './agentFileRetention';
 export * from './validation';
 export * from './text';
