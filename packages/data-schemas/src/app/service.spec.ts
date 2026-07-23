@@ -146,3 +146,27 @@ describe('AppService assistants config', () => {
     );
   });
 });
+
+describe('AppService fileRetention config', () => {
+  it('carries fileRetention through to the app config so the retention sweep can start', async () => {
+    const config = {
+      fileRetention: {
+        intervalMs: 3600000,
+        agents: [{ agentId: 'agent_test123', retentionHours: 8 }],
+      },
+    } as DeepPartial<TCustomConfig>;
+
+    const result = await AppService({ config });
+
+    expect(result.fileRetention).toEqual({
+      intervalMs: 3600000,
+      agents: [{ agentId: 'agent_test123', retentionHours: 8 }],
+    });
+  });
+
+  it('leaves fileRetention undefined when it is not configured', async () => {
+    const result = await AppService({ config: {} as DeepPartial<TCustomConfig> });
+
+    expect(result.fileRetention).toBeUndefined();
+  });
+});

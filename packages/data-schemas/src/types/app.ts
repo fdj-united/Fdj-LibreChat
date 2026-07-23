@@ -99,6 +99,8 @@ export interface AppConfig {
   mcpSettings?: TCustomConfig['mcpSettings'] | null;
   /** File configuration */
   fileConfig?: TFileConfig;
+  /** Per-agent disk-only file retention configuration */
+  fileRetention?: TCustomConfig['fileRetention'];
   /** Secure image links configuration */
   secureImageLinks?: TCustomConfig['secureImageLinks'];
   /** Processed model specifications */

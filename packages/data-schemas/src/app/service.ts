@@ -173,6 +173,7 @@ export const AppService = async (params?: {
   const appConfig: AppConfig = {
     ...defaultConfig,
     fileConfig: config?.fileConfig as AppConfig['fileConfig'],
+    fileRetention: config?.fileRetention as AppConfig['fileRetention'],
     secureImageLinks: config?.secureImageLinks,
     modelSpecs: processModelSpecs(config?.endpoints, config.modelSpecs, interfaceConfig),
     endpoints: loadedEndpoints,
