@@ -72,6 +72,7 @@ const {
 const initializeOAuthReconnectManager = require('./services/initializeOAuthReconnectManager');
 const { capabilityContextMiddleware } = require('./middleware/roles/capabilities');
 const createValidateImageRequest = require('./middleware/validateImageRequest');
+const { startAgentFileRetention } = require('./services/Files/agentFileRetention');
 const { initializeGitHubSkillSync } = require('./services/Skills/sync');
 const { initializeAgentTriggerService } = require('./services/Agents/triggers');
 const { resumeAgentEventDetachedAction } = require('./services/Agents/detachedActionResume');
@@ -267,6 +268,7 @@ const startServer = async () => {
   await loadToolApprovalHooks(toolApproval?.enabled ? toolApproval.hooks : undefined, {
     basePath: path.resolve(__dirname, '../..'),
   });
+  startAgentFileRetention(appConfig);
   await runAsSystem(async () => {
     await performStartupChecks(appConfig);
     await updateInterfacePermissions({ appConfig, getRoleByName, updateAccessPermissions });

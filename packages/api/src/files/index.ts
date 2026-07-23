@@ -24,6 +24,7 @@ export * from './regexEngine';
 export * from './retention';
 export * from './sse';
 export * from './sweep';
+export * from './agentFileRetention';
 export * from './usage';
 export * from './validation';
 export * from './text';
