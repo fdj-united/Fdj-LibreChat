@@ -3145,6 +3145,40 @@ export type TOpenIdDiscoveryConfig = z.infer<typeof openIdDiscoverySchema>;
 /** Maximum CAS attempts per ACL document, including the initial attempt. */
 export const permissionWriteAttemptsSchema = z.number().int().min(1).max(100).default(3);
 
+/**
+ * Per-agent disk-only file-retention rule.
+ *
+ * `agentId` names a persistent agent; `retentionHours` is how long after upload
+ * a user-uploaded local file for that agent is kept on disk before the retention
+ * sweep unlinks it. Only the physical file under the local `uploads` directory is
+ * removed — the file's database record (and everything else: RAG vectors, agent
+ * skill/code-env files, message and transaction records) is left untouched.
+ */
+export const agentFileRetentionRuleSchema = z.object({
+  agentId: z.string().min(1),
+  retentionHours: z.number().positive(),
+});
+
+export type TAgentFileRetentionRule = z.infer<typeof agentFileRetentionRuleSchema>;
+
+/**
+ * Opt-in, per-agent, disk-only file retention. Independent of the conversation
+ * `expiredAt` sweep (`FILE_RETENTION_SWEEP_INTERVAL_MS`) — the two never touch the
+ * same files: this one only unlinks physical files and never deletes DB records.
+ */
+export const fileRetentionSchema = z
+  .object({
+    /** Sweep cadence in ms. `0` disables the sweep. Defaults to hourly. */
+    intervalMs: z.number().int().nonnegative().optional(),
+    /** When true, log the files that would be deleted without unlinking them. */
+    dryRun: z.boolean().optional(),
+    /** Per-agent retention rules. */
+    agents: z.array(agentFileRetentionRuleSchema).optional(),
+  })
+  .optional();
+
+export type TFileRetentionConfig = z.infer<typeof fileRetentionSchema>;
+
 export const configSchema = z.object({
   version: z.string(),
   permissions: z.object({ maxWriteAttempts: permissionWriteAttemptsSchema }).optional(),
@@ -3253,6 +3287,7 @@ export const configSchema = z.object({
     .optional(),
   rateLimits: rateLimitSchema.optional(),
   fileConfig: fileConfigSchema.optional(),
+  fileRetention: fileRetentionSchema,
   modelSpecs: specsConfigSchema.optional(),
   filters: filtersConfigSchema.optional(),
   messageFilter: messageFilterSchema.optional(),
