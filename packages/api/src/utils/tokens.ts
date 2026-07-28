@@ -159,6 +159,7 @@ const anthropicModels = {
   'claude-opus-4-6': 1000000,
   'claude-opus-4-7': 1000000,
   'claude-opus-4-8': 1000000,
+  'claude-sonnet-5': 1000000,
   'claude-fable-5': 1000000,
   'claude-mythos-5': 1000000,
 };
@@ -413,6 +414,7 @@ const anthropicMaxOutputs = {
   'claude-opus-4-6': 128000,
   'claude-opus-4-7': 128000,
   'claude-opus-4-8': 128000,
+  'claude-sonnet-5': 128000,
   'claude-fable-5': 128000,
   'claude-mythos-5': 128000,
   'claude-3.5-sonnet': 8192,
@@ -433,6 +435,7 @@ const deepseekMaxOutputs = {
 
 export const maxOutputTokensMap: Record<string, Record<string, number>> = {
   [EModelEndpoint.anthropic]: anthropicMaxOutputs,
+  [EModelEndpoint.bedrock]: anthropicMaxOutputs,
   [EModelEndpoint.azureOpenAI]: modelMaxOutputs,
   [EModelEndpoint.openAI]: { ...modelMaxOutputs, ...deepseekMaxOutputs },
   [EModelEndpoint.custom]: { ...modelMaxOutputs, ...deepseekMaxOutputs },
