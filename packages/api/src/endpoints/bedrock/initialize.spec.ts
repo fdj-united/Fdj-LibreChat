@@ -1198,6 +1198,37 @@ describe('initializeBedrock', () => {
     });
   });
 
+  describe('Sonnet 5 Bedrock defaults', () => {
+    it('should default maxTokens to 16384 when model parameters omit output limits', async () => {
+      const params = createMockParams({
+        model_parameters: {
+          model: 'anthropic.claude-sonnet-5',
+        },
+      });
+
+      const result = (await initializeBedrock(params)) as BedrockLLMConfigResult;
+      const amrf = result.llmConfig.additionalModelRequestFields as Record<string, unknown>;
+
+      expect(amrf.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(result.llmConfig.maxTokens).toBe(16384);
+      expect(result.llmConfig.maxOutputTokens).toBeUndefined();
+    });
+
+    it('should respect explicit maxOutputTokens for Sonnet 5', async () => {
+      const params = createMockParams({
+        model_parameters: {
+          model: 'anthropic.claude-sonnet-5',
+          maxOutputTokens: 12000,
+        },
+      });
+
+      const result = (await initializeBedrock(params)) as BedrockLLMConfigResult;
+
+      expect(result.llmConfig.maxTokens).toBe(12000);
+      expect(result.llmConfig.maxOutputTokens).toBeUndefined();
+    });
+  });
+
   describe('Bedrock reasoning_effort for Moonshot/ZAI models', () => {
     it('should map reasoning_effort to reasoning_config for Moonshot Kimi K2.5', async () => {
       const params = createMockParams({
