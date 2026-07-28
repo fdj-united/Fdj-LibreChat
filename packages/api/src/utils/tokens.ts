@@ -596,6 +596,7 @@ const deepseekMaxOutputs = {
 
 export const maxOutputTokensMap: Record<string, Record<string, number>> = {
   [EModelEndpoint.anthropic]: anthropicMaxOutputs,
+  [EModelEndpoint.bedrock]: anthropicMaxOutputs,
   [EModelEndpoint.azureOpenAI]: modelMaxOutputs,
   [EModelEndpoint.openAI]: { ...modelMaxOutputs, ...deepseekMaxOutputs },
   [EModelEndpoint.custom]: { ...modelMaxOutputs, ...deepseekMaxOutputs },
