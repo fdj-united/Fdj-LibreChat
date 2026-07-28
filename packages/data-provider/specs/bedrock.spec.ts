@@ -1064,6 +1064,17 @@ describe('bedrockInputParser', () => {
       expect(output.maxTokens).toBeUndefined();
     });
 
+    test('should default maxTokens for Bedrock Sonnet 5 when neither maxTokens nor maxOutputTokens are provided', () => {
+      const parsed = bedrockInputParser.parse({
+        model: 'anthropic.claude-sonnet-5',
+      }) as Record<string, unknown>;
+      const output = bedrockOutputParser(parsed as Record<string, unknown>);
+      const amrf = output.additionalModelRequestFields as Record<string, unknown>;
+      expect(amrf.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(output.maxTokens).toBe(16384);
+      expect(output.maxOutputTokens).toBeUndefined();
+    });
+
     test('should use enabled default maxTokens (8192) for non-adaptive thinking models', () => {
       const parsed = bedrockInputParser.parse({
         model: 'anthropic.claude-sonnet-4-5-20250929-v1:0',

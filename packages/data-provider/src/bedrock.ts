@@ -2,6 +2,7 @@ import { z } from 'zod';
 import * as s from './schemas';
 
 const DEFAULT_ENABLED_MAX_TOKENS = 8192;
+const DEFAULT_SONNET_5_MAX_TOKENS = 16384;
 const DEFAULT_THINKING_BUDGET = 2000;
 export const BEDROCK_OUTPUT_128K_BETA = 'output-128k-2025-02-19';
 export const BEDROCK_FINE_GRAINED_TOOL_STREAMING_BETA = 'fine-grained-tool-streaming-2025-05-14';
@@ -104,6 +105,11 @@ function parseSonnetVersion(model: string): { major: number; minor: number } | n
     };
   }
   return null;
+}
+
+function isClaudeSonnet5(model: string): boolean {
+  const sonnet = parseSonnetVersion(model);
+  return sonnet != null && sonnet.major === 5;
 }
 
 /**
@@ -580,6 +586,8 @@ export const bedrockInputParser = s.tConversationSchema
       typedData.maxTokens = typedData.maxOutputTokens;
     } else if (typedData.maxTokens !== undefined) {
       typedData.maxOutputTokens = typedData.maxTokens;
+    } else if (typeof typedData.model === 'string' && isClaudeSonnet5(typedData.model)) {
+      typedData.maxTokens = DEFAULT_SONNET_5_MAX_TOKENS;
     }
 
     return s.removeNullishValues(typedData) as BedrockConverseInput;
