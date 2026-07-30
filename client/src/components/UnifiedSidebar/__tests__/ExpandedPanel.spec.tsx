@@ -1,5 +1,6 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
+import { MemoryRouter } from 'react-router-dom';
 import '@testing-library/jest-dom/extend-expect';
 import { MessagesSquare, NotebookPen } from 'lucide-react';
 import { render, fireEvent, screen } from '@testing-library/react';
@@ -51,6 +52,17 @@ jest.mock('~/components/Nav/AccountSettings', () => ({
   default: () => <div data-testid="account-settings" />,
 }));
 
+const mockUseGetStartupConfig = jest.fn();
+
+jest.mock('~/data-provider', () => ({
+  useGetStartupConfig: () => mockUseGetStartupConfig(),
+}));
+
+jest.mock('~/components/Notifications/HeaderBell', () => ({
+  __esModule: true,
+  default: () => <div data-testid="header-bell" />,
+}));
+
 import ExpandedPanel from '../ExpandedPanel';
 import store from '~/store';
 
@@ -87,18 +99,20 @@ function renderPanel({
   }
 
   const result = render(
-    <QueryClientProvider client={createQueryClient()}>
-      <RecoilRoot initializeState={initializeState}>
-        <ActivePanelProvider>
-          <ExpandedPanel
-            links={createLinks()}
-            expanded={expanded}
-            onCollapse={onCollapse}
-            onExpand={onExpand}
-          />
-        </ActivePanelProvider>
-      </RecoilRoot>
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <RecoilRoot initializeState={initializeState}>
+          <ActivePanelProvider>
+            <ExpandedPanel
+              links={createLinks()}
+              expanded={expanded}
+              onCollapse={onCollapse}
+              onExpand={onExpand}
+            />
+          </ActivePanelProvider>
+        </RecoilRoot>
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 
   return { ...result, onCollapse, onExpand };
@@ -108,6 +122,7 @@ describe('ExpandedPanel', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
+    mockUseGetStartupConfig.mockReturnValue({ data: { interface: { notifications: false } } });
   });
 
   describe('NavIconButton collapse toggle', () => {
@@ -139,6 +154,19 @@ describe('ExpandedPanel', () => {
       fireEvent.click(inactiveButton);
       expect(onExpand).toHaveBeenCalledTimes(1);
       expect(localStorage.getItem('side:active-panel')).toBe('prompts');
+    });
+  });
+
+  describe('notifications interface toggle', () => {
+    it('does not render the notification bell when notifications are disabled', () => {
+      renderPanel({ expanded: true });
+      expect(screen.queryByTestId('header-bell')).not.toBeInTheDocument();
+    });
+
+    it('renders the notification bell when notifications are enabled', async () => {
+      mockUseGetStartupConfig.mockReturnValue({ data: { interface: { notifications: true } } });
+      renderPanel({ expanded: true });
+      expect(await screen.findByTestId('header-bell')).toBeInTheDocument();
     });
   });
 

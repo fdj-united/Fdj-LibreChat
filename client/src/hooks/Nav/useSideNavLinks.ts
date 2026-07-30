@@ -21,6 +21,11 @@ import {
 import type { TInterfaceConfig, TEndpointsConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
 import {
+  ReviewPanel,
+  ReviewVerificationIcon,
+  REVIEW_AGENT_PANEL_ID,
+} from '~/components/SidePanel/Review';
+import {
   useAgentCapabilities,
   useMCPServerManager,
   useGetAgentsConfig,
@@ -33,7 +38,6 @@ import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
-import { ReviewPanel, ReviewVerificationIcon } from '~/components/SidePanel/Review';
 import { PromptsAccordion } from '~/components/Prompts';
 import { SkillsAccordion } from '~/components/Skills';
 
@@ -214,10 +218,10 @@ export default function useSideNavLinks({
       interfaceConfig?.marketplace?.verification !== false
     ) {
       links.push({
-        title: 'com_agents_review_section' as any,
+        title: 'com_agents_review_section',
         label: '',
         icon: Eye,
-        id: 'review-agent',
+        id: REVIEW_AGENT_PANEL_ID,
         Component: ReviewPanel,
         endAdornment: ReviewVerificationIcon,
       });

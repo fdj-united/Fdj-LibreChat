@@ -1,12 +1,12 @@
 import React from 'react';
+import * as t from 'librechat-data-provider';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import CategoryTabs from '../CategoryTabs';
+import ErrorDisplay from '../ErrorDisplay';
 import AgentGrid from '../AgentGrid';
 import AgentCard from '../AgentCard';
 import SearchBar from '../SearchBar';
-import ErrorDisplay from '../ErrorDisplay';
-import * as t from 'librechat-data-provider';
 
 // Mock matchMedia
 Object.defineProperty(window, 'matchMedia', {
@@ -110,6 +110,13 @@ jest.mock('~/Providers', () => ({
     conversation: null,
     newConversation: jest.fn(),
   })),
+}));
+
+jest.mock('~/data-provider', () => ({
+  ...jest.requireActual('~/data-provider'),
+  useGetStartupConfig: () => ({
+    data: { interface: { marketplace: { verification: false } } },
+  }),
 }));
 
 // Mock @librechat/client toast context

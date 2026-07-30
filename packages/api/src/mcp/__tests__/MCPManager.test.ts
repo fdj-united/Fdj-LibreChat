@@ -960,7 +960,8 @@ describe('MCPManager', () => {
           typeof manager.callTool
         >[0]['flowManager'],
       });
-      return (mockConnection.setRequestHeaders as jest.Mock).mock.calls.at(-1)?.[0] ?? {};
+      const calls = (mockConnection.setRequestHeaders as jest.Mock).mock.calls;
+      return calls[calls.length - 1]?.[0] ?? {};
     };
 
     it('injects x-librechat-username from the user username', async () => {

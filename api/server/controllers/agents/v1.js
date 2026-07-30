@@ -942,7 +942,7 @@ const deleteAgentHandler = async (req, res) => {
 const getListAgentsHandler = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { category, search, limit = 100, cursor, promoted } = req.query;
+    const { category, search, limit = 100, cursor, promoted, verified } = req.query;
     let requiredPermission = req.query.requiredPermission;
     if (typeof requiredPermission === 'string') {
       requiredPermission = parseInt(requiredPermission, 10);
@@ -966,6 +966,11 @@ const getListAgentsHandler = async (req, res) => {
       filter.is_promoted = true;
     } else if (promoted === '0') {
       filter.is_promoted = { $ne: true };
+    }
+
+    if (verified === '1') {
+      const verifiedAgentIds = await db.getVerifiedAgentIds();
+      filter.id = { $in: verifiedAgentIds };
     }
 
     // Handle search filter (escape regex and cap length)

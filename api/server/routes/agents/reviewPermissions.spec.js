@@ -4,9 +4,10 @@ const { SystemRoles } = require('librechat-data-provider');
 
 jest.mock('@librechat/api', () => ({
   generateCheckAccess: jest.fn(() => (_req, _res, next) => next()),
-  checkAccess: jest.fn(async (params) =>
-    params?.req?.headers?.['x-test-marketplace-access'] === 'true',
+  checkAccess: jest.fn(
+    async (params) => params?.req?.headers?.['x-test-marketplace-access'] === 'true',
   ),
+  notifyAgentVerificationActivity: jest.fn().mockResolvedValue({ createdCount: 0 }),
 }));
 
 jest.mock('~/server/controllers/agents/v1', () => ({
@@ -21,8 +22,9 @@ jest.mock('~/server/controllers/agents/v1', () => ({
   getAgentCategories: jest.fn(),
 }));
 
-jest.mock('~/models/Agent', () => ({
+jest.mock('~/models', () => ({
   getAgent: jest.fn(),
+  getRoleByName: jest.fn(),
 }));
 
 jest.mock('~/models/AgentReview', () => ({
@@ -31,10 +33,6 @@ jest.mock('~/models/AgentReview', () => ({
   getLatestReview: jest.fn(),
   getAllReviews: jest.fn(),
   deleteReview: jest.fn(),
-}));
-
-jest.mock('~/models/Role', () => ({
-  getRoleByName: jest.fn(),
 }));
 
 jest.mock('./actions', () => {

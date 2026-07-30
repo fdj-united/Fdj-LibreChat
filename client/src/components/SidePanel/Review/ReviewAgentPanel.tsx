@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Permissions, PermissionTypes } from 'librechat-data-provider';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { dataService, PermissionBits, SystemRoles } from 'librechat-data-provider';
-import { Permissions, PermissionTypes } from 'librechat-data-provider';
 import { ControlCombobox, useToastContext, OGDialog, OGDialogTemplate } from '@librechat/client';
-import { useLocalize, useHasAccess, useAuthContext } from '~/hooks';
-import { useChatContext } from '~/Providers';
-import { useListAgentsQuery } from '~/data-provider';
 import type { ReviewCommentEntry } from './types';
+import { useLocalize, useHasAccess, useAuthContext } from '~/hooks';
 import ReviewCommentHistory from './ReviewCommentHistory';
+import { useListAgentsQuery } from '~/data-provider';
 import ReviewCommentForm from './ReviewCommentForm';
+import { useChatContext } from '~/Providers';
 
 export default function ReviewAgentPanel() {
   const navigate = useNavigate();
@@ -160,7 +160,7 @@ export default function ReviewAgentPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 py-2 px-2">
+    <div className="flex h-full flex-col gap-4 px-2 py-2">
       {/* Part 1: Comment history — visible to everyone (read-only for non-admins) */}
       <ControlCombobox
         containerClassName="px-0"
@@ -195,7 +195,9 @@ export default function ReviewAgentPanel() {
           {/* Comment / verification form — add comment (non-admins) or full verification (admins) */}
           <ReviewCommentForm
             agentId={selectedReviewAgentId}
-            agentName={agents?.find((agent) => agent.id === selectedReviewAgentId)?.name}
+            agentName={
+              agents?.find((agent) => agent.id === selectedReviewAgentId)?.name ?? undefined
+            }
             comment={comment}
             onCommentChange={setComment}
             isVerified={isVerified}

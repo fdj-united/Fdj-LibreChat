@@ -1,6 +1,15 @@
 const express = require('express');
-const { generateCheckAccess, checkAccess } = require('@librechat/api');
-const { PermissionTypes, Permissions, PermissionBits, SystemRoles } = require('librechat-data-provider');
+const {
+  generateCheckAccess,
+  checkAccess,
+  notifyAgentVerificationActivity,
+} = require('@librechat/api');
+const {
+  PermissionTypes,
+  Permissions,
+  PermissionBits,
+  SystemRoles,
+} = require('librechat-data-provider');
 const { requireJwtAuth, configMiddleware, canAccessAgentResource } = require('~/server/middleware');
 const {
   addOrUpdateReview,
@@ -10,9 +19,16 @@ const {
   deleteReview,
 } = require('~/models/AgentReview');
 const v1 = require('~/server/controllers/agents/v1');
-const { getAgent, getRoleByName } = require('~/models');
+const {
+  getAgent,
+  getRoleByName,
+  findEntriesByResource,
+  findUsers,
+  createNotificationsForUsers,
+} = require('~/models');
 const actions = require('./actions');
 const tools = require('./tools');
+const { logger } = require('@librechat/data-schemas');
 
 const router = express.Router();
 const avatar = express.Router();
@@ -217,6 +233,14 @@ router.post('/:id/review', configMiddleware, requireMarketplaceVerification, asy
     if (!existingAgent) {
       return res.status(404).json({ error: 'Agent not found' });
     }
+    const previousReview = await getLatestReview(id);
+    let previousVerified = null;
+    if (previousReview?.verified === true) {
+      previousVerified = true;
+    } else if (previousReview?.verified === false) {
+      previousVerified = false;
+    }
+
     const isAdmin = req.user?.role === SystemRoles.ADMIN;
     const canUseMarketplace = await checkAccess({
       req,
@@ -228,8 +252,7 @@ router.post('/:id/review', configMiddleware, requireMarketplaceVerification, asy
     const canManageVerification = isAdmin && canUseMarketplace;
     let verifiedStatus = !!verified;
     if (!canManageVerification) {
-      const latestReview = await getLatestReview(id);
-      verifiedStatus = latestReview?.verified ?? false;
+      verifiedStatus = previousReview?.verified ?? false;
     }
 
     const reviewData = {
@@ -239,8 +262,27 @@ router.post('/:id/review', configMiddleware, requireMarketplaceVerification, asy
       reviewed_by_name: req.user.name || req.user.username || req.user.email,
     };
     const agentReview = await addOrUpdateReview(id, reviewData);
-    // Return the latest review
     const latestReview = agentReview.reviews[agentReview.reviews.length - 1];
+
+    notifyAgentVerificationActivity({
+      agent: existingAgent,
+      actor: {
+        id: req.user.id,
+        name: req.user.name || req.user.username || req.user.email || 'Reviewer',
+      },
+      previousVerified,
+      newVerified: verifiedStatus,
+      comment: comment || '',
+      deps: {
+        findEntriesByResource,
+        findUsers,
+        getRoleByName,
+        createNotificationsForUsers,
+      },
+    }).catch((error) => {
+      logger.error('[POST /agents/:id/review] Failed to send verification notifications', error);
+    });
+
     return res.json(latestReview);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -259,41 +301,41 @@ router.delete(
   configMiddleware,
   requireMarketplaceVerification,
   async (req, res) => {
-  try {
-    const { id, reviewId } = req.params;
-    const existingAgent = await getAgent({ id });
-    if (!existingAgent) {
-      return res.status(404).json({ error: 'Agent not found' });
-    }
-    const agentReview = await getAgentReview(id);
-    if (!agentReview?.reviews?.length) {
-      return res.status(404).json({ error: 'Agent review not found' });
-    }
-    const entry = agentReview.reviews.find((r) => r._id?.toString() === reviewId);
-    if (!entry) {
-      return res.status(404).json({ error: 'Review not found' });
-    }
-    const isAuthor = entry.reviewed_by?.toString() === req.user.id;
-    if (!isAuthor) {
-      const canManageReviews = await checkAccess({
-        req,
-        user: req.user,
-        permissionType: PermissionTypes.MARKETPLACE,
-        permissions: [Permissions.USE],
-        getRoleByName,
-      });
-      if (!canManageReviews) {
-        return res.status(403).json({ error: 'You can only delete your own comment' });
+    try {
+      const { id, reviewId } = req.params;
+      const existingAgent = await getAgent({ id });
+      if (!existingAgent) {
+        return res.status(404).json({ error: 'Agent not found' });
       }
+      const agentReview = await getAgentReview(id);
+      if (!agentReview?.reviews?.length) {
+        return res.status(404).json({ error: 'Agent review not found' });
+      }
+      const entry = agentReview.reviews.find((r) => r._id?.toString() === reviewId);
+      if (!entry) {
+        return res.status(404).json({ error: 'Review not found' });
+      }
+      const isAuthor = entry.reviewed_by?.toString() === req.user.id;
+      if (!isAuthor) {
+        const canManageReviews = await checkAccess({
+          req,
+          user: req.user,
+          permissionType: PermissionTypes.MARKETPLACE,
+          permissions: [Permissions.USE],
+          getRoleByName,
+        });
+        if (!canManageReviews) {
+          return res.status(403).json({ error: 'You can only delete your own comment' });
+        }
+      }
+      const updated = await deleteReview(id, reviewId);
+      if (!updated) {
+        return res.status(404).json({ error: 'Agent review not found' });
+      }
+      return res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
-    const updated = await deleteReview(id, reviewId);
-    if (!updated) {
-      return res.status(404).json({ error: 'Agent review not found' });
-    }
-    return res.status(204).send();
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
   },
 );
 
