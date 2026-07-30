@@ -45,6 +45,7 @@ const checkAgentCreate = generateCheckAccess({
 });
 
 router.use(requireJwtAuth);
+router.use(configMiddleware);
 
 const requireMarketplaceVerification = (req, res, next) => {
   if (req.config?.interfaceConfig?.marketplace?.verification === false) {
@@ -57,13 +58,13 @@ const requireMarketplaceVerification = (req, res, next) => {
  * Agent actions route.
  * @route GET|POST /agents/actions
  */
-router.use('/actions', configMiddleware, actions);
+router.use('/actions', actions);
 
 /**
  * Get a list of available tools for agents.
  * @route GET /agents/tools
  */
-router.use('/tools', configMiddleware, tools);
+router.use('/tools', tools);
 
 /**
  * Get all agent categories with counts
