@@ -80,6 +80,7 @@ const {
   buildAgentToolContext,
   resolveMemoryAvailability,
   enrichLoadedToolsWithAgentContext,
+  canUseSkills: canUseSkillsCheck,
 } = require('./skillDeps');
 const {
   loadCodeApiKey,
@@ -297,6 +298,9 @@ const initializeClientWithProvider = async ({
   const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
   const skillDbMethods = getSkillDbMethods();
   const tenantId = req.tenant?.id ?? req.user?.tenantId ?? null;
+  const skillsUseAllowedPromise = skillsCapabilityEnabled
+    ? canUseSkillsCheck({ req })
+    : Promise.resolve(false);
 
   if (!endpointOption.agent) {
     throw new Error('No agent promise provided');
@@ -598,6 +602,7 @@ const initializeClientWithProvider = async ({
     { primaryAgent, modelsConfig },
     requestConversation,
     toolRoleGrants,
+    skillsUseAllowed,
   ] = await Promise.all([
     memoryAvailablePromise,
     accessibleSkillIdsPromise,
@@ -607,7 +612,9 @@ const initializeClientWithProvider = async ({
     validatedPrimaryAgentPromise,
     requestConversationPromise,
     toolRoleGrantsPromise,
+    skillsUseAllowedPromise,
   ]);
+  const skillsRuntimeEnabled = skillsCapabilityEnabled && skillsUseAllowed;
   /** Preserve the owner-scoped fallback for loaders that share this request. */
   req.resolvedConversation = requestConversation;
   const { decision: codeEnvironmentDecision, conversation: admittedConversation } =
@@ -706,7 +713,7 @@ const initializeClientWithProvider = async ({
   const primaryAgentSkillScope = await resolveAgentSkillScope({
     agent: primaryAgent,
     directAccessibleSkillIds: accessibleSkillIds,
-    skillsCapabilityEnabled,
+    skillsCapabilityEnabled: skillsRuntimeEnabled,
     ephemeralSkillsToggle,
     isPersistedAndAuthorizedAgent: !isEphemeralAgentId(primaryAgent.id),
     findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
@@ -715,14 +722,14 @@ const initializeClientWithProvider = async ({
   const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
     agent: primaryAgent,
     accessibleSkillIds: editableSkillIds,
-    skillsCapabilityEnabled,
+    skillsCapabilityEnabled: skillsRuntimeEnabled,
     ephemeralSkillsToggle,
   });
   const primarySkillAuthoringAvailable = canAuthorSkillFiles({
     agent: primaryAgent,
     scopedEditableSkillIds: primaryScopedEditableSkillIds,
     skillCreateAllowed,
-    skillsCapabilityEnabled,
+    skillsCapabilityEnabled: skillsRuntimeEnabled,
     ephemeralSkillsToggle,
   });
 
@@ -815,7 +822,7 @@ const initializeClientWithProvider = async ({
         resolveAgentSkillScope({
           agent,
           directAccessibleSkillIds: accessibleSkillIds,
-          skillsCapabilityEnabled,
+          skillsCapabilityEnabled: skillsRuntimeEnabled,
           ephemeralSkillsToggle,
           isPersistedAndAuthorizedAgent: true,
           findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
@@ -827,11 +834,11 @@ const initializeClientWithProvider = async ({
           scopedEditableSkillIds: resolveAgentScopedSkillIds({
             agent,
             accessibleSkillIds: editableSkillIds,
-            skillsCapabilityEnabled,
+            skillsCapabilityEnabled: skillsRuntimeEnabled,
             ephemeralSkillsToggle,
           }),
           skillCreateAllowed,
-          skillsCapabilityEnabled,
+          skillsCapabilityEnabled: skillsRuntimeEnabled,
           ephemeralSkillsToggle,
         }),
       skillStates,
@@ -917,7 +924,7 @@ const initializeClientWithProvider = async ({
     primaryAgentId: primaryConfig.id,
     accessibleSkillIds,
     editableSkillIds,
-    skillsCapabilityEnabled,
+    skillsCapabilityEnabled: skillsRuntimeEnabled,
     ephemeralSkillsToggle,
     skillCreateAllowed,
     skillStates,
@@ -1076,7 +1083,7 @@ const initializeClientWithProvider = async ({
   const lazyHistoryResolver = createLazyAgentHistoryResolver({
     accessibleSkillIds,
     editableSkillIds,
-    skillsCapabilityEnabled,
+    skillsCapabilityEnabled: skillsRuntimeEnabled,
     ephemeralSkillsToggle,
     userId,
     userRole,
@@ -1089,7 +1096,7 @@ const initializeClientWithProvider = async ({
       resolveAgentSkillScope({
         agent,
         directAccessibleSkillIds: accessibleSkillIds,
-        skillsCapabilityEnabled,
+        skillsCapabilityEnabled: skillsRuntimeEnabled,
         ephemeralSkillsToggle,
         isPersistedAndAuthorizedAgent: true,
         findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
@@ -1102,7 +1109,7 @@ const initializeClientWithProvider = async ({
         agent,
         scopedEditableSkillIds,
         skillCreateAllowed,
-        skillsCapabilityEnabled,
+        skillsCapabilityEnabled: skillsRuntimeEnabled,
         ephemeralSkillsToggle,
       }),
     deferredToolsAvailable,
@@ -1288,7 +1295,7 @@ const initializeClientWithProvider = async ({
     const agentSkillScope = await resolveAgentSkillScope({
       agent,
       directAccessibleSkillIds: accessibleSkillIds,
-      skillsCapabilityEnabled,
+      skillsCapabilityEnabled: skillsRuntimeEnabled,
       ephemeralSkillsToggle,
       isPersistedAndAuthorizedAgent: true,
       findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
@@ -1297,7 +1304,7 @@ const initializeClientWithProvider = async ({
     const scopedEditableSkillIds = resolveAgentScopedSkillIds({
       agent,
       accessibleSkillIds: editableSkillIds,
-      skillsCapabilityEnabled,
+      skillsCapabilityEnabled: skillsRuntimeEnabled,
       ephemeralSkillsToggle,
     });
     const config = await waitForAbort(
@@ -1332,7 +1339,7 @@ const initializeClientWithProvider = async ({
             agent,
             scopedEditableSkillIds,
             skillCreateAllowed,
-            skillsCapabilityEnabled,
+            skillsCapabilityEnabled: skillsRuntimeEnabled,
             ephemeralSkillsToggle,
           }),
           codeEnvAvailable,
@@ -1726,7 +1733,7 @@ const initializeClientWithProvider = async ({
       conversationId,
     },
   );
-  const handlePrimeInvokedSkills = skillsCapabilityEnabled
+  const handlePrimeInvokedSkills = skillsRuntimeEnabled
     ? (payload, skillNames) =>
         primeInvokedSkillsForProfiles({
           req,

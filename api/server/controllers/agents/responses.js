@@ -819,8 +819,12 @@ const executeResponse = async (envelope, { req, res }) => {
       const resolveWebSearchGrant = async () =>
         (await resolveToolRoleGrants({ req, getRoleByName: db.getRoleByName })).webSearch;
       const skillsCapabilityEnabled = enabledCapabilities.has(AgentCapabilities.skills);
+      const skillsUseAllowed = skillsCapabilityEnabled
+        ? await getSkillToolDeps().canUseSkills({ req })
+        : false;
+      const skillsRuntimeEnabled = skillsCapabilityEnabled && skillsUseAllowed;
       const ephemeralSkillsToggle = request.ephemeralAgent?.skills === true;
-      const accessibleSkillIds = skillsCapabilityEnabled
+      const accessibleSkillIds = skillsRuntimeEnabled
         ? withDeploymentSkillIds(
             await findAccessibleResources({
               userId: principal.userId,
@@ -830,7 +834,7 @@ const executeResponse = async (envelope, { req, res }) => {
             }),
           )
         : [];
-      const editableSkillIds = skillsCapabilityEnabled
+      const editableSkillIds = skillsRuntimeEnabled
         ? await findAccessibleResources({
             userId: principal.userId,
             role: principal.role,
@@ -838,7 +842,7 @@ const executeResponse = async (envelope, { req, res }) => {
             requiredPermissions: PermissionBits.EDIT,
           })
         : [];
-      const skillCreateAllowed = skillsCapabilityEnabled
+      const skillCreateAllowed = skillsRuntimeEnabled
         ? await getSkillToolDeps().canCreateSkill({ req })
         : false;
 
@@ -852,7 +856,7 @@ const executeResponse = async (envelope, { req, res }) => {
       const primaryAgentSkillScope = await resolveAgentSkillScope({
         agent,
         directAccessibleSkillIds: accessibleSkillIds,
-        skillsCapabilityEnabled,
+        skillsCapabilityEnabled: skillsRuntimeEnabled,
         ephemeralSkillsToggle,
         isPersistedAndAuthorizedAgent: true,
         findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
@@ -861,7 +865,7 @@ const executeResponse = async (envelope, { req, res }) => {
       const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
         agent,
         accessibleSkillIds: editableSkillIds,
-        skillsCapabilityEnabled,
+        skillsCapabilityEnabled: skillsRuntimeEnabled,
         ephemeralSkillsToggle,
       });
 
@@ -882,7 +886,7 @@ const executeResponse = async (envelope, { req, res }) => {
             agent,
             scopedEditableSkillIds: primaryScopedEditableSkillIds,
             skillCreateAllowed,
-            skillsCapabilityEnabled,
+            skillsCapabilityEnabled: skillsRuntimeEnabled,
             ephemeralSkillsToggle,
           }),
           codeEnvAvailable,
@@ -950,7 +954,7 @@ const executeResponse = async (envelope, { req, res }) => {
             resolveAgentSkillScope({
               agent: handoffAgent,
               directAccessibleSkillIds: accessibleSkillIds,
-              skillsCapabilityEnabled,
+              skillsCapabilityEnabled: skillsRuntimeEnabled,
               ephemeralSkillsToggle,
               isPersistedAndAuthorizedAgent: true,
               findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
@@ -962,11 +966,11 @@ const executeResponse = async (envelope, { req, res }) => {
               scopedEditableSkillIds: resolveAgentScopedSkillIds({
                 agent: handoffAgent,
                 accessibleSkillIds: editableSkillIds,
-                skillsCapabilityEnabled,
+                skillsCapabilityEnabled: skillsRuntimeEnabled,
                 ephemeralSkillsToggle,
               }),
               skillCreateAllowed,
-              skillsCapabilityEnabled,
+              skillsCapabilityEnabled: skillsRuntimeEnabled,
               ephemeralSkillsToggle,
             }),
           skillStates,

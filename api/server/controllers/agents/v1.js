@@ -587,16 +587,6 @@ const getSubagentReferenceError = async (subagents, req, allowedMissingIds = new
 };
 
 /**
- * Returns true when the agents-endpoint `skills` capability is enabled.
- * @param {Express.Request} req
- */
-const isSkillsCapabilityEnabled = (req) => {
-  const capabilities = req.config?.endpoints?.[EModelEndpoint.agents]?.capabilities;
-  if (!Array.isArray(capabilities)) return false;
-  return capabilities.includes(AgentCapabilities.skills);
-};
-
-/**
  * Validates newly attached skill IDs for an agent create/update. Returns
  * early (no-op) when skills capability is off or no new skills are present.
  * @param {object} params
@@ -606,7 +596,7 @@ const isSkillsCapabilityEnabled = (req) => {
  * @returns {Promise<{ forbidden: string[], invalid: string[] }>}
  */
 const checkSkillAttachments = async ({ req, nextSkillIds, existingSkillIds }) => {
-  if (!isSkillsCapabilityEnabled(req) || !nextSkillIds?.length) {
+  if (!nextSkillIds?.length) {
     return { forbidden: [], invalid: [] };
   }
   const existingSet = new Set(existingSkillIds ?? []);
@@ -1686,6 +1676,24 @@ const duplicateAgentHandler = async (req, res) => {
       return;
     }
 
+    const { forbidden: skillForbidden, invalid: skillInvalid } = await checkSkillAttachments({
+      req,
+      nextSkillIds: newAgentData.skills ?? [],
+      existingSkillIds: [],
+    });
+    if (skillForbidden.length > 0) {
+      return res.status(403).json({
+        error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
+        skill_ids: skillForbidden,
+      });
+    }
+    if (skillInvalid.length > 0) {
+      return res.status(400).json({
+        error: 'AGENT_SKILL_INVALID',
+        skill_ids: skillInvalid,
+      });
+    }
+
     const newActionsList = [];
 
     /**
@@ -2277,6 +2285,18 @@ const revertAgentVersionHandler = async (req, res) => {
       hasCodeExecutionCaller
     ) {
       revertUpdates.tool_options = removeCodeExecutionCaller(updatedAgent.tool_options);
+    }
+
+    if (updatedAgent.skills?.length) {
+      const { forbidden: skillForbidden, invalid: skillInvalid } = await checkSkillAttachments({
+        req,
+        nextSkillIds: updatedAgent.skills,
+        existingSkillIds: existingAgent.skills ?? [],
+      });
+      const rejectedSkillIds = new Set([...skillForbidden, ...skillInvalid]);
+      if (rejectedSkillIds.size > 0) {
+        revertUpdates.skills = updatedAgent.skills.filter((sid) => !rejectedSkillIds.has(sid));
+      }
     }
 
     if (updatedAgent.tool_resources) {
