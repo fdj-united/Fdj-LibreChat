@@ -16,6 +16,7 @@ const {
   discoverConnectedAgents,
   resolveAgentTokenConfig,
   resolveAgentScopedSkillIds,
+  resolveAgentSkillScope,
   resolveModelSpecSkillIds,
   getAgentStartupTelemetry,
   isContentFilterError,
@@ -295,6 +296,7 @@ const initializeClientWithProvider = async ({
   );
   const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
   const skillDbMethods = getSkillDbMethods();
+  const tenantId = req.tenant?.id ?? req.user?.tenantId ?? null;
 
   if (!endpointOption.agent) {
     throw new Error('No agent promise provided');
@@ -701,11 +703,14 @@ const initializeClientWithProvider = async ({
     }
   }
 
-  const primaryScopedSkillIds = resolveAgentScopedSkillIds({
+  const primaryAgentSkillScope = await resolveAgentSkillScope({
     agent: primaryAgent,
-    accessibleSkillIds,
+    directAccessibleSkillIds: accessibleSkillIds,
     skillsCapabilityEnabled,
     ephemeralSkillsToggle,
+    isPersistedAndAuthorizedAgent: !isEphemeralAgentId(primaryAgent.id),
+    findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
+    tenantId,
   });
   const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
     agent: primaryAgent,
@@ -734,7 +739,7 @@ const initializeClientWithProvider = async ({
       endpointOption,
       allowedProviders,
       isInitialAgent: true,
-      accessibleSkillIds: primaryScopedSkillIds,
+      agentSkillScope: primaryAgentSkillScope,
       skillAuthoringAvailable: primarySkillAuthoringAvailable,
       codeEnvAvailable,
       fileSearchAvailable,
@@ -806,12 +811,15 @@ const initializeClientWithProvider = async ({
       conversationId,
       parentMessageId,
       requestBody: runtimeRequestBody,
-      computeAccessibleSkillIds: (agent) =>
-        resolveAgentScopedSkillIds({
+      computeAgentSkillScope: (agent) =>
+        resolveAgentSkillScope({
           agent,
-          accessibleSkillIds,
+          directAccessibleSkillIds: accessibleSkillIds,
           skillsCapabilityEnabled,
           ephemeralSkillsToggle,
+          isPersistedAndAuthorizedAgent: true,
+          findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
+          tenantId,
         }),
       computeSkillAuthoringAvailable: (agent) =>
         canAuthorSkillFiles({
@@ -1077,6 +1085,16 @@ const initializeClientWithProvider = async ({
     maxCatalogSkills: appConfig?.endpoints?.[EModelEndpoint.agents]?.skills?.maxCatalogSkills,
     listSkillsByAccess: skillDbMethods.listSkillsByAccess,
     listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
+    computeAgentSkillScope: (agent) =>
+      resolveAgentSkillScope({
+        agent,
+        directAccessibleSkillIds: accessibleSkillIds,
+        skillsCapabilityEnabled,
+        ephemeralSkillsToggle,
+        isPersistedAndAuthorizedAgent: true,
+        findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
+        tenantId,
+      }),
     getAccessibleMcpServerNames,
     configuredMcpServerNames: Object.keys(appConfig?.mcpConfig ?? {}),
     canAuthorSkillFiles: ({ agent, scopedEditableSkillIds }) =>
@@ -1267,11 +1285,14 @@ const initializeClientWithProvider = async ({
     if (!validation.isValid) {
       throw new Error(validation.error?.message ?? `Subagent ${agentId} failed model validation.`);
     }
-    const scopedSkillIds = resolveAgentScopedSkillIds({
+    const agentSkillScope = await resolveAgentSkillScope({
       agent,
-      accessibleSkillIds,
+      directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled,
       ephemeralSkillsToggle,
+      isPersistedAndAuthorizedAgent: true,
+      findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
+      tenantId,
     });
     const scopedEditableSkillIds = resolveAgentScopedSkillIds({
       agent,
@@ -1306,7 +1327,7 @@ const initializeClientWithProvider = async ({
           requestBody: runtimeRequestBody,
           endpointOption: { ...endpointOption, endpoint: EModelEndpoint.agents },
           allowedProviders,
-          accessibleSkillIds: scopedSkillIds,
+          agentSkillScope,
           skillAuthoringAvailable: canAuthorSkillFiles({
             agent,
             scopedEditableSkillIds,
