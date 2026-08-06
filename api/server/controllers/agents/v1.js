@@ -51,24 +51,6 @@ const {
 } = require('~/server/services/MCP');
 const { canShareSkillsPublicly } = require('~/server/services/Endpoints/agents/skillDeps');
 
-/**
- * Fail-closed check for whether an agent has a public VIEW grant.
- *
- * `hasPublicPermission` from PermissionService catches all DB errors and
- * returns `false`, which would incorrectly treat a transient lookup failure
- * as "not public" and permit skill attachments on a public agent.
- *
- * This helper queries directly and propagates DB errors so callers return
- * 500 rather than bypassing the public-sharing guard.
- */
-const isAgentPubliclyShared = async (resourceId) => {
-  const entries = await db.findEntriesByPrincipalsAndResource(
-    [{ principalType: PrincipalType.PUBLIC }],
-    ResourceType.AGENT,
-    resourceId,
-  );
-  return entries.some((entry) => (entry.permBits & PermissionBits.VIEW) === PermissionBits.VIEW);
-};
 const { getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
@@ -203,16 +185,6 @@ const isSubagentsCapabilityEnabled = (req) => {
   const capabilities = req.config?.endpoints?.[EModelEndpoint.agents]?.capabilities;
   if (!Array.isArray(capabilities)) return false;
   return capabilities.includes(AgentCapabilities.subagents);
-};
-
-/**
- * Returns true when the agents-endpoint `skills` capability is enabled.
- * @param {Express.Request} req
- */
-const isSkillsCapabilityEnabled = (req) => {
-  const capabilities = req.config?.endpoints?.[EModelEndpoint.agents]?.capabilities;
-  if (!Array.isArray(capabilities)) return false;
-  return capabilities.includes(AgentCapabilities.skills);
 };
 
 /** Maximum skills that can be attached to one agent (mirrors SKILL_CATALOG_LIMIT in skills.ts). */
@@ -755,20 +727,18 @@ const updateAgentHandler = async (req, res) => {
         });
       }
 
-      // P3: When the agent is already public, newly attached skills are
-      // implicitly exposed publicly. Require SKILLS.SHARE_PUBLIC so editors
-      // without that right cannot bypass the share.ts middleware by updating
-      // the agent directly.
+      // Require SKILLS.SHARE_PUBLIC whenever new skills are attached, regardless
+      // of whether the agent is currently public. A concurrent publish can race
+      // with this update (each path sees a clean partial state), so the safe rule
+      // is to enforce the stronger permission at attachment time rather than
+      // relying on a point-in-time public-status check here.
       const existingSet = new Set(existingSkillIds);
       const hasNewSkills = nextSkillIds.some((id) => !existingSet.has(id));
-      if (hasNewSkills) {
-        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
-        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
-          return res.status(403).json({
-            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
-            message: 'You do not have permission to attach skills to a publicly shared agent',
-          });
-        }
+      if (hasNewSkills && !(await canShareSkillsPublicly({ req }))) {
+        return res.status(403).json({
+          error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+          message: 'You do not have permission to attach skills to a shared agent',
+        });
       }
     }
 
@@ -1439,26 +1409,26 @@ const revertAgentVersionHandler = async (req, res) => {
     const shouldDisableSkills =
       snapshotSkillsEnabled === true && snapshotSkillIds.length > 0 && finalSkillIds.length === 0;
 
-    // If the agent is already public, reverting to a version with new skills is
-    // equivalent to attaching them to a public agent — require SKILLS.SHARE_PUBLIC.
+    // Require SKILLS.SHARE_PUBLIC whenever the revert would introduce new skills,
+    // regardless of current public status — same race-prevention rationale as the
+    // update handler above.
     if (finalSkillIds.length > 0) {
       const existingSkillSet = new Set((existingAgent.skills ?? []).map(String));
       const hasNewSkills = finalSkillIds.some((sid) => !existingSkillSet.has(String(sid)));
-      if (hasNewSkills) {
-        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
-        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
-          return res.status(403).json({
-            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
-            message: 'You do not have permission to attach skills to a publicly shared agent',
-          });
-        }
+      if (hasNewSkills && !(await canShareSkillsPublicly({ req }))) {
+        return res.status(403).json({
+          error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+          message: 'You do not have permission to attach skills to a shared agent',
+        });
       }
     }
 
     // Build authorization overrides that must land in the same DB write as the
     // version restore to ensure no intermediate state with forbidden skills exists.
+    // Compare against rawSnapshotSkillIds so cap-induced truncation (raw > 100)
+    // is also covered — not just authorization filtering.
     const atomicOverrides = {};
-    if (allowedSnapshotSkillIds.length !== snapshotSkillIds.length) {
+    if (finalSkillIds.length !== rawSnapshotSkillIds.length) {
       atomicOverrides.skills = finalSkillIds;
     }
     if (shouldDisableSkills) {

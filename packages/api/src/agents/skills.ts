@@ -418,6 +418,19 @@ export async function resolveAgentSkillScope(
 
   const selectedRefs = Array.isArray(agent.skills) ? [...new Set(agent.skills)] : [];
 
+  if (selectedRefs.length > SKILL_CATALOG_LIMIT) {
+    const err = new Error(
+      JSON.stringify({
+        code: 'AGENT_SKILL_CATALOG_OVERFLOW',
+        agent_id: agent.id,
+        skill_count: selectedRefs.length,
+        limit: SKILL_CATALOG_LIMIT,
+      }),
+    );
+    (err as Error & { code?: string }).code = 'AGENT_SKILL_CATALOG_OVERFLOW';
+    throw err;
+  }
+
   // Validate and partition the selected refs into valid ObjectIds vs malformed.
   const validSelectedIds: Types.ObjectId[] = [];
   let malformedCount = 0;
