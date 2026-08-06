@@ -19,6 +19,7 @@ import type {
   InitializeAgentDbMethods,
 } from './initialize';
 import type { ValidateAgentModelParams } from './validation';
+import type { AgentSkillScope } from './skills';
 import type { ServerRequest } from '~/types';
 import { validateAgentModel as defaultValidateAgentModel } from './validation';
 import { initializeAgent as defaultInitializeAgent } from './initialize';
@@ -94,6 +95,14 @@ export interface DiscoverConnectedAgentsParams {
     agent: Agent,
     accessibleSkillIds: InitializeAgentParams['accessibleSkillIds'],
   ) => InitializeAgentParams['skillAuthoringAvailable'];
+  /**
+   * Optional scope-aware resolver for sub-agent skill delegation. When provided,
+   * takes precedence over `computeAccessibleSkillIds` and passes the full
+   * `AgentSkillScope` to `initializeAgent` so required skills bypass user-state
+   * activation checks. Each sub-agent receives its own independent scope — the
+   * parent's required skill IDs are never inherited.
+   */
+  computeAgentSkillScope?: (agent: Agent) => Promise<AgentSkillScope>;
   /** Per-user skill active/inactive state, forwarded to each sub-agent. */
   skillStates?: InitializeAgentParams['skillStates'];
   /** Default active-on-share flag, forwarded to each sub-agent. */
@@ -243,7 +252,12 @@ async function initializeReferencedAgent(
     throw new Error(validation.error?.message);
   }
 
-  const scopedSkillIds = params.computeAccessibleSkillIds?.(agent);
+  const agentSkillScope = params.computeAgentSkillScope
+    ? await params.computeAgentSkillScope(agent)
+    : undefined;
+  const scopedSkillIds = agentSkillScope
+    ? agentSkillScope.effectiveSkillIds
+    : params.computeAccessibleSkillIds?.(agent);
   const initializeAgent = deps.initializeAgent ?? defaultInitializeAgent;
   const config = await detachOnAbort(
     initializeAgent(
@@ -261,7 +275,8 @@ async function initializeReferencedAgent(
           endpoint: EModelEndpoint.agents,
         },
         allowedProviders: params.allowedProviders,
-        accessibleSkillIds: scopedSkillIds,
+        agentSkillScope,
+        accessibleSkillIds: agentSkillScope ? undefined : scopedSkillIds,
         skillAuthoringAvailable: params.computeSkillAuthoringAvailable?.(agent, scopedSkillIds),
         skillStates: params.skillStates,
         defaultActiveOnShare: params.defaultActiveOnShare,

@@ -44,6 +44,7 @@ import type {
   ResolvedManualSkill,
   ResolvedAlwaysApplySkill,
   ResolvedSkillCatalog,
+  AgentSkillScope,
   TListSkillsByAccess,
   TGetSkillByName,
 } from './skills';
@@ -872,6 +873,8 @@ export interface InitializeAgentParams {
   isInitialAgent?: boolean;
   /** Accessible skill IDs for this user (pre-computed by the caller via ACL query) */
   accessibleSkillIds?: import('mongoose').Types.ObjectId[];
+  /** Run-scoped required/optional skill authorization for a persisted agent. */
+  agentSkillScope?: AgentSkillScope;
   /** Whether skill file authoring should be exposed even before a user has viewable skills. */
   skillAuthoringAvailable?: boolean;
   /** Whether the code execution environment is available (execute_code capability enabled) */
@@ -1201,7 +1204,9 @@ export async function initializeAgent(
    * those exact model-bound skill bodies before file usage/resource priming or
    * tool loading, then reuse the results below when expanding allowed tools.
    */
-  const hasSkillAccess = (params.accessibleSkillIds?.length ?? 0) > 0;
+  const resolvedSkillIds = params.agentSkillScope?.effectiveSkillIds ?? params.accessibleSkillIds;
+  const requiredSkillIdSet = params.agentSkillScope?.requiredSkillIdSet;
+  const hasSkillAccess = (resolvedSkillIds?.length ?? 0) > 0;
   const skillAuthoringAvailable = params.skillAuthoringAvailable === true;
   let manualSkillPrimes: ResolvedManualSkill[] | undefined;
   let alwaysApplySkillPrimes: ResolvedAlwaysApplySkill[] | undefined;
@@ -1214,29 +1219,32 @@ export async function initializeAgent(
         ? resolveManualSkills({
             names: params.manualSkills,
             getSkillByName: db.getSkillByName,
-            accessibleSkillIds: params.accessibleSkillIds!,
+            accessibleSkillIds: resolvedSkillIds!,
             userId: user?.id,
             skillStates: params.skillStates,
             defaultActiveOnShare: params.defaultActiveOnShare,
+            requiredSkillIdSet,
           })
         : Promise.resolve<ResolvedManualSkill[] | undefined>(undefined),
       db.listAlwaysApplySkills
         ? resolveAlwaysApplySkills({
             listAlwaysApplySkills: db.listAlwaysApplySkills,
-            accessibleSkillIds: params.accessibleSkillIds!,
+            accessibleSkillIds: resolvedSkillIds!,
             userId: user?.id,
             skillStates: params.skillStates,
             defaultActiveOnShare: params.defaultActiveOnShare,
+            requiredSkillIdSet,
           })
         : Promise.resolve<ResolvedAlwaysApplySkill[] | undefined>(undefined),
       hasActivePiiFields(appConfig?.filters?.skills?.pii, ['name', 'description'])
         ? resolveSkillCatalog({
-            accessibleSkillIds: params.accessibleSkillIds!,
+            accessibleSkillIds: resolvedSkillIds!,
             listSkillsByAccess: db.listSkillsByAccess,
             userId: user?.id,
             skillStates: params.skillStates,
             defaultActiveOnShare: params.defaultActiveOnShare,
             maxCatalogSkills: getMaxCatalogSkills(runtime),
+            requiredSkillIdSet,
           })
         : Promise.resolve<ResolvedSkillCatalog | undefined>(undefined),
     ]);
@@ -2308,21 +2316,20 @@ export async function initializeAgent(
    * Ensures `getSkillByName` cannot resolve a deactivated skill even if the
    * LLM (or a direct-invocation path) names one.
    */
-  let executableSkillIds = params.accessibleSkillIds;
+  let executableSkillIds = resolvedSkillIds;
   let activeSkillNames: Set<string> | undefined;
-  const { accessibleSkillIds } = params;
   /**
    * Authoring runs go through catalog injection even with nothing accessible:
    * `injectSkillCatalog` owns the `skill` tool registration, and a model that
    * can write `skills/{skillName}/SKILL.md` needs the tool bound at init to
    * invoke what it creates later in the same conversation.
    */
-  if ((accessibleSkillIds && accessibleSkillIds.length > 0) || skillAuthoringAvailable) {
+  if ((resolvedSkillIds && resolvedSkillIds.length > 0) || skillAuthoringAvailable) {
     const skillResult = await injectSkillCatalog({
       agent,
       toolDefinitions,
       toolRegistry,
-      accessibleSkillIds: accessibleSkillIds ?? [],
+      accessibleSkillIds: resolvedSkillIds ?? [],
       skillAuthoringAvailable,
       contextWindowTokens: Number(agentMaxContextTokens) || 200_000,
       listSkillsByAccess: db?.listSkillsByAccess,
@@ -2338,6 +2345,7 @@ export async function initializeAgent(
       defaultActiveOnShare: params.defaultActiveOnShare,
       maxCatalogSkills: getMaxCatalogSkills(runtime),
       resolvedCatalog: resolvedSkillCatalog,
+      requiredSkillIdSet,
     });
     toolDefinitions = skillResult.toolDefinitions;
     skillCount = skillResult.skillCount;

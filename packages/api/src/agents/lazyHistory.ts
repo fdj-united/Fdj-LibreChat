@@ -6,6 +6,7 @@ import type {
   ResolveAlwaysApplySkillsParams,
   ResolvedAlwaysApplySkill,
   ResolvedSkillCatalog,
+  AgentSkillScope,
   TListSkillsByAccess,
 } from './skills';
 import {
@@ -15,7 +16,10 @@ import {
 } from './skills';
 import { buildHistoricalToolNames } from './tools';
 
-type LazyHistoryAgent = Pick<Agent, 'id' | 'skills' | 'skills_enabled' | 'tools' | 'tool_options'>;
+type LazyHistoryAgent = Pick<
+  Agent,
+  'id' | 'skills' | 'skills_enabled' | 'skills_scope' | 'tools' | 'tool_options'
+>;
 
 export interface LazyAgentHistoryCapabilities {
   deferredToolsAvailable: boolean;
@@ -41,6 +45,7 @@ export interface CreateLazyAgentHistoryResolverParams extends LazyAgentHistoryCa
     agent: LazyHistoryAgent;
     scopedEditableSkillIds: Types.ObjectId[];
   }) => boolean;
+  computeAgentSkillScope?: (agent: LazyHistoryAgent) => Promise<AgentSkillScope>;
 }
 
 export interface LazyAgentHistoryMetadata {
@@ -58,11 +63,13 @@ export interface LazyAgentHistoryResolver {
   }): Promise<LazyAgentHistoryMetadata>;
 }
 
-function skillScopeKey(ids: readonly Types.ObjectId[]): string {
-  return ids
+function skillScopeKey(ids: readonly Types.ObjectId[], requiredIds?: ReadonlySet<string>): string {
+  const effective = ids
     .map((skillId) => skillId.toString())
     .sort()
     .join(':');
+  const required = [...(requiredIds ?? [])].sort().join(':');
+  return `${effective}|required=${required}`;
 }
 
 /**
@@ -79,11 +86,14 @@ export function createLazyAgentHistoryResolver(
   const catalogByScope = new Map<string, Promise<ResolvedSkillCatalog>>();
   let mcpServerNames: Promise<string[]> | undefined;
 
-  const resolveAlwaysApply = (scopedSkillIds: Types.ObjectId[]) => {
+  const resolveAlwaysApply = (
+    scopedSkillIds: Types.ObjectId[],
+    requiredSkillIdSet?: Set<string>,
+  ) => {
     if (scopedSkillIds.length === 0 || !params.listAlwaysApplySkills) {
       return Promise.resolve([]);
     }
-    const key = skillScopeKey(scopedSkillIds);
+    const key = skillScopeKey(scopedSkillIds, requiredSkillIdSet);
     let resolution = alwaysApplyByScope.get(key);
     if (!resolution) {
       resolution = resolveAlwaysApplySkills({
@@ -92,14 +102,15 @@ export function createLazyAgentHistoryResolver(
         userId: params.userId,
         skillStates: params.skillStates,
         defaultActiveOnShare: params.defaultActiveOnShare,
+        requiredSkillIdSet,
       });
       alwaysApplyByScope.set(key, resolution);
     }
     return resolution;
   };
 
-  const resolveCatalog = (scopedSkillIds: Types.ObjectId[]) => {
-    const key = skillScopeKey(scopedSkillIds);
+  const resolveCatalog = (scopedSkillIds: Types.ObjectId[], requiredSkillIdSet?: Set<string>) => {
+    const key = skillScopeKey(scopedSkillIds, requiredSkillIdSet);
     let resolution = catalogByScope.get(key);
     if (!resolution) {
       resolution = resolveSkillCatalog({
@@ -109,6 +120,7 @@ export function createLazyAgentHistoryResolver(
         skillStates: params.skillStates,
         defaultActiveOnShare: params.defaultActiveOnShare,
         maxCatalogSkills: params.maxCatalogSkills,
+        requiredSkillIdSet,
       });
       catalogByScope.set(key, resolution);
     }
@@ -132,12 +144,18 @@ export function createLazyAgentHistoryResolver(
 
   return {
     async resolve({ agent, codeExecutionAvailable, memoryAvailable }) {
-      const scopedSkillIds = resolveAgentScopedSkillIds({
-        agent,
-        accessibleSkillIds: params.accessibleSkillIds,
-        skillsCapabilityEnabled: params.skillsCapabilityEnabled,
-        ephemeralSkillsToggle: params.ephemeralSkillsToggle,
-      });
+      const agentSkillScope = params.computeAgentSkillScope
+        ? await params.computeAgentSkillScope(agent)
+        : undefined;
+      const scopedSkillIds =
+        agentSkillScope?.effectiveSkillIds ??
+        resolveAgentScopedSkillIds({
+          agent,
+          accessibleSkillIds: params.accessibleSkillIds,
+          skillsCapabilityEnabled: params.skillsCapabilityEnabled,
+          ephemeralSkillsToggle: params.ephemeralSkillsToggle,
+        });
+      const requiredSkillIdSet = agentSkillScope?.requiredSkillIdSet;
       const scopedEditableSkillIds = resolveAgentScopedSkillIds({
         agent,
         accessibleSkillIds: params.editableSkillIds,
@@ -145,8 +163,8 @@ export function createLazyAgentHistoryResolver(
         ephemeralSkillsToggle: params.ephemeralSkillsToggle,
       });
       const [alwaysApplySkillPrimes, catalog] = await Promise.all([
-        resolveAlwaysApply(scopedSkillIds),
-        resolveCatalog(scopedSkillIds),
+        resolveAlwaysApply(scopedSkillIds, requiredSkillIdSet),
+        resolveCatalog(scopedSkillIds, requiredSkillIdSet),
       ]);
       const configuredAndSkillToolNames = [
         ...(agent.tools ?? []),

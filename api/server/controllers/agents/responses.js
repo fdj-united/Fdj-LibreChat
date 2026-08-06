@@ -59,6 +59,7 @@ const {
   resolveRecursionLimit,
   getRemoteAgentPermissions,
   resolveAgentScopedSkillIds,
+  resolveAgentSkillScope,
   // Responses API
   writeDone,
   buildResponse,
@@ -848,11 +849,14 @@ const executeResponse = async (envelope, { req, res }) => {
         accessibleSkillIds,
       });
 
-      const primaryScopedSkillIds = resolveAgentScopedSkillIds({
+      const primaryAgentSkillScope = await resolveAgentSkillScope({
         agent,
-        accessibleSkillIds,
+        directAccessibleSkillIds: accessibleSkillIds,
         skillsCapabilityEnabled,
         ephemeralSkillsToggle,
+        isPersistedAndAuthorizedAgent: true,
+        findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
+        tenantId: principal.tenantId,
       });
       const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
         agent,
@@ -873,7 +877,7 @@ const executeResponse = async (envelope, { req, res }) => {
           endpointOption,
           allowedProviders,
           isInitialAgent: true,
-          accessibleSkillIds: primaryScopedSkillIds,
+          agentSkillScope: primaryAgentSkillScope,
           skillAuthoringAvailable: canAuthorSkillFiles({
             agent,
             scopedEditableSkillIds: primaryScopedEditableSkillIds,
@@ -942,12 +946,15 @@ const executeResponse = async (envelope, { req, res }) => {
           parentMessageId,
           requestBody: mcpRequestBody,
           resourceType: ResourceType.REMOTE_AGENT,
-          computeAccessibleSkillIds: (handoffAgent) =>
-            resolveAgentScopedSkillIds({
+          computeAgentSkillScope: (handoffAgent) =>
+            resolveAgentSkillScope({
               agent: handoffAgent,
-              accessibleSkillIds,
+              directAccessibleSkillIds: accessibleSkillIds,
               skillsCapabilityEnabled,
               ephemeralSkillsToggle,
+              isPersistedAndAuthorizedAgent: true,
+              findExistingSkillIdsForTenant: skillDbMethods.findExistingSkillIdsForTenant,
+              tenantId: principal.tenantId,
             }),
           computeSkillAuthoringAvailable: (handoffAgent) =>
             canAuthorSkillFiles({
