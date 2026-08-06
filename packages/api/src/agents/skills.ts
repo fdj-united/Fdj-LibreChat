@@ -348,25 +348,42 @@ export async function resolveAgentSkillScope(
     tenantId,
   } = params;
 
-  if (!skillsCapabilityEnabled || agent.skills_enabled !== true) {
+  if (!skillsCapabilityEnabled) {
     return emptyScope;
   }
 
   const isEphemeral = isEphemeralAgentId(agent.id);
 
   // Ephemeral agents keep existing behavior — no delegation path.
+  // Mirror resolveAgentScopedSkillIds: skills_enabled===false → empty;
+  // skills_enabled===true → model-spec scoping; unset → badge toggle.
   if (isEphemeral) {
-    const ephemeralIds = ephemeralSkillsToggle
-      ? directAccessibleSkillIds
-      : Array.isArray(agent.skills) && agent.skills.length > 0
-        ? directAccessibleSkillIds.filter((id) => new Set(agent.skills as string[]).has(id.toString()))
-        : [];
+    if (agent.skills_enabled === false) {
+      return emptyScope;
+    }
+    let ephemeralIds: Types.ObjectId[];
+    if (agent.skills_enabled === true) {
+      if (Array.isArray(agent.skills) && agent.skills.length === 0) {
+        return emptyScope;
+      }
+      ephemeralIds = Array.isArray(agent.skills)
+        ? directAccessibleSkillIds.filter((id) =>
+            new Set(agent.skills as string[]).has(id.toString()),
+          )
+        : directAccessibleSkillIds;
+    } else {
+      ephemeralIds = ephemeralSkillsToggle ? directAccessibleSkillIds : [];
+    }
     return {
       requiredSkillIds: [],
       optionalSkillIds: ephemeralIds,
       effectiveSkillIds: ephemeralIds,
       requiredSkillIdSet: new Set(),
     };
+  }
+
+  if (agent.skills_enabled !== true) {
+    return emptyScope;
   }
 
   const selectedRefs = Array.isArray(agent.skills) ? [...new Set(agent.skills)] : [];
@@ -417,9 +434,15 @@ export async function resolveAgentSkillScope(
   const missingCount =
     validSelectedIds.filter((id) => !existingSelectedIdSet.has(id.toString())).length;
   if (missingCount > 0) {
-    logger.warn(
-      `[resolveAgentSkillScope] Agent "${agent.id}" has ${missingCount} required skill(s) that no longer exist in the DB.`,
+    const err = new Error(
+      JSON.stringify({
+        code: 'AGENT_SKILL_DEPENDENCY_MISSING',
+        agent_id: agent.id,
+        missing_count: missingCount,
+      }),
     );
+    (err as Error & { code?: string }).code = 'AGENT_SKILL_DEPENDENCY_MISSING';
+    throw err;
   }
 
   return { requiredSkillIds, optionalSkillIds, effectiveSkillIds, requiredSkillIdSet };
@@ -583,9 +606,38 @@ export async function injectSkillCatalog(
   let pages = 0;
   let reachedEnd = false;
 
+  // P8: When required skills are present, fetch them first so they are
+  // guaranteed to occupy catalog slots before optional skills — the
+  // updatedAt-DESC cursor sort may otherwise push old required skills
+  // past the catalog limit and silently drop them.
+  const seenSkillIds = new Set<string>();
+  if (requiredSkillIdSet && requiredSkillIdSet.size > 0) {
+    const requiredIds = accessibleSkillIds.filter((id) => requiredSkillIdSet.has(id.toString()));
+    if (requiredIds.length > 0) {
+      const requiredPage = await listSkillsByAccess({
+        accessibleIds: requiredIds,
+        limit: requiredIds.length,
+        cursor: null,
+      });
+      for (const skill of requiredPage.skills) {
+        if (isActive(skill)) {
+          activeSkills.push(skill);
+          seenSkillIds.add(skill._id.toString());
+          if (skill.disableModelInvocation !== true) {
+            visibleCount += 1;
+          }
+        }
+      }
+    }
+  }
+
+  const optionalIds = seenSkillIds.size > 0
+    ? accessibleSkillIds.filter((id) => !seenSkillIds.has(id.toString()))
+    : accessibleSkillIds;
+
   while (visibleCount < catalogLimit && pages < MAX_CATALOG_PAGES) {
     const page = await listSkillsByAccess({
-      accessibleIds: accessibleSkillIds,
+      accessibleIds: optionalIds,
       limit: CATALOG_PAGE_SIZE,
       cursor,
     });
@@ -593,6 +645,9 @@ export async function injectSkillCatalog(
     for (const skill of page.skills) {
       if (visibleCount >= catalogLimit) {
         break;
+      }
+      if (seenSkillIds.has(skill._id.toString())) {
+        continue;
       }
       /**
        * Active set keeps `disable-model-invocation` skills so the runtime

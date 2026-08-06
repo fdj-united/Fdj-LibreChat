@@ -39,6 +39,7 @@ const {
   withDeploymentSkillIds,
   buildAgentToolContext,
   enrichLoadedToolsWithAgentContext,
+  canUseSkills: canUseSkillsCheck,
 } = require('./skillDeps');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { checkPermission, findAccessibleResources } = require('~/server/services/PermissionService');
@@ -148,6 +149,12 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
   const codeEnvAvailable = enabledCapabilities.has(AgentCapabilities.execute_code);
   const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
   const skillDbMethods = getSkillDbMethods();
+
+  // P1: Gate skill delegation on SKILLS.USE role permission. Users who lack
+  // this role permission must not receive required-skill delegation even when
+  // an authorized agent has them attached.
+  const skillsUseAllowed = skillsCapabilityEnabled ? await canUseSkillsCheck({ req }) : false;
+  const skillsDelegationEnabled = skillsCapabilityEnabled && skillsUseAllowed;
 
   const accessibleSkillIds = skillsCapabilityEnabled
     ? withDeploymentSkillIds(
@@ -353,7 +360,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
   const primaryAgentSkillScope = await resolveAgentSkillScope({
     agent: primaryAgent,
     directAccessibleSkillIds: accessibleSkillIds,
-    skillsCapabilityEnabled,
+    skillsCapabilityEnabled: skillsDelegationEnabled,
     ephemeralSkillsToggle,
     isPersistedAndAuthorizedAgent: !isEphemeralAgentId(primaryAgent.id),
     findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -445,7 +452,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         resolveAgentSkillScope({
           agent,
           directAccessibleSkillIds: accessibleSkillIds,
-          skillsCapabilityEnabled,
+          skillsCapabilityEnabled: skillsDelegationEnabled,
           ephemeralSkillsToggle,
           isPersistedAndAuthorizedAgent: true, // VIEW checked in discoverConnectedAgents
           findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -640,7 +647,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       const subagentSkillScope = await resolveAgentSkillScope({
         agent,
         directAccessibleSkillIds: accessibleSkillIds,
-        skillsCapabilityEnabled,
+        skillsCapabilityEnabled: skillsDelegationEnabled,
         ephemeralSkillsToggle,
         isPersistedAndAuthorizedAgent: true, // VIEW already checked above
         findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,

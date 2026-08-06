@@ -205,7 +205,7 @@ const isSkillsCapabilityEnabled = (req) => {
  * @returns {Promise<{ forbidden: string[], invalid: string[] }>}
  */
 const checkSkillAttachments = async ({ req, nextSkillIds, existingSkillIds }) => {
-  if (!isSkillsCapabilityEnabled(req) || !nextSkillIds?.length) {
+  if (!nextSkillIds?.length) {
     return { forbidden: [], invalid: [] };
   }
   const existingSet = new Set(existingSkillIds ?? []);
@@ -955,6 +955,19 @@ const duplicateAgentHandler = async (req, res) => {
       });
     }
 
+    const { forbidden: skillForbidden, invalid: skillInvalid } = await checkSkillAttachments({
+      req,
+      nextSkillIds: newAgentData.skills ?? [],
+      existingSkillIds: [],
+    });
+    if (skillForbidden.length > 0 || skillInvalid.length > 0) {
+      return res.status(403).json({
+        error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
+        forbidden: skillForbidden,
+        invalid: skillInvalid,
+      });
+    }
+
     const newAgent = await db.createAgent(newAgentData);
 
     try {
@@ -1350,6 +1363,17 @@ const revertAgentVersionHandler = async (req, res) => {
       });
       if (filteredTools.length !== updatedAgent.tools.length) {
         revertUpdates.tools = filteredTools;
+      }
+    }
+
+    if (updatedAgent.skills?.length) {
+      const { forbidden: skillForbidden } = await checkSkillAttachments({
+        req,
+        nextSkillIds: updatedAgent.skills,
+        existingSkillIds: existingAgent.skills ?? [],
+      });
+      if (skillForbidden.length > 0) {
+        revertUpdates.skills = updatedAgent.skills.filter((sid) => !skillForbidden.includes(sid));
       }
     }
 

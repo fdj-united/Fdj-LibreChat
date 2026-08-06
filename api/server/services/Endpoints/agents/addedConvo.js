@@ -4,6 +4,7 @@ const {
   initializeAgent,
   validateAgentModel,
   resolveAgentScopedSkillIds,
+  resolveAgentSkillScope,
   resolveModelSpecSkillIds,
   loadAddedAgent: loadAddedAgentFn,
 } = require('@librechat/api');
@@ -140,11 +141,15 @@ const processAddedConvo = async ({
       }
     }
 
-    const scopedSkillIds = resolveAgentScopedSkillIds({
+    const tenantId = req.user?.tenantId ?? null;
+    const addedAgentSkillScope = await resolveAgentSkillScope({
       agent: addedAgent,
-      accessibleSkillIds,
+      directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled,
       ephemeralSkillsToggle,
+      isPersistedAndAuthorizedAgent: !isEphemeralAgentId(addedAgent.id),
+      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+      tenantId,
     });
     const scopedEditableSkillIds = resolveAgentScopedSkillIds({
       agent: addedAgent,
@@ -164,7 +169,7 @@ const processAddedConvo = async ({
         agent: addedAgent,
         endpointOption,
         allowedProviders,
-        accessibleSkillIds: scopedSkillIds,
+        agentSkillScope: addedAgentSkillScope,
         skillAuthoringAvailable: canAuthorSkillFiles({
           agent: addedAgent,
           scopedEditableSkillIds,
