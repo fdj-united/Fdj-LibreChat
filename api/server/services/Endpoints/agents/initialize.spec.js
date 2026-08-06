@@ -662,7 +662,9 @@ describe('initializeClient — processAgent ACL gate', () => {
     }
 
     const initializeParams = mockInitializeAgent.mock.calls[0][0];
-    expect(initializeParams.accessibleSkillIds.map(String)).toContain(skill._id.toString());
+    expect(initializeParams.agentSkillScope.effectiveSkillIds.map(String)).toContain(
+      skill._id.toString(),
+    );
     expect(initializeParams.skillAuthoringAvailable).toBe(false);
   });
 
@@ -733,7 +735,7 @@ describe('initializeClient — processAgent ACL gate', () => {
     }
 
     const initializeParams = mockInitializeAgent.mock.calls[0][0];
-    expect(initializeParams.accessibleSkillIds).toEqual([]);
+    expect(initializeParams.agentSkillScope.effectiveSkillIds).toEqual([]);
     expect(initializeParams.skillAuthoringAvailable).toBe(true);
   });
 
