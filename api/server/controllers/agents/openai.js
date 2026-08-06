@@ -315,6 +315,7 @@ const OpenAIChatCompletionController = async (req, res) => {
       agent,
       directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled: skillsDelegationEnabled,
+      skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
       ephemeralSkillsToggle,
       isPersistedAndAuthorizedAgent: true, // agent VIEW already checked by route middleware
       findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -409,6 +410,7 @@ const OpenAIChatCompletionController = async (req, res) => {
               agent: handoffAgent,
               directAccessibleSkillIds: accessibleSkillIds,
               skillsCapabilityEnabled: skillsDelegationEnabled,
+              skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
               ephemeralSkillsToggle,
               isPersistedAndAuthorizedAgent: true, // VIEW already checked in discoverConnectedAgents
               findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,

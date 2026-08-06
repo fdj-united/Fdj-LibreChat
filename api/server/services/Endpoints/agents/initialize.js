@@ -361,6 +361,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     agent: primaryAgent,
     directAccessibleSkillIds: accessibleSkillIds,
     skillsCapabilityEnabled: skillsDelegationEnabled,
+    skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
     ephemeralSkillsToggle,
     isPersistedAndAuthorizedAgent: !isEphemeralAgentId(primaryAgent.id),
     findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -453,6 +454,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
           agent,
           directAccessibleSkillIds: accessibleSkillIds,
           skillsCapabilityEnabled: skillsDelegationEnabled,
+          skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
           ephemeralSkillsToggle,
           isPersistedAndAuthorizedAgent: true, // VIEW checked in discoverConnectedAgents
           findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -541,6 +543,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     accessibleSkillIds,
     editableSkillIds,
     skillsCapabilityEnabled: skillsDelegationEnabled,
+    skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
     ephemeralSkillsToggle,
     skillCreateAllowed,
     skillStates,
@@ -648,6 +651,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         agent,
         directAccessibleSkillIds: accessibleSkillIds,
         skillsCapabilityEnabled: skillsDelegationEnabled,
+        skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
         ephemeralSkillsToggle,
         isPersistedAndAuthorizedAgent: true, // VIEW already checked above
         findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,

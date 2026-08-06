@@ -49,6 +49,7 @@ const {
   resolveConfigServers,
   userCanUseMCPServers,
 } = require('~/server/services/MCP');
+const { canShareSkillsPublicly } = require('~/server/services/Endpoints/agents/skillDeps');
 const { getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
@@ -697,9 +698,10 @@ const updateAgentHandler = async (req, res) => {
 
     if (updateData.skills?.length) {
       const existingSkillIds = (existingAgent.skills ?? []).map(String);
+      const nextSkillIds = updateData.skills.map(String);
       const { forbidden, invalid } = await checkSkillAttachments({
         req,
-        nextSkillIds: updateData.skills.map(String),
+        nextSkillIds,
         existingSkillIds,
       });
       if (forbidden.length > 0) {
@@ -713,6 +715,26 @@ const updateAgentHandler = async (req, res) => {
           error: 'AGENT_SKILL_INVALID',
           skill_ids: invalid,
         });
+      }
+
+      // P3: When the agent is already public, newly attached skills are
+      // implicitly exposed publicly. Require SKILLS.SHARE_PUBLIC so editors
+      // without that right cannot bypass the share.ts middleware by updating
+      // the agent directly.
+      const existingSet = new Set(existingSkillIds);
+      const hasNewSkills = nextSkillIds.some((id) => !existingSet.has(id));
+      if (hasNewSkills) {
+        const agentIsPublic = await hasPublicPermission({
+          resourceType: ResourceType.AGENT,
+          resourceId: existingAgent._id,
+          requiredPermissions: PermissionBits.VIEW,
+        });
+        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
+          return res.status(403).json({
+            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+            message: 'You do not have permission to attach skills to a publicly shared agent',
+          });
+        }
       }
     }
 
@@ -1367,16 +1389,22 @@ const revertAgentVersionHandler = async (req, res) => {
     const shouldDisableSkills =
       snapshotSkillsEnabled === true && snapshotSkillIds.length > 0 && finalSkillIds.length === 0;
 
-    let updatedAgent = await db.revertAgentVersion({ id }, version_index);
-    const revertUpdates = {};
-
-    // Apply pre-validated skill overrides atomically in the same update pass.
+    // Build authorization overrides that must land in the same DB write as the
+    // version restore to ensure no intermediate state with forbidden skills exists.
+    const atomicOverrides = {};
     if (allowedSnapshotSkillIds.length !== snapshotSkillIds.length) {
-      revertUpdates.skills = finalSkillIds;
+      atomicOverrides.skills = finalSkillIds;
     }
     if (shouldDisableSkills) {
-      revertUpdates.skills_enabled = false;
+      atomicOverrides.skills_enabled = false;
     }
+
+    let updatedAgent = await db.revertAgentVersion(
+      { id },
+      version_index,
+      Object.keys(atomicOverrides).length > 0 ? atomicOverrides : undefined,
+    );
+    const revertUpdates = {};
 
     if (updatedAgent.tools?.length) {
       const [availableTools, configServers] = await Promise.all([

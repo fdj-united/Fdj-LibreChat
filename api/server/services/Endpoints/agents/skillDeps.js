@@ -145,6 +145,16 @@ function canUseSkills({ req }) {
   });
 }
 
+function canShareSkillsPublicly({ req }) {
+  return checkAccess({
+    req,
+    user: req.user,
+    permissionType: PermissionTypes.SKILLS,
+    permissions: [Permissions.SHARE_PUBLIC],
+    getRoleByName: db.getRoleByName,
+  });
+}
+
 function canCreateSkill({ req }) {
   return checkAccess({
     req,
@@ -377,6 +387,8 @@ function getSkillToolDeps() {
 
 module.exports = {
   getSkillToolDeps,
+  canUseSkills,
+  canShareSkillsPublicly,
   canAuthorSkillFiles,
   isAgentSkillsEnabledForRun,
   getSkillDbMethods,

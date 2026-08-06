@@ -435,6 +435,7 @@ const createResponse = async (req, res) => {
       agent,
       directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled: skillsDelegationEnabled,
+      skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
       ephemeralSkillsToggle,
       isPersistedAndAuthorizedAgent: true, // agent VIEW already checked by route middleware
       findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -526,6 +527,7 @@ const createResponse = async (req, res) => {
               agent: handoffAgent,
               directAccessibleSkillIds: accessibleSkillIds,
               skillsCapabilityEnabled: skillsDelegationEnabled,
+              skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
               ephemeralSkillsToggle,
               isPersistedAndAuthorizedAgent: true,
               findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,

@@ -316,7 +316,11 @@ export async function discoverConnectedAgents(
         collectEdges(agent.edges);
       }
     } catch (err) {
-      if ((err as { code?: string }).code === 'AGENT_SKILL_DEPENDENCY_MISSING') {
+      const errCode = (err as { code?: string }).code;
+      if (
+        errCode === 'AGENT_SKILL_DEPENDENCY_MISSING' ||
+        errCode === 'AGENT_SKILL_CATALOG_OVERFLOW'
+      ) {
         throw err;
       }
       logger.error(`[discoverConnectedAgents] Error processing agent ${agentId}:`, err);

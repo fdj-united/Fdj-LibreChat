@@ -75,6 +75,7 @@ const processAddedConvo = async ({
   accessibleSkillIds = [],
   editableSkillIds = [],
   skillsCapabilityEnabled = false,
+  skillsUseDenied = false,
   ephemeralSkillsToggle = false,
   skillCreateAllowed = false,
   skillStates,
@@ -146,6 +147,7 @@ const processAddedConvo = async ({
       agent: addedAgent,
       directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled,
+      skillsUseDenied,
       ephemeralSkillsToggle,
       isPersistedAndAuthorizedAgent: !isEphemeralAgentId(addedAgent.id),
       findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -218,7 +220,10 @@ const processAddedConvo = async ({
 
     return { userMCPAuthMap };
   } catch (err) {
-    if (err && err.code === 'AGENT_SKILL_DEPENDENCY_MISSING') {
+    if (
+      err &&
+      (err.code === 'AGENT_SKILL_DEPENDENCY_MISSING' || err.code === 'AGENT_SKILL_CATALOG_OVERFLOW')
+    ) {
       throw err;
     }
     logger.error('[processAddedConvo] Error processing addedConvo for parallel agent', err);
