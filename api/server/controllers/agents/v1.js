@@ -13,6 +13,7 @@ const {
   collectToolResourceFileIds,
   convertOcrToContextInPlace,
   stripFileIdsFromToolResources,
+  validateSkillAttachments,
 } = require('@librechat/api');
 const {
   Time,
@@ -70,6 +71,8 @@ const hasEditBit = (permission) => (permission & PermissionBits.EDIT) === Permis
 const sanitizeViewerSkillScope = (agent, accessibleSkillSet) => {
   const skillScopeEnabled = agent.skills_enabled === true;
   delete agent.skills_enabled;
+  // `allow_other_skills` is internal delegation config — not returned to VIEW-only users.
+  delete agent.allow_other_skills;
 
   if (!skillScopeEnabled) {
     delete agent.skills;
@@ -180,6 +183,50 @@ const isSubagentsCapabilityEnabled = (req) => {
   const capabilities = req.config?.endpoints?.[EModelEndpoint.agents]?.capabilities;
   if (!Array.isArray(capabilities)) return false;
   return capabilities.includes(AgentCapabilities.subagents);
+};
+
+/**
+ * Returns true when the agents-endpoint `skills` capability is enabled.
+ * @param {Express.Request} req
+ */
+const isSkillsCapabilityEnabled = (req) => {
+  const capabilities = req.config?.endpoints?.[EModelEndpoint.agents]?.capabilities;
+  if (!Array.isArray(capabilities)) return false;
+  return capabilities.includes(AgentCapabilities.skills);
+};
+
+/**
+ * Validates newly attached skill IDs for an agent create/update. Returns
+ * early (no-op) when skills capability is off or no new skills are present.
+ * @param {object} params
+ * @param {Express.Request} params.req
+ * @param {string[]} params.nextSkillIds - Skill IDs being written (full desired list).
+ * @param {string[]} params.existingSkillIds - Skill IDs already on the agent (retain path).
+ * @returns {Promise<{ forbidden: string[], invalid: string[] }>}
+ */
+const checkSkillAttachments = async ({ req, nextSkillIds, existingSkillIds }) => {
+  if (!isSkillsCapabilityEnabled(req) || !nextSkillIds?.length) {
+    return { forbidden: [], invalid: [] };
+  }
+  const existingSet = new Set(existingSkillIds ?? []);
+  const newSkillIds = nextSkillIds.filter((id) => !existingSet.has(id));
+  if (newSkillIds.length === 0) {
+    return { forbidden: [], invalid: [] };
+  }
+  const editorShareableSkillIds = await findAccessibleResources({
+    userId: req.user.id,
+    role: req.user.role,
+    resourceType: ResourceType.SKILL,
+    requiredPermissions: PermissionBits.SHARE,
+  });
+  const tenantId = req.tenant?.id ?? req.user?.tenantId ?? null;
+  return validateSkillAttachments({
+    newSkillIds,
+    existingSkillIds: existingSkillIds ?? [],
+    editorShareableSkillIds,
+    tenantId,
+    findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+  });
 };
 
 /**
@@ -408,6 +455,26 @@ const createAgentHandler = async (req, res) => {
       }
     }
 
+    if (agentData.skills?.length) {
+      const { forbidden, invalid } = await checkSkillAttachments({
+        req,
+        nextSkillIds: agentData.skills,
+        existingSkillIds: [],
+      });
+      if (forbidden.length > 0) {
+        return res.status(403).json({
+          error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
+          skill_ids: forbidden,
+        });
+      }
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: 'AGENT_SKILL_INVALID',
+          skill_ids: invalid,
+        });
+      }
+    }
+
     agentData.id = `agent_${nanoid()}`;
     agentData.author = userId;
     agentData.tools = [];
@@ -626,6 +693,27 @@ const updateAgentHandler = async (req, res) => {
 
     if (!existingAgent) {
       return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    if (updateData.skills?.length) {
+      const existingSkillIds = (existingAgent.skills ?? []).map(String);
+      const { forbidden, invalid } = await checkSkillAttachments({
+        req,
+        nextSkillIds: updateData.skills.map(String),
+        existingSkillIds,
+      });
+      if (forbidden.length > 0) {
+        return res.status(403).json({
+          error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
+          skill_ids: forbidden,
+        });
+      }
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: 'AGENT_SKILL_INVALID',
+          skill_ids: invalid,
+        });
+      }
     }
 
     // Convert legacy OCR tool resource to context format in existing agent

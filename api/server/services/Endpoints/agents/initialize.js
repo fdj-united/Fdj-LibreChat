@@ -11,6 +11,7 @@ const {
   discoverConnectedAgents,
   resolveAgentTokenConfig,
   resolveAgentScopedSkillIds,
+  resolveAgentSkillScope,
   resolveModelSpecSkillIds,
   buildAgentContextAttachmentsByAgentId,
 } = require('@librechat/api');
@@ -348,11 +349,15 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     }
   }
 
-  const primaryScopedSkillIds = resolveAgentScopedSkillIds({
+  const tenantId = req.user?.tenantId ?? null;
+  const primaryAgentSkillScope = await resolveAgentSkillScope({
     agent: primaryAgent,
-    accessibleSkillIds,
+    directAccessibleSkillIds: accessibleSkillIds,
     skillsCapabilityEnabled,
     ephemeralSkillsToggle,
+    isPersistedAndAuthorizedAgent: !isEphemeralAgentId(primaryAgent.id),
+    findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+    tenantId,
   });
   const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
     agent: primaryAgent,
@@ -380,7 +385,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       endpointOption,
       allowedProviders,
       isInitialAgent: true,
-      accessibleSkillIds: primaryScopedSkillIds,
+      agentSkillScope: primaryAgentSkillScope,
       skillAuthoringAvailable: primarySkillAuthoringAvailable,
       codeEnvAvailable,
       skillStates,
@@ -401,6 +406,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       listSkillsByAccess: skillDbMethods.listSkillsByAccess,
       listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
       getSkillByName: skillDbMethods.getSkillByName,
+      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
     },
   );
 
@@ -435,12 +441,15 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       requestFiles,
       conversationId,
       parentMessageId,
-      computeAccessibleSkillIds: (agent) =>
-        resolveAgentScopedSkillIds({
+      computeAgentSkillScope: (agent) =>
+        resolveAgentSkillScope({
           agent,
-          accessibleSkillIds,
+          directAccessibleSkillIds: accessibleSkillIds,
           skillsCapabilityEnabled,
           ephemeralSkillsToggle,
+          isPersistedAndAuthorizedAgent: true, // VIEW checked in discoverConnectedAgents
+          findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+          tenantId,
         }),
       computeSkillAuthoringAvailable: (agent) =>
         canAuthorSkillFiles({
@@ -477,6 +486,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         listSkillsByAccess: skillDbMethods.listSkillsByAccess,
         listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
         getSkillByName: skillDbMethods.getSkillByName,
+        findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
       },
       // The callback fires during BFS, before the helper prunes agents
       // whose edges end up filtered. Don't populate `agentConfigs` here —
@@ -627,11 +637,14 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         skippedAgentIds.add(agentId);
         return null;
       }
-      const scopedSkillIds = resolveAgentScopedSkillIds({
+      const subagentSkillScope = await resolveAgentSkillScope({
         agent,
-        accessibleSkillIds,
+        directAccessibleSkillIds: accessibleSkillIds,
         skillsCapabilityEnabled,
         ephemeralSkillsToggle,
+        isPersistedAndAuthorizedAgent: true, // VIEW already checked above
+        findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+        tenantId,
       });
       const scopedEditableSkillIds = resolveAgentScopedSkillIds({
         agent,
@@ -650,7 +663,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
           parentMessageId,
           endpointOption: { ...endpointOption, endpoint: EModelEndpoint.agents },
           allowedProviders,
-          accessibleSkillIds: scopedSkillIds,
+          agentSkillScope: subagentSkillScope,
           skillAuthoringAvailable: canAuthorSkillFiles({
             agent,
             scopedEditableSkillIds,
@@ -684,6 +697,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
           listSkillsByAccess: skillDbMethods.listSkillsByAccess,
           listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
           getSkillByName: skillDbMethods.getSkillByName,
+          findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
         },
       );
       agentConfigs.set(agentId, config);

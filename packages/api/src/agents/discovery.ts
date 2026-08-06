@@ -8,6 +8,7 @@ import type {
   InitializeAgentParams,
   InitializeAgentDbMethods,
 } from './initialize';
+import type { AgentSkillScope } from './skills';
 import type { ValidateAgentModelParams } from './validation';
 import { createEdgeCollector, filterOrphanedEdges } from './edges';
 import { createSequentialChainEdges } from './chain';
@@ -74,6 +75,14 @@ export interface DiscoverConnectedAgentsParams {
     agent: Agent,
     accessibleSkillIds: InitializeAgentParams['accessibleSkillIds'],
   ) => InitializeAgentParams['skillAuthoringAvailable'];
+  /**
+   * Optional scope-aware resolver for sub-agent skill delegation. When provided,
+   * takes precedence over `computeAccessibleSkillIds` and passes the full
+   * `AgentSkillScope` to `initializeAgent` so required skills bypass user-state
+   * activation checks. Each sub-agent receives its own independent scope — the
+   * parent's required skill IDs are never inherited.
+   */
+  computeAgentSkillScope?: (agent: Agent) => Promise<AgentSkillScope>;
   /** Per-user skill active/inactive state, forwarded to each sub-agent. */
   skillStates?: InitializeAgentParams['skillStates'];
   /** Default active-on-share flag, forwarded to each sub-agent. */
@@ -154,6 +163,7 @@ export async function discoverConnectedAgents(
     resourceType = ResourceType.AGENT,
     computeAccessibleSkillIds,
     computeSkillAuthoringAvailable,
+    computeAgentSkillScope,
     skillStates,
     defaultActiveOnShare,
     codeEnvAvailable,
@@ -243,7 +253,13 @@ export async function discoverConnectedAgents(
       endpoint: EModelEndpoint.agents,
     };
 
-    const scopedSkillIds = computeAccessibleSkillIds?.(agent);
+    // Scope-aware path (computeAgentSkillScope) takes precedence over the legacy
+    // flat-id path (computeAccessibleSkillIds). Each sub-agent gets its own
+    // independent scope — the parent's required skill IDs are never inherited.
+    const agentSkillScope = computeAgentSkillScope ? await computeAgentSkillScope(agent) : undefined;
+    const scopedSkillIds = agentSkillScope
+      ? agentSkillScope.effectiveSkillIds
+      : computeAccessibleSkillIds?.(agent);
     const config = await initializeAgent(
       {
         req,
@@ -255,7 +271,8 @@ export async function discoverConnectedAgents(
         parentMessageId,
         endpointOption: subAgentEndpointOption,
         allowedProviders,
-        accessibleSkillIds: scopedSkillIds,
+        agentSkillScope,
+        accessibleSkillIds: agentSkillScope ? undefined : scopedSkillIds,
         skillAuthoringAvailable: computeSkillAuthoringAvailable?.(agent, scopedSkillIds),
         skillStates,
         defaultActiveOnShare,

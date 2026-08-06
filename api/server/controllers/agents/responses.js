@@ -29,6 +29,7 @@ const {
   createToolExecuteHandler,
   getRemoteAgentPermissions,
   resolveAgentScopedSkillIds,
+  resolveAgentSkillScope,
   // Responses API
   writeDone,
   buildResponse,
@@ -387,6 +388,7 @@ const createResponse = async (req, res) => {
       listSkillsByAccess: skillDbMethods.listSkillsByAccess,
       listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
       getSkillByName: skillDbMethods.getSkillByName,
+      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
     };
 
     const enabledCapabilities = new Set(
@@ -424,12 +426,16 @@ const createResponse = async (req, res) => {
     });
 
     const manualSkills = extractManualSkills(req.body);
+    const tenantId = req.user?.tenantId ?? null;
 
-    const primaryScopedSkillIds = resolveAgentScopedSkillIds({
+    const primaryAgentSkillScope = await resolveAgentSkillScope({
       agent,
-      accessibleSkillIds,
+      directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled,
       ephemeralSkillsToggle,
+      isPersistedAndAuthorizedAgent: true, // agent VIEW already checked by route middleware
+      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+      tenantId,
     });
     const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
       agent,
@@ -450,7 +456,7 @@ const createResponse = async (req, res) => {
         endpointOption,
         allowedProviders,
         isInitialAgent: true,
-        accessibleSkillIds: primaryScopedSkillIds,
+        agentSkillScope: primaryAgentSkillScope,
         skillAuthoringAvailable: canAuthorSkillFiles({
           agent,
           scopedEditableSkillIds: primaryScopedEditableSkillIds,
@@ -512,12 +518,15 @@ const createResponse = async (req, res) => {
           // sub-agent must clear the same sharing boundary, not the looser
           // in-app AGENT one.
           resourceType: ResourceType.REMOTE_AGENT,
-          computeAccessibleSkillIds: (handoffAgent) =>
-            resolveAgentScopedSkillIds({
+          computeAgentSkillScope: (handoffAgent) =>
+            resolveAgentSkillScope({
               agent: handoffAgent,
-              accessibleSkillIds,
+              directAccessibleSkillIds: accessibleSkillIds,
               skillsCapabilityEnabled,
               ephemeralSkillsToggle,
+              isPersistedAndAuthorizedAgent: true,
+              findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+              tenantId,
             }),
           computeSkillAuthoringAvailable: (handoffAgent) =>
             canAuthorSkillFiles({
