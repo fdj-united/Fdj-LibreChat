@@ -97,16 +97,6 @@ const { getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 const db = require('~/models');
 
-/** Fail closed when checking whether an agent already has a public VIEW grant. */
-const isAgentPubliclyShared = async (resourceId) => {
-  const entries = await db.findEntriesByPrincipalsAndResource(
-    [{ principalType: PrincipalType.PUBLIC }],
-    ResourceType.AGENT,
-    resourceId,
-  );
-  return entries.some((entry) => (entry.permBits & PermissionBits.VIEW) === PermissionBits.VIEW);
-};
-
 const systemTools = {
   [Tools.execute_code]: true,
   [Tools.file_search]: true,
@@ -1356,14 +1346,11 @@ const updateAgentHandler = async (req, res) => {
 
       const existingSet = new Set(existingSkillIds);
       const hasNewSkills = nextSkillIds.some((skillId) => !existingSet.has(skillId));
-      if (hasNewSkills) {
-        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
-        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
-          return res.status(403).json({
-            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
-            message: 'You do not have permission to attach skills to a publicly shared agent',
-          });
-        }
+      if (hasNewSkills && !(await canShareSkillsPublicly({ req }))) {
+        return res.status(403).json({
+          error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+          message: 'You do not have permission to attach skills to a shared agent',
+        });
       }
     }
 
@@ -2325,22 +2312,16 @@ const revertAgentVersionHandler = async (req, res) => {
       const hasNewSkills = allowedSnapshotSkillIds.some(
         (skillId) => !existingSkillSet.has(skillId),
       );
-      if (hasNewSkills) {
-        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
-        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
-          return res.status(403).json({
-            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
-            message: 'You do not have permission to attach skills to a publicly shared agent',
-          });
-        }
+      if (hasNewSkills && !(await canShareSkillsPublicly({ req }))) {
+        return res.status(403).json({
+          error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+          message: 'You do not have permission to attach skills to a shared agent',
+        });
       }
     }
 
     const atomicOverrides = {};
-    if (
-      rawSnapshotSkillIds.length !== snapshotSkillIds.length ||
-      allowedSnapshotSkillIds.length !== snapshotSkillIds.length
-    ) {
+    if (allowedSnapshotSkillIds.length !== rawSnapshotSkillIds.length) {
       atomicOverrides.skills = allowedSnapshotSkillIds;
     }
     if (shouldDisableSkills) {
