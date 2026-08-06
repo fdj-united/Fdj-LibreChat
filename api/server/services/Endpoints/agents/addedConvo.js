@@ -55,6 +55,7 @@ const loadAddedAgent = (params) =>
  * @param {Array} [params.accessibleSkillIds] - Full VIEW-accessible skill IDs for the user
  * @param {Array} [params.editableSkillIds] - Full EDIT-accessible skill IDs for the user
  * @param {boolean} [params.skillsCapabilityEnabled] - Whether endpoint Skills are enabled
+ * @param {boolean} [params.skillsUseDenied] - Whether Skills are enabled but SKILLS.USE is denied
  * @param {boolean} [params.ephemeralSkillsToggle] - Per-request ephemeral Skills badge state
  * @param {boolean} [params.skillCreateAllowed] - Whether the user can create Skills
  * @param {Record<string, boolean>} [params.skillStates] - Per-user Skill active overrides
@@ -89,6 +90,7 @@ const processAddedConvo = async ({
   accessibleSkillIds = [],
   editableSkillIds = [],
   skillsCapabilityEnabled = false,
+  skillsUseDenied = false,
   ephemeralSkillsToggle = false,
   skillCreateAllowed = false,
   skillStates,
@@ -167,6 +169,7 @@ const processAddedConvo = async ({
       agent: addedAgent,
       directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled,
+      skillsUseDenied,
       ephemeralSkillsToggle,
       isPersistedAndAuthorizedAgent: !isEphemeralAgentId(addedAgent.id),
       findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,

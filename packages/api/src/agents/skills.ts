@@ -423,6 +423,14 @@ export interface ResolveAgentSkillScopeParams {
    * required skills to recipients who lack direct Skill VIEW access.
    */
   isPersistedAndAuthorizedAgent: boolean;
+  /**
+   * When true, `skillsCapabilityEnabled` is false because the user's role
+   * specifically denied SKILLS.USE (not because the capability is globally
+   * disabled). A persisted agent with required skills configured must fail
+   * loudly in this case rather than silently proceeding without its
+   * dependencies.
+   */
+  skillsUseDenied?: boolean;
   /** Batched DB existence check — returns only the IDs that still exist. */
   findExistingSkillIdsForTenant: (
     ids: Types.ObjectId[],
@@ -455,11 +463,32 @@ export async function resolveAgentSkillScope(
     skillsCapabilityEnabled,
     ephemeralSkillsToggle,
     isPersistedAndAuthorizedAgent,
+    skillsUseDenied,
     findExistingSkillIdsForTenant,
     tenantId,
   } = params;
 
   if (!skillsCapabilityEnabled) {
+    // When USE was explicitly denied (not just capability-off), a persisted
+    // agent with configured required skills must fail rather than run without
+    // its declared dependencies.
+    if (
+      skillsUseDenied &&
+      isPersistedAndAuthorizedAgent &&
+      agent.skills_enabled === true &&
+      Array.isArray(agent.skills) &&
+      agent.skills.length > 0
+    ) {
+      const err = new Error(
+        JSON.stringify({
+          code: 'AGENT_SKILL_DEPENDENCY_MISSING',
+          agent_id: agent.id,
+          reason: 'SKILLS.USE denied',
+        }),
+      );
+      (err as Error & { code?: string }).code = 'AGENT_SKILL_DEPENDENCY_MISSING';
+      throw err;
+    }
     return emptyScope;
   }
 
@@ -769,17 +798,6 @@ export async function resolveSkillCatalog(
   const seenSkillIds = new Set<string>();
   if (requiredSkillIdSet && requiredSkillIdSet.size > 0) {
     const requiredIds = accessibleSkillIds.filter((id) => requiredSkillIdSet.has(id.toString()));
-    if (requiredIds.length > catalogLimit) {
-      const err = new Error(
-        JSON.stringify({
-          code: 'AGENT_SKILL_CATALOG_OVERFLOW',
-          required_count: requiredIds.length,
-          catalog_limit: catalogLimit,
-        }),
-      );
-      (err as Error & { code?: string }).code = 'AGENT_SKILL_CATALOG_OVERFLOW';
-      throw err;
-    }
     if (requiredIds.length > 0) {
       const requiredPage = await listSkillsByAccess({
         accessibleIds: requiredIds,
@@ -794,6 +812,20 @@ export async function resolveSkillCatalog(
             visibleCount += 1;
           }
         }
+      }
+      // Overflow check runs after the fetch so only model-visible required
+      // skills (disableModelInvocation !== true) count against the catalog
+      // limit — non-invocable required skills cost zero context slots.
+      if (visibleCount > catalogLimit) {
+        const err = new Error(
+          JSON.stringify({
+            code: 'AGENT_SKILL_CATALOG_OVERFLOW',
+            required_visible_count: visibleCount,
+            catalog_limit: catalogLimit,
+          }),
+        );
+        (err as Error & { code?: string }).code = 'AGENT_SKILL_CATALOG_OVERFLOW';
+        throw err;
       }
     }
   }
