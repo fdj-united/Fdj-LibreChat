@@ -276,6 +276,7 @@ export function createAgentMethods(
   revertAgentVersion: (
     searchParameter: FilterQuery<IAgent>,
     versionIndex: number,
+    overrides?: Partial<Record<string, unknown>>,
   ) => Promise<IAgent>;
   countPromotedAgents: () => Promise<number>;
   addAgentResourceFile: ({
@@ -929,6 +930,7 @@ export function createAgentMethods(
   async function revertAgentVersion(
     searchParameter: FilterQuery<IAgent>,
     versionIndex: number,
+    overrides?: Partial<Record<string, unknown>>,
   ): Promise<IAgent> {
     const Agent = mongoose.models.Agent as Model<IAgent>;
     const agent = await Agent.findOne(searchParameter);
@@ -946,6 +948,14 @@ export function createAgentMethods(
     delete revertToVersion.versions;
     delete revertToVersion.author;
     delete revertToVersion.updatedBy;
+
+    // Apply caller-supplied overrides (e.g. authorization-filtered skills) BEFORE
+    // pruning so the authorized list is what gets existence-checked, not the raw
+    // snapshot. Overriding after pruning would reintroduce deleted IDs that the
+    // caller filtered but the pruner already removed.
+    if (overrides) {
+      Object.assign(revertToVersion, overrides);
+    }
 
     /** Version snapshots can predate skill deletions; restoring one verbatim
      *  would resurrect dangling allowlist ids that scope the catalog to

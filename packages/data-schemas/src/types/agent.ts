@@ -38,6 +38,10 @@ export interface IAgent extends Omit<Document, 'model'> {
   tools?: string[];
   skills?: string[];
   skills_enabled?: boolean;
+  /** When true, the user's own directly-accessible active skills are included
+   *  alongside the required skills attached to this agent.
+   *  Defaults: `agent.allow_other_skills ?? (!Array.isArray(agent.skills) || agent.skills.length === 0)`. */
+  allow_other_skills?: boolean;
   tool_kwargs?: Array<unknown>;
   actions?: string[];
   author: Types.ObjectId;

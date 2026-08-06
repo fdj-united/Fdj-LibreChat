@@ -4,6 +4,7 @@ const {
   initializeAgent,
   validateAgentModel,
   resolveAgentScopedSkillIds,
+  resolveAgentSkillScope,
   resolveModelSpecSkillIds,
   loadAddedAgent: loadAddedAgentFn,
 } = require('@librechat/api');
@@ -74,6 +75,7 @@ const processAddedConvo = async ({
   accessibleSkillIds = [],
   editableSkillIds = [],
   skillsCapabilityEnabled = false,
+  skillsUseDenied = false,
   ephemeralSkillsToggle = false,
   skillCreateAllowed = false,
   skillStates,
@@ -140,11 +142,16 @@ const processAddedConvo = async ({
       }
     }
 
-    const scopedSkillIds = resolveAgentScopedSkillIds({
+    const tenantId = req.user?.tenantId ?? null;
+    const addedAgentSkillScope = await resolveAgentSkillScope({
       agent: addedAgent,
-      accessibleSkillIds,
+      directAccessibleSkillIds: accessibleSkillIds,
       skillsCapabilityEnabled,
+      skillsUseDenied,
       ephemeralSkillsToggle,
+      isPersistedAndAuthorizedAgent: !isEphemeralAgentId(addedAgent.id),
+      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
+      tenantId,
     });
     const scopedEditableSkillIds = resolveAgentScopedSkillIds({
       agent: addedAgent,
@@ -164,7 +171,7 @@ const processAddedConvo = async ({
         agent: addedAgent,
         endpointOption,
         allowedProviders,
-        accessibleSkillIds: scopedSkillIds,
+        agentSkillScope: addedAgentSkillScope,
         skillAuthoringAvailable: canAuthorSkillFiles({
           agent: addedAgent,
           scopedEditableSkillIds,
@@ -213,6 +220,12 @@ const processAddedConvo = async ({
 
     return { userMCPAuthMap };
   } catch (err) {
+    if (
+      err &&
+      (err.code === 'AGENT_SKILL_DEPENDENCY_MISSING' || err.code === 'AGENT_SKILL_CATALOG_OVERFLOW')
+    ) {
+      throw err;
+    }
     logger.error('[processAddedConvo] Error processing addedConvo for parallel agent', err);
     return { userMCPAuthMap };
   }
