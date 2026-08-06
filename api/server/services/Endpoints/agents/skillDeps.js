@@ -90,6 +90,16 @@ function getSkillManagementFileSaver() {
   return saveSkillManagementFileContent;
 }
 
+function canUseSkills({ req }) {
+  return checkAccess({
+    req,
+    user: req.user,
+    permissionType: PermissionTypes.SKILLS,
+    permissions: [Permissions.USE],
+    getRoleByName: db.getRoleByName,
+  });
+}
+
 function canCreateSkill({ req }) {
   return checkAccess({
     req,
@@ -329,6 +339,7 @@ const skillToolDeps = {
   createSkill: db.createSkill,
   updateSkill: db.updateSkill,
   deleteSkill: db.deleteSkill,
+  canUseSkills,
   canCreateSkill,
   canEditSkill,
   grantSkillOwner,
@@ -372,6 +383,7 @@ function getSkillToolDeps() {
 module.exports = {
   getSkillToolDeps,
   getSkillManagementFileSaver,
+  canUseSkills,
   canAuthorSkillFiles,
   isAgentSkillAuthoringEnabledForRun,
   getSkillDbMethods,
