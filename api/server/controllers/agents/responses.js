@@ -67,6 +67,7 @@ const {
   withDeploymentSkillIds,
   buildAgentToolContext,
   enrichLoadedToolsWithAgentContext,
+  canUseSkills: canUseSkillsCheck,
 } = require('~/server/services/Endpoints/agents/skillDeps');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { resolveConfigServers } = require('~/server/services/MCP');
@@ -395,6 +396,8 @@ const createResponse = async (req, res) => {
       appConfig?.endpoints?.[EModelEndpoint.agents]?.capabilities,
     );
     const skillsCapabilityEnabled = enabledCapabilities.has(AgentCapabilities.skills);
+    const skillsUseAllowed = skillsCapabilityEnabled ? await canUseSkillsCheck({ req }) : false;
+    const skillsDelegationEnabled = skillsCapabilityEnabled && skillsUseAllowed;
     const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
     const accessibleSkillIds = skillsCapabilityEnabled
       ? withDeploymentSkillIds(
@@ -431,7 +434,7 @@ const createResponse = async (req, res) => {
     const primaryAgentSkillScope = await resolveAgentSkillScope({
       agent,
       directAccessibleSkillIds: accessibleSkillIds,
-      skillsCapabilityEnabled,
+      skillsCapabilityEnabled: skillsDelegationEnabled,
       ephemeralSkillsToggle,
       isPersistedAndAuthorizedAgent: true, // agent VIEW already checked by route middleware
       findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -522,7 +525,7 @@ const createResponse = async (req, res) => {
             resolveAgentSkillScope({
               agent: handoffAgent,
               directAccessibleSkillIds: accessibleSkillIds,
-              skillsCapabilityEnabled,
+              skillsCapabilityEnabled: skillsDelegationEnabled,
               ephemeralSkillsToggle,
               isPersistedAndAuthorizedAgent: true,
               findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,

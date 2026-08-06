@@ -254,11 +254,17 @@ export function createSharePolicyMiddleware({
               resourceType: ResourceType.SKILL,
               permissionType: PermissionTypes.SKILLS,
             };
-            const skillPermsResult = await getResourcePerms(req, res, 'public sharing', skillsContext);
+            const skillPermsResult = await getResourcePerms(
+              req,
+              res,
+              'public sharing',
+              skillsContext,
+            );
             if (!skillPermsResult) {
               return;
             }
-            const canShareSkillsPublic = skillPermsResult.resourcePerms[Permissions.SHARE_PUBLIC] === true;
+            const canShareSkillsPublic =
+              skillPermsResult.resourcePerms[Permissions.SHARE_PUBLIC] === true;
             if (!canShareSkillsPublic) {
               logger.warn(
                 `[checkSharePublicAccess][${user.id}] User denied SKILLS.SHARE_PUBLIC when sharing agent with skills`,

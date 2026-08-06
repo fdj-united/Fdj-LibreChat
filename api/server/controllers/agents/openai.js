@@ -55,6 +55,7 @@ const {
   withDeploymentSkillIds,
   buildAgentToolContext,
   enrichLoadedToolsWithAgentContext,
+  canUseSkills: canUseSkillsCheck,
 } = require('~/server/services/Endpoints/agents/skillDeps');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { logViolation } = require('~/cache');
@@ -271,6 +272,8 @@ const OpenAIChatCompletionController = async (req, res) => {
 
     const enabledCapabilities = new Set(agentsEConfig?.capabilities);
     const skillsCapabilityEnabled = enabledCapabilities.has(AgentCapabilities.skills);
+    const skillsUseAllowed = skillsCapabilityEnabled ? await canUseSkillsCheck({ req }) : false;
+    const skillsDelegationEnabled = skillsCapabilityEnabled && skillsUseAllowed;
     const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
     const accessibleSkillIds = skillsCapabilityEnabled
       ? withDeploymentSkillIds(
@@ -311,7 +314,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     const primaryAgentSkillScope = await resolveAgentSkillScope({
       agent,
       directAccessibleSkillIds: accessibleSkillIds,
-      skillsCapabilityEnabled,
+      skillsCapabilityEnabled: skillsDelegationEnabled,
       ephemeralSkillsToggle,
       isPersistedAndAuthorizedAgent: true, // agent VIEW already checked by route middleware
       findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
@@ -405,7 +408,7 @@ const OpenAIChatCompletionController = async (req, res) => {
             resolveAgentSkillScope({
               agent: handoffAgent,
               directAccessibleSkillIds: accessibleSkillIds,
-              skillsCapabilityEnabled,
+              skillsCapabilityEnabled: skillsDelegationEnabled,
               ephemeralSkillsToggle,
               isPersistedAndAuthorizedAgent: true, // VIEW already checked in discoverConnectedAgents
               findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,

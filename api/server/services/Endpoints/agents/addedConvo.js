@@ -218,6 +218,9 @@ const processAddedConvo = async ({
 
     return { userMCPAuthMap };
   } catch (err) {
+    if (err && err.code === 'AGENT_SKILL_DEPENDENCY_MISSING') {
+      throw err;
+    }
     logger.error('[processAddedConvo] Error processing addedConvo for parallel agent', err);
     return { userMCPAuthMap };
   }

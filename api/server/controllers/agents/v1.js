@@ -1342,8 +1342,41 @@ const revertAgentVersionHandler = async (req, res) => {
 
     // Permissions are enforced via route middleware (ACL EDIT)
 
+    // Pre-validate skills from the version snapshot BEFORE mutation so we can
+    // reject or strip forbidden skills without leaving unauthorized state stored.
+    const versionSnapshot = existingAgent.versions?.[version_index];
+    if (!versionSnapshot) {
+      return res.status(400).json({ error: `Version ${version_index} not found` });
+    }
+    const snapshotSkillIds = Array.isArray(versionSnapshot.skills) ? versionSnapshot.skills : [];
+    let allowedSnapshotSkillIds = snapshotSkillIds;
+    if (snapshotSkillIds.length > 0) {
+      const { forbidden: skillForbidden } = await checkSkillAttachments({
+        req,
+        nextSkillIds: snapshotSkillIds,
+        existingSkillIds: existingAgent.skills ?? [],
+      });
+      if (skillForbidden.length > 0) {
+        allowedSnapshotSkillIds = snapshotSkillIds.filter((sid) => !skillForbidden.includes(sid));
+      }
+    }
+    // Guard against scope-widening: if all skills are stripped but skills_enabled
+    // remains true, the default in resolveAgentSkillScope grants all optional skills.
+    const snapshotSkillsEnabled = versionSnapshot.skills_enabled;
+    const finalSkillIds = allowedSnapshotSkillIds;
+    const shouldDisableSkills =
+      snapshotSkillsEnabled === true && snapshotSkillIds.length > 0 && finalSkillIds.length === 0;
+
     let updatedAgent = await db.revertAgentVersion({ id }, version_index);
     const revertUpdates = {};
+
+    // Apply pre-validated skill overrides atomically in the same update pass.
+    if (allowedSnapshotSkillIds.length !== snapshotSkillIds.length) {
+      revertUpdates.skills = finalSkillIds;
+    }
+    if (shouldDisableSkills) {
+      revertUpdates.skills_enabled = false;
+    }
 
     if (updatedAgent.tools?.length) {
       const [availableTools, configServers] = await Promise.all([
@@ -1363,17 +1396,6 @@ const revertAgentVersionHandler = async (req, res) => {
       });
       if (filteredTools.length !== updatedAgent.tools.length) {
         revertUpdates.tools = filteredTools;
-      }
-    }
-
-    if (updatedAgent.skills?.length) {
-      const { forbidden: skillForbidden } = await checkSkillAttachments({
-        req,
-        nextSkillIds: updatedAgent.skills,
-        existingSkillIds: existingAgent.skills ?? [],
-      });
-      if (skillForbidden.length > 0) {
-        revertUpdates.skills = updatedAgent.skills.filter((sid) => !skillForbidden.includes(sid));
       }
     }
 

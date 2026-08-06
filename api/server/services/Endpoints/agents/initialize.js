@@ -540,7 +540,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     primaryAgentId: primaryConfig.id,
     accessibleSkillIds,
     editableSkillIds,
-    skillsCapabilityEnabled,
+    skillsCapabilityEnabled: skillsDelegationEnabled,
     ephemeralSkillsToggle,
     skillCreateAllowed,
     skillStates,

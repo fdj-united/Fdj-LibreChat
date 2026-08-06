@@ -5,5 +5,5 @@ const { getRoleByName, getAgent } = require('~/models');
 module.exports = createSharePolicyMiddleware({
   getRoleByName,
   hasCapability,
-  getAgentById: ({ id }) => getAgent({ id }),
+  getAgentById: ({ id }) => getAgent({ _id: id }),
 });

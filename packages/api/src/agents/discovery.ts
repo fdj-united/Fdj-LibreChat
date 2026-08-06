@@ -256,7 +256,9 @@ export async function discoverConnectedAgents(
     // Scope-aware path (computeAgentSkillScope) takes precedence over the legacy
     // flat-id path (computeAccessibleSkillIds). Each sub-agent gets its own
     // independent scope — the parent's required skill IDs are never inherited.
-    const agentSkillScope = computeAgentSkillScope ? await computeAgentSkillScope(agent) : undefined;
+    const agentSkillScope = computeAgentSkillScope
+      ? await computeAgentSkillScope(agent)
+      : undefined;
     const scopedSkillIds = agentSkillScope
       ? agentSkillScope.effectiveSkillIds
       : computeAccessibleSkillIds?.(agent);
@@ -314,6 +316,9 @@ export async function discoverConnectedAgents(
         collectEdges(agent.edges);
       }
     } catch (err) {
+      if ((err as { code?: string }).code === 'AGENT_SKILL_DEPENDENCY_MISSING') {
+        throw err;
+      }
       logger.error(`[discoverConnectedAgents] Error processing agent ${agentId}:`, err);
       markSkipped(agentId);
     }
@@ -328,6 +333,9 @@ export async function discoverConnectedAgents(
       try {
         await processAgent(agentId);
       } catch (err) {
+        if ((err as { code?: string }).code === 'AGENT_SKILL_DEPENDENCY_MISSING') {
+          throw err;
+        }
         logger.error(`[discoverConnectedAgents] Error processing chain agent ${agentId}:`, err);
         markSkipped(agentId);
       }
