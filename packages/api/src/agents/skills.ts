@@ -508,9 +508,12 @@ export async function resolveAgentSkillScope(
 
   // Validate and partition the selected refs into valid ObjectIds vs malformed.
   const validSelectedIds: Types.ObjectId[] = [];
+  let malformedCount = 0;
   for (const ref of selectedRefs) {
     if (Types.ObjectId.isValid(ref)) {
       validSelectedIds.push(new Types.ObjectId(ref));
+    } else {
+      malformedCount += 1;
     }
   }
 
@@ -546,9 +549,9 @@ export async function resolveAgentSkillScope(
     }
   }
 
-  const missingCount = validSelectedIds.filter(
-    (id) => !existingSelectedIdSet.has(id.toString()),
-  ).length;
+  const missingCount =
+    malformedCount +
+    validSelectedIds.filter((id) => !existingSelectedIdSet.has(id.toString())).length;
   if (missingCount > 0) {
     const err = new Error(
       JSON.stringify({
@@ -766,6 +769,17 @@ export async function resolveSkillCatalog(
   const seenSkillIds = new Set<string>();
   if (requiredSkillIdSet && requiredSkillIdSet.size > 0) {
     const requiredIds = accessibleSkillIds.filter((id) => requiredSkillIdSet.has(id.toString()));
+    if (requiredIds.length > catalogLimit) {
+      const err = new Error(
+        JSON.stringify({
+          code: 'AGENT_SKILL_CATALOG_OVERFLOW',
+          required_count: requiredIds.length,
+          catalog_limit: catalogLimit,
+        }),
+      );
+      (err as Error & { code?: string }).code = 'AGENT_SKILL_CATALOG_OVERFLOW';
+      throw err;
+    }
     if (requiredIds.length > 0) {
       const requiredPage = await listSkillsByAccess({
         accessibleIds: requiredIds,

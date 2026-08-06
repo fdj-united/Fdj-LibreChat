@@ -2178,6 +2178,9 @@ const revertAgentVersionHandler = async (req, res) => {
     }
 
     const revertVersion = existingAgent.versions?.[version_index];
+    if (!revertVersion) {
+      return res.status(400).json({ error: `Version ${version_index} not found` });
+    }
     const restoredWorkspaceConfiguration = revertVersion
       ? resolveAgentWorkspaceRestoreConfiguration({
           version: revertVersion,
@@ -2230,6 +2233,26 @@ const revertAgentVersionHandler = async (req, res) => {
 
     // Permissions are enforced via route middleware (ACL EDIT)
 
+    const snapshotSkillIds = Array.isArray(revertVersion.skills)
+      ? revertVersion.skills.map(String)
+      : [];
+    let allowedSnapshotSkillIds = snapshotSkillIds;
+    if (snapshotSkillIds.length > 0) {
+      const { forbidden, invalid } = await checkSkillAttachments({
+        req,
+        nextSkillIds: snapshotSkillIds,
+        existingSkillIds: (existingAgent.skills ?? []).map(String),
+      });
+      const rejectedSkillIds = new Set([...forbidden, ...invalid]);
+      allowedSnapshotSkillIds = snapshotSkillIds.filter(
+        (skillId) => !rejectedSkillIds.has(skillId),
+      );
+    }
+    const shouldDisableSkills =
+      revertVersion.skills_enabled === true &&
+      snapshotSkillIds.length > 0 &&
+      allowedSnapshotSkillIds.length === 0;
+
     const actionIds = (revertVersion?.actions ?? [])
       .map((action) => (typeof action === 'string' ? action.split(actionDelimiter)[1] : undefined))
       .filter(Boolean);
@@ -2252,6 +2275,14 @@ const revertAgentVersionHandler = async (req, res) => {
       (hasLegacyEdgeSource || (!Array.isArray(revertVersion.edges) && updatedAgent.edges?.length))
     ) {
       revertUpdates.edges = revertEdges;
+    }
+
+    // Apply pre-validated skill overrides atomically in the same update pass.
+    if (allowedSnapshotSkillIds.length !== snapshotSkillIds.length) {
+      revertUpdates.skills = allowedSnapshotSkillIds;
+    }
+    if (shouldDisableSkills) {
+      revertUpdates.skills_enabled = false;
     }
 
     if (updatedAgent.tools?.length) {
@@ -2285,18 +2316,6 @@ const revertAgentVersionHandler = async (req, res) => {
       hasCodeExecutionCaller
     ) {
       revertUpdates.tool_options = removeCodeExecutionCaller(updatedAgent.tool_options);
-    }
-
-    if (updatedAgent.skills?.length) {
-      const { forbidden: skillForbidden, invalid: skillInvalid } = await checkSkillAttachments({
-        req,
-        nextSkillIds: updatedAgent.skills,
-        existingSkillIds: existingAgent.skills ?? [],
-      });
-      const rejectedSkillIds = new Set([...skillForbidden, ...skillInvalid]);
-      if (rejectedSkillIds.size > 0) {
-        revertUpdates.skills = updatedAgent.skills.filter((sid) => !rejectedSkillIds.has(sid));
-      }
     }
 
     if (updatedAgent.tool_resources) {
