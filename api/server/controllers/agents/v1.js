@@ -50,6 +50,25 @@ const {
   userCanUseMCPServers,
 } = require('~/server/services/MCP');
 const { canShareSkillsPublicly } = require('~/server/services/Endpoints/agents/skillDeps');
+
+/**
+ * Fail-closed check for whether an agent has a public VIEW grant.
+ *
+ * `hasPublicPermission` from PermissionService catches all DB errors and
+ * returns `false`, which would incorrectly treat a transient lookup failure
+ * as "not public" and permit skill attachments on a public agent.
+ *
+ * This helper queries directly and propagates DB errors so callers return
+ * 500 rather than bypassing the public-sharing guard.
+ */
+const isAgentPubliclyShared = async (resourceId) => {
+  const entries = await db.findEntriesByPrincipalsAndResource(
+    [{ principalType: PrincipalType.PUBLIC }],
+    ResourceType.AGENT,
+    resourceId,
+  );
+  return entries.some((entry) => (entry.permBits & PermissionBits.VIEW) === PermissionBits.VIEW);
+};
 const { getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
@@ -196,6 +215,9 @@ const isSkillsCapabilityEnabled = (req) => {
   return capabilities.includes(AgentCapabilities.skills);
 };
 
+/** Maximum skills that can be attached to one agent (mirrors SKILL_CATALOG_LIMIT in skills.ts). */
+const MAX_AGENT_SKILLS = 100;
+
 /**
  * Validates newly attached skill IDs for an agent create/update. Returns
  * early (no-op) when skills capability is off or no new skills are present.
@@ -203,16 +225,19 @@ const isSkillsCapabilityEnabled = (req) => {
  * @param {Express.Request} params.req
  * @param {string[]} params.nextSkillIds - Skill IDs being written (full desired list).
  * @param {string[]} params.existingSkillIds - Skill IDs already on the agent (retain path).
- * @returns {Promise<{ forbidden: string[], invalid: string[] }>}
+ * @returns {Promise<{ forbidden: string[], invalid: string[], overflow: boolean }>}
  */
 const checkSkillAttachments = async ({ req, nextSkillIds, existingSkillIds }) => {
   if (!nextSkillIds?.length) {
-    return { forbidden: [], invalid: [] };
+    return { forbidden: [], invalid: [], overflow: false };
+  }
+  if (nextSkillIds.length > MAX_AGENT_SKILLS) {
+    return { forbidden: [], invalid: [], overflow: true };
   }
   const existingSet = new Set(existingSkillIds ?? []);
   const newSkillIds = nextSkillIds.filter((id) => !existingSet.has(id));
   if (newSkillIds.length === 0) {
-    return { forbidden: [], invalid: [] };
+    return { forbidden: [], invalid: [], overflow: false };
   }
   const editorShareableSkillIds = await findAccessibleResources({
     userId: req.user.id,
@@ -221,13 +246,14 @@ const checkSkillAttachments = async ({ req, nextSkillIds, existingSkillIds }) =>
     requiredPermissions: PermissionBits.SHARE,
   });
   const tenantId = req.tenant?.id ?? req.user?.tenantId ?? null;
-  return validateSkillAttachments({
+  const result = await validateSkillAttachments({
     newSkillIds,
     existingSkillIds: existingSkillIds ?? [],
     editorShareableSkillIds,
     tenantId,
     findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
   });
+  return { ...result, overflow: false };
 };
 
 /**
@@ -457,11 +483,17 @@ const createAgentHandler = async (req, res) => {
     }
 
     if (agentData.skills?.length) {
-      const { forbidden, invalid } = await checkSkillAttachments({
+      const { forbidden, invalid, overflow } = await checkSkillAttachments({
         req,
         nextSkillIds: agentData.skills,
         existingSkillIds: [],
       });
+      if (overflow) {
+        return res.status(400).json({
+          error: 'AGENT_SKILL_LIMIT_EXCEEDED',
+          message: `Agents may have at most ${MAX_AGENT_SKILLS} skills`,
+        });
+      }
       if (forbidden.length > 0) {
         return res.status(403).json({
           error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
@@ -699,11 +731,17 @@ const updateAgentHandler = async (req, res) => {
     if (updateData.skills?.length) {
       const existingSkillIds = (existingAgent.skills ?? []).map(String);
       const nextSkillIds = updateData.skills.map(String);
-      const { forbidden, invalid } = await checkSkillAttachments({
+      const { forbidden, invalid, overflow } = await checkSkillAttachments({
         req,
         nextSkillIds,
         existingSkillIds,
       });
+      if (overflow) {
+        return res.status(400).json({
+          error: 'AGENT_SKILL_LIMIT_EXCEEDED',
+          message: `Agents may have at most ${MAX_AGENT_SKILLS} skills`,
+        });
+      }
       if (forbidden.length > 0) {
         return res.status(403).json({
           error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
@@ -724,11 +762,7 @@ const updateAgentHandler = async (req, res) => {
       const existingSet = new Set(existingSkillIds);
       const hasNewSkills = nextSkillIds.some((id) => !existingSet.has(id));
       if (hasNewSkills) {
-        const agentIsPublic = await hasPublicPermission({
-          resourceType: ResourceType.AGENT,
-          resourceId: existingAgent._id,
-          requiredPermissions: PermissionBits.VIEW,
-        });
+        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
         if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
           return res.status(403).json({
             error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
@@ -977,11 +1011,21 @@ const duplicateAgentHandler = async (req, res) => {
       });
     }
 
-    const { forbidden: skillForbidden, invalid: skillInvalid } = await checkSkillAttachments({
+    const {
+      forbidden: skillForbidden,
+      invalid: skillInvalid,
+      overflow: skillOverflow,
+    } = await checkSkillAttachments({
       req,
       nextSkillIds: newAgentData.skills ?? [],
       existingSkillIds: [],
     });
+    if (skillOverflow) {
+      return res.status(400).json({
+        error: 'AGENT_SKILL_LIMIT_EXCEEDED',
+        message: `Agents may have at most ${MAX_AGENT_SKILLS} skills`,
+      });
+    }
     if (skillForbidden.length > 0 || skillInvalid.length > 0) {
       return res.status(403).json({
         error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
@@ -1370,16 +1414,22 @@ const revertAgentVersionHandler = async (req, res) => {
     if (!versionSnapshot) {
       return res.status(400).json({ error: `Version ${version_index} not found` });
     }
-    const snapshotSkillIds = Array.isArray(versionSnapshot.skills) ? versionSnapshot.skills : [];
+    const rawSnapshotSkillIds = Array.isArray(versionSnapshot.skills) ? versionSnapshot.skills : [];
+    // Cap at MAX_AGENT_SKILLS to handle pre-cap snapshots; excess IDs are silently dropped.
+    const snapshotSkillIds = rawSnapshotSkillIds.slice(0, MAX_AGENT_SKILLS);
     let allowedSnapshotSkillIds = snapshotSkillIds;
     if (snapshotSkillIds.length > 0) {
-      const { forbidden: skillForbidden } = await checkSkillAttachments({
+      const { forbidden: skillForbidden, invalid: skillInvalid } = await checkSkillAttachments({
         req,
         nextSkillIds: snapshotSkillIds,
         existingSkillIds: existingAgent.skills ?? [],
       });
-      if (skillForbidden.length > 0) {
-        allowedSnapshotSkillIds = snapshotSkillIds.filter((sid) => !skillForbidden.includes(sid));
+      // Strip both unauthorized (forbidden) and non-existent (invalid) IDs so the
+      // override passed into revertAgentVersion doesn't reintroduce deleted skills
+      // that the data layer's own pruning step would otherwise remove first.
+      const stripSet = new Set([...skillForbidden, ...skillInvalid]);
+      if (stripSet.size > 0) {
+        allowedSnapshotSkillIds = snapshotSkillIds.filter((sid) => !stripSet.has(sid));
       }
     }
     // Guard against scope-widening: if all skills are stripped but skills_enabled
@@ -1388,6 +1438,22 @@ const revertAgentVersionHandler = async (req, res) => {
     const finalSkillIds = allowedSnapshotSkillIds;
     const shouldDisableSkills =
       snapshotSkillsEnabled === true && snapshotSkillIds.length > 0 && finalSkillIds.length === 0;
+
+    // If the agent is already public, reverting to a version with new skills is
+    // equivalent to attaching them to a public agent — require SKILLS.SHARE_PUBLIC.
+    if (finalSkillIds.length > 0) {
+      const existingSkillSet = new Set((existingAgent.skills ?? []).map(String));
+      const hasNewSkills = finalSkillIds.some((sid) => !existingSkillSet.has(String(sid)));
+      if (hasNewSkills) {
+        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
+        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
+          return res.status(403).json({
+            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+            message: 'You do not have permission to attach skills to a publicly shared agent',
+          });
+        }
+      }
+    }
 
     // Build authorization overrides that must land in the same DB write as the
     // version restore to ensure no intermediate state with forbidden skills exists.

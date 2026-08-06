@@ -949,6 +949,14 @@ export function createAgentMethods(
     delete revertToVersion.author;
     delete revertToVersion.updatedBy;
 
+    // Apply caller-supplied overrides (e.g. authorization-filtered skills) BEFORE
+    // pruning so the authorized list is what gets existence-checked, not the raw
+    // snapshot. Overriding after pruning would reintroduce deleted IDs that the
+    // caller filtered but the pruner already removed.
+    if (overrides) {
+      Object.assign(revertToVersion, overrides);
+    }
+
     /** Version snapshots can predate skill deletions; restoring one verbatim
      *  would resurrect dangling allowlist ids that scope the catalog to
      *  nothing. Same self-heal (and fail-closed-on-empty rule) as
@@ -962,12 +970,6 @@ export function createAgentMethods(
       if (prunedSkills.length === 0) {
         revertToVersion.skills_enabled = false;
       }
-    }
-
-    // Apply caller-supplied overrides (e.g. authorization-filtered skills) so
-    // they land in the same findOneAndUpdate round-trip as the version restore.
-    if (overrides) {
-      Object.assign(revertToVersion, overrides);
     }
 
     const revertedAgent = await Agent.findOneAndUpdate(searchParameter, revertToVersion, {

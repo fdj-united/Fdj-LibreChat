@@ -358,21 +358,22 @@ export async function resolveAgentSkillScope(
   } = params;
 
   if (!skillsCapabilityEnabled) {
-    // When USE was explicitly denied (not just capability-off), a persisted
-    // agent with configured required skills must fail rather than run without
-    // its declared dependencies.
+    // Any time skills cannot be resolved — whether because the capability is
+    // globally disabled or because the user's role lacks SKILLS.USE — a
+    // persisted agent that declared required skills must fail hard rather than
+    // silently run without its dependencies.
     if (
-      skillsUseDenied &&
       isPersistedAndAuthorizedAgent &&
       agent.skills_enabled === true &&
       Array.isArray(agent.skills) &&
       agent.skills.length > 0
     ) {
+      const reason = skillsUseDenied ? 'SKILLS.USE denied' : 'Skills capability disabled';
       const err = new Error(
         JSON.stringify({
           code: 'AGENT_SKILL_DEPENDENCY_MISSING',
           agent_id: agent.id,
-          reason: 'SKILLS.USE denied',
+          reason,
         }),
       );
       (err as Error & { code?: string }).code = 'AGENT_SKILL_DEPENDENCY_MISSING';
