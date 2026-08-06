@@ -200,6 +200,18 @@ describe('updateAgent — skill attachment authorization', () => {
     const statusCalls = res.status.mock.calls.map(([code]) => code);
     expect(statusCalls).not.toContain(403);
     expect(statusCalls).not.toContain(400);
+    // Agent must receive the skill
+    expect(mockUpdateAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ skills: [skillId.toString()] }),
+      expect.anything(),
+    );
+    // Response must include the updated agent (with the skill)
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ skills: [skillId.toString()] }),
+    );
+    // canShareSkillsPublicly must NOT be called on a private agent
+    expect(mockCanShareSkillsPublicly).not.toHaveBeenCalled();
   });
 
   it('blocks attaching a skill to a public agent without SKILLS.SHARE_PUBLIC', async () => {

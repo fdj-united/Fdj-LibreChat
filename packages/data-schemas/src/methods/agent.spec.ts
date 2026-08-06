@@ -3296,6 +3296,40 @@ describe('Agent Methods', () => {
       expect(revertedAgent.skills_enabled).toBe(true);
     });
 
+    test('applies caller overrides in the same write as the version restore', async () => {
+      const agentId = `agent_${uuidv4()}`;
+      const authorId = new mongoose.Types.ObjectId();
+      const Skill = mongoose.models.Skill;
+      const [skillA, skillB, skillC] = await Promise.all([
+        Skill.create({ name: 'skill-a', description: 'a', author: authorId, authorName: 'u' }),
+        Skill.create({ name: 'skill-b', description: 'b', author: authorId, authorName: 'u' }),
+        Skill.create({ name: 'skill-c', description: 'c', author: authorId, authorName: 'u' }),
+      ]);
+
+      await createAgent({
+        id: agentId,
+        name: 'Override Test Agent',
+        provider: 'test',
+        model: 'test-model',
+        author: authorId,
+        skills: [skillA._id.toString(), skillB._id.toString()],
+        skills_enabled: true,
+      });
+      await updateAgent({ id: agentId }, { skills: [skillC._id.toString()], name: 'After Update' });
+
+      const revertedAgent = await revertAgentVersion({ id: agentId }, 0, {
+        skills: [skillB._id.toString()],
+      });
+
+      expect(revertedAgent.name).toBe('Override Test Agent');
+      expect(revertedAgent.skills).toEqual([skillB._id.toString()]);
+      const fromDb = await getAgent({ id: agentId });
+      expect(fromDb?.name).toBe('Override Test Agent');
+      expect(fromDb?.skills).toEqual([skillB._id.toString()]);
+
+      await Skill.deleteMany({ _id: { $in: [skillA._id, skillB._id, skillC._id] } });
+    });
+
     test('should detect action metadata changes and force version update', async () => {
       const agentId = `agent_${uuidv4()}`;
       const authorId = new mongoose.Types.ObjectId();
