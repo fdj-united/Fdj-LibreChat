@@ -590,6 +590,7 @@ export function createAgentMethods(
   revertAgentVersion: (
     searchParameter: FilterQuery<IAgent>,
     versionIndex: number,
+    overrides?: Partial<Record<string, unknown>>,
   ) => Promise<IAgent>;
   countPromotedAgents: () => Promise<number>;
   addAgentResourceFile: ({
@@ -1649,6 +1650,7 @@ export function createAgentMethods(
   async function revertAgentVersion(
     searchParameter: FilterQuery<IAgent>,
     versionIndex: number,
+    overrides?: Partial<Record<string, unknown>>,
   ): Promise<IAgent> {
     const Agent = mongoose.models.Agent as Model<IAgent>;
     const agent = await Agent.findOne(searchParameter);
@@ -1685,6 +1687,10 @@ export function createAgentMethods(
       if (prunedSkills.length === 0 && requiresSkillsDisable(revertToVersion.skills_scope)) {
         revertToVersion.skills_enabled = false;
       }
+    }
+
+    if (overrides) {
+      Object.assign(revertToVersion, overrides);
     }
 
     const unsetOnRestore: Record<string, 1> = {};

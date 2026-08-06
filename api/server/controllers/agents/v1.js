@@ -92,6 +92,7 @@ const {
 } = require('~/server/services/MCP');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { attachOwnerContacts } = require('~/server/services/Agents/ownerContact');
+const { canShareSkillsPublicly } = require('~/server/services/Endpoints/agents/skillDeps');
 const { getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 const db = require('~/models');
@@ -1307,9 +1308,10 @@ const updateAgentHandler = async (req, res) => {
 
     if (updateData.skills?.length) {
       const existingSkillIds = (existingAgent.skills ?? []).map(String);
+      const nextSkillIds = updateData.skills.map(String);
       const { forbidden, invalid } = await checkSkillAttachments({
         req,
-        nextSkillIds: updateData.skills.map(String),
+        nextSkillIds,
         existingSkillIds,
       });
       if (forbidden.length > 0) {
@@ -1323,6 +1325,22 @@ const updateAgentHandler = async (req, res) => {
           error: 'AGENT_SKILL_INVALID',
           skill_ids: invalid,
         });
+      }
+
+      const existingSet = new Set(existingSkillIds);
+      const hasNewSkills = nextSkillIds.some((skillId) => !existingSet.has(skillId));
+      if (hasNewSkills) {
+        const agentIsPublic = await hasPublicPermission({
+          resourceType: ResourceType.AGENT,
+          resourceId: existingAgent._id,
+          requiredPermissions: PermissionBits.VIEW,
+        });
+        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
+          return res.status(403).json({
+            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+            message: 'You do not have permission to attach skills to a publicly shared agent',
+          });
+        }
       }
     }
 
@@ -2268,21 +2286,25 @@ const revertAgentVersionHandler = async (req, res) => {
       return;
     }
 
-    let updatedAgent = await db.revertAgentVersion({ id }, version_index);
+    const atomicOverrides = {};
+    if (allowedSnapshotSkillIds.length !== snapshotSkillIds.length) {
+      atomicOverrides.skills = allowedSnapshotSkillIds;
+    }
+    if (shouldDisableSkills) {
+      atomicOverrides.skills_enabled = false;
+    }
+
+    let updatedAgent = await db.revertAgentVersion(
+      { id },
+      version_index,
+      Object.keys(atomicOverrides).length > 0 ? atomicOverrides : undefined,
+    );
     const revertUpdates = {};
     if (
       revertVersion &&
       (hasLegacyEdgeSource || (!Array.isArray(revertVersion.edges) && updatedAgent.edges?.length))
     ) {
       revertUpdates.edges = revertEdges;
-    }
-
-    // Apply pre-validated skill overrides atomically in the same update pass.
-    if (allowedSnapshotSkillIds.length !== snapshotSkillIds.length) {
-      revertUpdates.skills = allowedSnapshotSkillIds;
-    }
-    if (shouldDisableSkills) {
-      revertUpdates.skills_enabled = false;
     }
 
     if (updatedAgent.tools?.length) {
