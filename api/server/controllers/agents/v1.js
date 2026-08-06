@@ -97,6 +97,16 @@ const { getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
 const db = require('~/models');
 
+/** Fail closed when checking whether an agent already has a public VIEW grant. */
+const isAgentPubliclyShared = async (resourceId) => {
+  const entries = await db.findEntriesByPrincipalsAndResource(
+    [{ principalType: PrincipalType.PUBLIC }],
+    ResourceType.AGENT,
+    resourceId,
+  );
+  return entries.some((entry) => (entry.permBits & PermissionBits.VIEW) === PermissionBits.VIEW);
+};
+
 const systemTools = {
   [Tools.execute_code]: true,
   [Tools.file_search]: true,
@@ -594,16 +604,20 @@ const getSubagentReferenceError = async (subagents, req, allowedMissingIds = new
  * @param {Express.Request} params.req
  * @param {string[]} params.nextSkillIds - Skill IDs being written (full desired list).
  * @param {string[]} params.existingSkillIds - Skill IDs already on the agent (retain path).
- * @returns {Promise<{ forbidden: string[], invalid: string[] }>}
+ * @returns {Promise<{ forbidden: string[], invalid: string[], overflow: boolean }>}
  */
+const MAX_AGENT_SKILLS = 100;
 const checkSkillAttachments = async ({ req, nextSkillIds, existingSkillIds }) => {
   if (!nextSkillIds?.length) {
-    return { forbidden: [], invalid: [] };
+    return { forbidden: [], invalid: [], overflow: false };
+  }
+  if (nextSkillIds.length > MAX_AGENT_SKILLS) {
+    return { forbidden: [], invalid: [], overflow: true };
   }
   const existingSet = new Set(existingSkillIds ?? []);
   const newSkillIds = nextSkillIds.filter((id) => !existingSet.has(id));
   if (newSkillIds.length === 0) {
-    return { forbidden: [], invalid: [] };
+    return { forbidden: [], invalid: [], overflow: false };
   }
   const editorShareableSkillIds = await findAccessibleResources({
     userId: req.user.id,
@@ -612,13 +626,14 @@ const checkSkillAttachments = async ({ req, nextSkillIds, existingSkillIds }) =>
     requiredPermissions: PermissionBits.SHARE,
   });
   const tenantId = req.tenant?.id ?? req.user?.tenantId ?? null;
-  return validateSkillAttachments({
+  const result = await validateSkillAttachments({
     newSkillIds,
     existingSkillIds: existingSkillIds ?? [],
     editorShareableSkillIds,
     tenantId,
     findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
   });
+  return { ...result, overflow: false };
 };
 
 /**
@@ -919,11 +934,17 @@ const createAgentHandler = async (req, res) => {
     }
 
     if (agentData.skills?.length) {
-      const { forbidden, invalid } = await checkSkillAttachments({
+      const { forbidden, invalid, overflow } = await checkSkillAttachments({
         req,
         nextSkillIds: agentData.skills,
         existingSkillIds: [],
       });
+      if (overflow) {
+        return res.status(400).json({
+          error: 'AGENT_SKILL_LIMIT_EXCEEDED',
+          message: `Agents may have at most ${MAX_AGENT_SKILLS} skills`,
+        });
+      }
       if (forbidden.length > 0) {
         return res.status(403).json({
           error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
@@ -1309,11 +1330,17 @@ const updateAgentHandler = async (req, res) => {
     if (updateData.skills?.length) {
       const existingSkillIds = (existingAgent.skills ?? []).map(String);
       const nextSkillIds = updateData.skills.map(String);
-      const { forbidden, invalid } = await checkSkillAttachments({
+      const { forbidden, invalid, overflow } = await checkSkillAttachments({
         req,
         nextSkillIds,
         existingSkillIds,
       });
+      if (overflow) {
+        return res.status(400).json({
+          error: 'AGENT_SKILL_LIMIT_EXCEEDED',
+          message: `Agents may have at most ${MAX_AGENT_SKILLS} skills`,
+        });
+      }
       if (forbidden.length > 0) {
         return res.status(403).json({
           error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
@@ -1330,11 +1357,7 @@ const updateAgentHandler = async (req, res) => {
       const existingSet = new Set(existingSkillIds);
       const hasNewSkills = nextSkillIds.some((skillId) => !existingSet.has(skillId));
       if (hasNewSkills) {
-        const agentIsPublic = await hasPublicPermission({
-          resourceType: ResourceType.AGENT,
-          resourceId: existingAgent._id,
-          requiredPermissions: PermissionBits.VIEW,
-        });
+        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
         if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
           return res.status(403).json({
             error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
@@ -1694,11 +1717,21 @@ const duplicateAgentHandler = async (req, res) => {
       return;
     }
 
-    const { forbidden: skillForbidden, invalid: skillInvalid } = await checkSkillAttachments({
+    const {
+      forbidden: skillForbidden,
+      invalid: skillInvalid,
+      overflow: skillOverflow,
+    } = await checkSkillAttachments({
       req,
       nextSkillIds: newAgentData.skills ?? [],
       existingSkillIds: [],
     });
+    if (skillOverflow) {
+      return res.status(400).json({
+        error: 'AGENT_SKILL_LIMIT_EXCEEDED',
+        message: `Agents may have at most ${MAX_AGENT_SKILLS} skills`,
+      });
+    }
     if (skillForbidden.length > 0) {
       return res.status(403).json({
         error: 'AGENT_SKILL_DELEGATION_FORBIDDEN',
@@ -2251,9 +2284,10 @@ const revertAgentVersionHandler = async (req, res) => {
 
     // Permissions are enforced via route middleware (ACL EDIT)
 
-    const snapshotSkillIds = Array.isArray(revertVersion.skills)
+    const rawSnapshotSkillIds = Array.isArray(revertVersion.skills)
       ? revertVersion.skills.map(String)
       : [];
+    const snapshotSkillIds = rawSnapshotSkillIds.slice(0, MAX_AGENT_SKILLS);
     let allowedSnapshotSkillIds = snapshotSkillIds;
     if (snapshotSkillIds.length > 0) {
       const { forbidden, invalid } = await checkSkillAttachments({
@@ -2286,8 +2320,27 @@ const revertAgentVersionHandler = async (req, res) => {
       return;
     }
 
+    if (allowedSnapshotSkillIds.length > 0) {
+      const existingSkillSet = new Set((existingAgent.skills ?? []).map(String));
+      const hasNewSkills = allowedSnapshotSkillIds.some(
+        (skillId) => !existingSkillSet.has(skillId),
+      );
+      if (hasNewSkills) {
+        const agentIsPublic = await isAgentPubliclyShared(existingAgent._id.toString());
+        if (agentIsPublic && !(await canShareSkillsPublicly({ req }))) {
+          return res.status(403).json({
+            error: 'AGENT_SKILL_PUBLIC_SHARE_FORBIDDEN',
+            message: 'You do not have permission to attach skills to a publicly shared agent',
+          });
+        }
+      }
+    }
+
     const atomicOverrides = {};
-    if (allowedSnapshotSkillIds.length !== snapshotSkillIds.length) {
+    if (
+      rawSnapshotSkillIds.length !== snapshotSkillIds.length ||
+      allowedSnapshotSkillIds.length !== snapshotSkillIds.length
+    ) {
       atomicOverrides.skills = allowedSnapshotSkillIds;
     }
     if (shouldDisableSkills) {

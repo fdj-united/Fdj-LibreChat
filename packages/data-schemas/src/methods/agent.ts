@@ -1670,6 +1670,10 @@ export function createAgentMethods(
     delete revertToVersion.author;
     delete revertToVersion.updatedBy;
 
+    if (overrides) {
+      Object.assign(revertToVersion, overrides);
+    }
+
     /** Version snapshots can predate skill deletions; restoring one verbatim
      *  would resurrect dangling allowlist ids that scope the catalog to
      *  nothing. Same self-heal (and fail-closed-on-empty rule) as
@@ -1687,10 +1691,6 @@ export function createAgentMethods(
       if (prunedSkills.length === 0 && requiresSkillsDisable(revertToVersion.skills_scope)) {
         revertToVersion.skills_enabled = false;
       }
-    }
-
-    if (overrides) {
-      Object.assign(revertToVersion, overrides);
     }
 
     const unsetOnRestore: Record<string, 1> = {};
