@@ -1,4 +1,5 @@
-import { Constants, ContentTypes } from 'librechat-data-provider';
+import { QueryClient } from '@tanstack/react-query';
+import { Constants, ContentTypes, QueryKeys } from 'librechat-data-provider';
 import type {
   TMessageContentParts,
   EventSubmission,
@@ -8,18 +9,95 @@ import type {
 import type { TResData } from '~/common';
 import {
   buildCreatedInitialResponse,
+  commitFinalMessages,
   getExistingConversationAbortMessages,
+  isFinalEventForActiveConversation,
   isInitialNewConversationSubmission,
   keepLocalCodeApprovalMode,
   buildRecoveryPreset,
   mergeErrorMessages,
   mergeRegenerateFinalMessages,
   resolveErrorTurn,
+  refetchFinalMessages,
+  shouldRefetchFinalMessages,
   startedAsNewConversation,
 } from '~/hooks/SSE/useEventHandlers';
 import { getFailedCodeDecisionRequest } from '~/hooks/Agents/codeDecision';
 import { stripStreamedIndexStamps, getPartKeyIndex } from '~/utils';
 import buildDefaultConvo from '~/utils/buildDefaultConvo';
+
+describe('final message reconciliation', () => {
+  const messages = [
+    {
+      messageId: 'user-1',
+      conversationId: 'conversation-1',
+      isCreatedByUser: true,
+      sender: 'User',
+      text: 'Hello',
+    } as TMessage,
+  ];
+
+  it('restores the finalized conversation cache without updating an inactive view', () => {
+    const queryClient = new QueryClient();
+    const setMessages = jest.fn();
+
+    commitFinalMessages({
+      queryClient,
+      setMessages,
+      conversationId: 'conversation-1',
+      messages,
+      updateActiveView: false,
+    });
+
+    expect(queryClient.getQueryData([QueryKeys.messages, 'conversation-1'])).toEqual(messages);
+    expect(setMessages).not.toHaveBeenCalled();
+  });
+
+  it('updates the active view even when its message cache was temporarily empty', () => {
+    expect(
+      isFinalEventForActiveConversation({
+        activeConversationId: 'conversation-1',
+        submissionConversationId: 'conversation-1',
+        finalConversationId: 'conversation-1',
+      }),
+    ).toBe(true);
+  });
+
+  it('does not update the active view after navigation to another conversation', () => {
+    expect(
+      isFinalEventForActiveConversation({
+        activeConversationId: 'conversation-2',
+        submissionConversationId: 'conversation-1',
+        finalConversationId: 'conversation-1',
+      }),
+    ).toBe(false);
+  });
+
+  it('invalidates and actively refetches only the finalized conversation messages', async () => {
+    const queryClient = new QueryClient();
+    const invalidateQueries = jest.spyOn(queryClient, 'invalidateQueries');
+
+    await refetchFinalMessages({ queryClient, conversationId: 'conversation-1' });
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: [QueryKeys.messages, 'conversation-1'],
+      exact: true,
+      refetchType: 'active',
+    });
+  });
+
+  it.each([
+    { activeConversation: false, conversationId: 'conversation-1', isTemporary: false },
+    { activeConversation: true, conversationId: 'conversation-1', isTemporary: true },
+    {
+      activeConversation: true,
+      conversationId: String(Constants.NEW_CONVO),
+      isTemporary: false,
+    },
+  ])('does not refetch when canonical reconciliation is not applicable', (scenario) => {
+    expect(shouldRefetchFinalMessages(scenario)).toBe(false);
+  });
+});
 
 describe('buildCreatedInitialResponse', () => {
   const userMessage = {

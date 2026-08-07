@@ -21,7 +21,7 @@ import type {
   EventSubmission,
   TMessageContentParts,
 } from 'librechat-data-provider';
-import type { InfiniteData } from '@tanstack/react-query';
+import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import type { SetterOrUpdater } from 'recoil';
 import type { TResData, TFinalResData, ConvoGenerator } from '~/common';
 import type { ConversationCursorData } from '~/utils';
@@ -167,6 +167,66 @@ export const startedAsNewConversation = ({
     isRegenerate !== true &&
     isInitialNewConversationSubmission({ userMessage })
   );
+};
+
+export const isFinalEventForActiveConversation = ({
+  activeConversationId,
+  submissionConversationId,
+  finalConversationId,
+}: {
+  activeConversationId?: string | null;
+  submissionConversationId?: string | null;
+  finalConversationId?: string | null;
+}): boolean =>
+  !!activeConversationId &&
+  (activeConversationId === submissionConversationId ||
+    activeConversationId === finalConversationId);
+
+export const shouldRefetchFinalMessages = ({
+  activeConversation,
+  conversationId,
+  isTemporary,
+}: {
+  activeConversation: boolean;
+  conversationId?: string | null;
+  isTemporary: boolean;
+}): boolean =>
+  activeConversation &&
+  !isTemporary &&
+  !!conversationId &&
+  conversationId !== Constants.NEW_CONVO &&
+  conversationId !== Constants.PENDING_CONVO;
+
+export const refetchFinalMessages = ({
+  queryClient,
+  conversationId,
+}: {
+  queryClient: QueryClient;
+  conversationId: string;
+}): Promise<void> =>
+  queryClient.invalidateQueries({
+    queryKey: [QueryKeys.messages, conversationId],
+    exact: true,
+    refetchType: 'active',
+  });
+
+export const commitFinalMessages = ({
+  queryClient,
+  setMessages,
+  conversationId,
+  messages,
+  updateActiveView,
+}: {
+  queryClient: QueryClient;
+  setMessages: (messages: TMessage[]) => void;
+  conversationId: string | null;
+  messages: TMessage[];
+  updateActiveView: boolean;
+}) => {
+  queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], messages);
+  if (updateActiveView) {
+    setMessages(messages);
+  }
 };
 
 export const mergeRegenerateFinalMessages = ({
@@ -1047,14 +1107,17 @@ export default function useEventHandlers({
         setCompleted((prev) => new Set(prev.add(submission.initialResponse.messageId)));
 
         const currentMessages = getMessages();
-        /* Early return if messages are empty; i.e., the user navigated away */
-        if (!currentMessages || currentMessages.length === 0) {
-          return;
-        }
+        const activeConversation = isFinalEventForActiveConversation({
+          activeConversationId: paramId,
+          submissionConversationId: submissionConvo.conversationId,
+          finalConversationId: conversation.conversationId,
+        });
 
         /* a11y announcements */
-        announcePolite({ message: 'end', isStatus: true });
-        announcePolite({ message: getAllContentText(responseMessage) });
+        if (activeConversation) {
+          announcePolite({ message: 'end', isStatus: true });
+          announcePolite({ message: getAllContentText(responseMessage) });
+        }
 
         const isNewConvo = conversation.conversationId !== submissionConvo.conversationId;
 
@@ -1064,8 +1127,13 @@ export default function useEventHandlers({
         }
 
         const setFinalMessages = (id: string | null, _messages: TMessage[]) => {
-          setMessages(_messages);
-          queryClient.setQueryData<TMessage[]>([QueryKeys.messages, id], _messages);
+          commitFinalMessages({
+            queryClient,
+            setMessages,
+            conversationId: id,
+            messages: _messages,
+            updateActiveView: activeConversation,
+          });
         };
 
         const hasNoResponse =
@@ -1117,7 +1185,7 @@ export default function useEventHandlers({
          * (compacted) content is stamped with the indexes it streamed at so
          * index-keyed renders don't remount the settled message. */
         if (finalMessages.length > 0) {
-          const currentMsgMap = new Map(currentMessages.map((m) => [m.messageId, m]));
+          const currentMsgMap = new Map((currentMessages ?? []).map((m) => [m.messageId, m]));
           for (let i = 0; i < finalMessages.length; i++) {
             const msg = finalMessages[i];
             const currentMsg = currentMsgMap.get(msg.messageId);
@@ -1140,6 +1208,17 @@ export default function useEventHandlers({
 
         if (finalMessages.length > 0) {
           setFinalMessages(conversation.conversationId, finalMessages);
+          const finalConversationId = conversation.conversationId;
+          if (
+            finalConversationId &&
+            shouldRefetchFinalMessages({
+              activeConversation,
+              conversationId: finalConversationId,
+              isTemporary: _isTemporary,
+            })
+          ) {
+            void refetchFinalMessages({ queryClient, conversationId: finalConversationId });
+          }
         } else if (
           isAssistantsEndpoint(submissionConvo.endpoint) &&
           (!submissionConvo.conversationId ||
@@ -1147,7 +1226,7 @@ export default function useEventHandlers({
         ) {
           queryClient.setQueryData<TMessage[]>(
             [QueryKeys.messages, conversation.conversationId],
-            [...currentMessages],
+            [...(currentMessages ?? messages)],
           );
         }
 
@@ -1161,7 +1240,7 @@ export default function useEventHandlers({
          *  title yet — otherwise the chat reverts to "New Chat" until reload. This
          *  holds for a stopped turn too: the server persists a title that finished
          *  generating before the Stop, so the local one stays in sync. */
-        if (setConversation && isAddedRequest !== true) {
+        if (activeConversation && setConversation && isAddedRequest !== true) {
           setConversation((prevState) => {
             const update = keepLocalCodeApprovalMode(
               { ...prevState, ...(conversation as TConversation) },
@@ -1235,6 +1314,7 @@ export default function useEventHandlers({
       setIsSubmitting,
       setShowStopButton,
       location.pathname,
+      paramId,
       applyAgentTemplate,
       attachmentHandler,
       setSubmissionStart,
