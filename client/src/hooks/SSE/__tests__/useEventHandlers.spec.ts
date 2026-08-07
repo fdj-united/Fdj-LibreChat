@@ -1,11 +1,57 @@
-import { Constants } from 'librechat-data-provider';
+import { QueryClient } from '@tanstack/react-query';
+import { Constants, QueryKeys } from 'librechat-data-provider';
 import type { EventSubmission, TMessage } from 'librechat-data-provider';
 import {
   buildCreatedInitialResponse,
+  commitFinalMessages,
   getExistingConversationAbortMessages,
   isInitialNewConversationSubmission,
   mergeRegenerateFinalMessages,
 } from '~/hooks/SSE/useEventHandlers';
+
+describe('commitFinalMessages', () => {
+  const messages = [
+    {
+      messageId: 'user-1',
+      conversationId: 'conversation-1',
+      isCreatedByUser: true,
+      sender: 'User',
+      text: 'Hello',
+    } as TMessage,
+  ];
+
+  it('restores the conversation cache when the active cache was empty', () => {
+    const queryClient = new QueryClient();
+    const setMessages = jest.fn();
+
+    commitFinalMessages({
+      queryClient,
+      setMessages,
+      conversationId: 'conversation-1',
+      messages,
+      updateActiveView: false,
+    });
+
+    expect(queryClient.getQueryData([QueryKeys.messages, 'conversation-1'])).toEqual(messages);
+    expect(setMessages).not.toHaveBeenCalled();
+  });
+
+  it('updates both caches while the submitted conversation is active', () => {
+    const queryClient = new QueryClient();
+    const setMessages = jest.fn();
+
+    commitFinalMessages({
+      queryClient,
+      setMessages,
+      conversationId: 'conversation-1',
+      messages,
+      updateActiveView: true,
+    });
+
+    expect(queryClient.getQueryData([QueryKeys.messages, 'conversation-1'])).toEqual(messages);
+    expect(setMessages).toHaveBeenCalledWith(messages);
+  });
+});
 
 describe('buildCreatedInitialResponse', () => {
   const userMessage = {

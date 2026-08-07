@@ -19,7 +19,7 @@ import type {
   EventSubmission,
   TStartupConfig,
 } from 'librechat-data-provider';
-import type { InfiniteData } from '@tanstack/react-query';
+import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import type { SetterOrUpdater } from 'recoil';
 import type { TResData, TFinalResData, ConvoGenerator } from '~/common';
 import type { ConversationCursorData } from '~/utils';
@@ -100,6 +100,25 @@ export const isInitialNewConversationSubmission = ({
   userMessage,
 }: Pick<EventSubmission, 'userMessage'>): boolean =>
   userMessage?.parentMessageId === Constants.NO_PARENT;
+
+export const commitFinalMessages = ({
+  queryClient,
+  setMessages,
+  conversationId,
+  messages,
+  updateActiveView,
+}: {
+  queryClient: QueryClient;
+  setMessages: (messages: TMessage[]) => void;
+  conversationId: string | null;
+  messages: TMessage[];
+  updateActiveView: boolean;
+}) => {
+  queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], messages);
+  if (updateActiveView) {
+    setMessages(messages);
+  }
+};
 
 export const mergeRegenerateFinalMessages = ({
   messages,
@@ -709,14 +728,19 @@ export default function useEventHandlers({
         setCompleted((prev) => new Set(prev.add(submission.initialResponse.messageId)));
 
         const currentMessages = getMessages();
-        /* Early return if messages are empty; i.e., the user navigated away */
-        if (!currentMessages || currentMessages.length === 0) {
-          return;
+        const hasCurrentMessages = !!currentMessages?.length;
+        if (!hasCurrentMessages) {
+          console.warn('[finalHandler] Active message cache is empty; restoring from FINAL event', {
+            conversationId: conversation.conversationId,
+            submissionConversationId: submissionConvo.conversationId,
+          });
         }
 
         /* a11y announcements */
-        announcePolite({ message: 'end', isStatus: true });
-        announcePolite({ message: getAllContentText(responseMessage) });
+        if (hasCurrentMessages) {
+          announcePolite({ message: 'end', isStatus: true });
+          announcePolite({ message: getAllContentText(responseMessage) });
+        }
 
         const isNewConvo = conversation.conversationId !== submissionConvo.conversationId;
 
@@ -726,8 +750,13 @@ export default function useEventHandlers({
         }
 
         const setFinalMessages = (id: string | null, _messages: TMessage[]) => {
-          setMessages(_messages);
-          queryClient.setQueryData<TMessage[]>([QueryKeys.messages, id], _messages);
+          commitFinalMessages({
+            queryClient,
+            setMessages,
+            conversationId: id,
+            messages: _messages,
+            updateActiveView: hasCurrentMessages,
+          });
         };
 
         const hasNoResponse =
@@ -773,7 +802,7 @@ export default function useEventHandlers({
         /* Preserve files from current messages when server response lacks them */
         if (finalMessages.length > 0) {
           const currentMsgMap = new Map(
-            currentMessages
+            (currentMessages ?? [])
               .filter((m) => m.files && m.files.length > 0)
               .map((m) => [m.messageId, m.files]),
           );
@@ -795,7 +824,7 @@ export default function useEventHandlers({
         ) {
           queryClient.setQueryData<TMessage[]>(
             [QueryKeys.messages, conversation.conversationId],
-            [...currentMessages],
+            [...(currentMessages ?? messages)],
           );
         }
 
@@ -809,7 +838,7 @@ export default function useEventHandlers({
          *  title yet — otherwise the chat reverts to "New Chat" until reload. This
          *  holds for a stopped turn too: the server persists a title that finished
          *  generating before the Stop, so the local one stays in sync. */
-        if (setConversation && isAddedRequest !== true) {
+        if (hasCurrentMessages && setConversation && isAddedRequest !== true) {
           setConversation((prevState) => {
             const update = {
               ...prevState,
