@@ -5,8 +5,11 @@ import {
   buildCreatedInitialResponse,
   commitFinalMessages,
   getExistingConversationAbortMessages,
+  isFinalEventForActiveConversation,
   isInitialNewConversationSubmission,
   mergeRegenerateFinalMessages,
+  refetchFinalMessages,
+  shouldRefetchFinalMessages,
 } from '~/hooks/SSE/useEventHandlers';
 
 describe('commitFinalMessages', () => {
@@ -50,6 +53,71 @@ describe('commitFinalMessages', () => {
 
     expect(queryClient.getQueryData([QueryKeys.messages, 'conversation-1'])).toEqual(messages);
     expect(setMessages).toHaveBeenCalledWith(messages);
+  });
+});
+
+describe('final message reconciliation', () => {
+  it('treats the matching route as active even when its message cache is empty', () => {
+    expect(
+      isFinalEventForActiveConversation({
+        activeConversationId: 'conversation-1',
+        submissionConversationId: 'conversation-1',
+        finalConversationId: 'conversation-1',
+      }),
+    ).toBe(true);
+  });
+
+  it('does not update the active view after navigation to another conversation', () => {
+    expect(
+      isFinalEventForActiveConversation({
+        activeConversationId: 'conversation-2',
+        submissionConversationId: 'conversation-1',
+        finalConversationId: 'conversation-1',
+      }),
+    ).toBe(false);
+  });
+
+  it('refetches canonical messages after an active persisted conversation finalizes', () => {
+    expect(
+      shouldRefetchFinalMessages({
+        activeConversation: true,
+        conversationId: 'conversation-1',
+        isTemporary: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('invalidates and actively refetches only the finalized conversation messages', async () => {
+    const queryClient = new QueryClient();
+    const invalidateQueries = jest.spyOn(queryClient, 'invalidateQueries');
+
+    await refetchFinalMessages({ queryClient, conversationId: 'conversation-1' });
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: [QueryKeys.messages, 'conversation-1'],
+      exact: true,
+      refetchType: 'active',
+    });
+  });
+
+  it.each([
+    {
+      activeConversation: false,
+      conversationId: 'conversation-1',
+      isTemporary: false,
+    },
+    {
+      activeConversation: true,
+      conversationId: 'conversation-1',
+      isTemporary: true,
+    },
+    {
+      activeConversation: true,
+      conversationId: String(Constants.NEW_CONVO),
+      isTemporary: false,
+    },
+  ])('does not refetch when canonical reconciliation is not applicable', (scenario) => {
+    expect(shouldRefetchFinalMessages(scenario)).toBe(false);
   });
 });
 
