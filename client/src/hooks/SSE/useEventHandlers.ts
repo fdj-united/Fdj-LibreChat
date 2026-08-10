@@ -101,6 +101,47 @@ export const isInitialNewConversationSubmission = ({
 }: Pick<EventSubmission, 'userMessage'>): boolean =>
   userMessage?.parentMessageId === Constants.NO_PARENT;
 
+export const isFinalEventForActiveConversation = ({
+  activeConversationId,
+  submissionConversationId,
+  finalConversationId,
+}: {
+  activeConversationId?: string | null;
+  submissionConversationId?: string | null;
+  finalConversationId?: string | null;
+}): boolean =>
+  !!activeConversationId &&
+  (activeConversationId === submissionConversationId ||
+    activeConversationId === finalConversationId);
+
+export const shouldRefetchFinalMessages = ({
+  activeConversation,
+  conversationId,
+  isTemporary,
+}: {
+  activeConversation: boolean;
+  conversationId?: string | null;
+  isTemporary: boolean;
+}): boolean =>
+  activeConversation &&
+  !isTemporary &&
+  !!conversationId &&
+  conversationId !== Constants.NEW_CONVO &&
+  conversationId !== Constants.PENDING_CONVO;
+
+export const refetchFinalMessages = ({
+  queryClient,
+  conversationId,
+}: {
+  queryClient: QueryClient;
+  conversationId: string;
+}): Promise<void> =>
+  queryClient.invalidateQueries({
+    queryKey: [QueryKeys.messages, conversationId],
+    exact: true,
+    refetchType: 'active',
+  });
+
 export const commitFinalMessages = ({
   queryClient,
   setMessages,
@@ -729,15 +770,21 @@ export default function useEventHandlers({
 
         const currentMessages = getMessages();
         const hasCurrentMessages = !!currentMessages?.length;
+        const activeConversation = isFinalEventForActiveConversation({
+          activeConversationId: paramId,
+          submissionConversationId: submissionConvo.conversationId,
+          finalConversationId: conversation.conversationId,
+        });
         if (!hasCurrentMessages) {
           console.warn('[finalHandler] Active message cache is empty; restoring from FINAL event', {
             conversationId: conversation.conversationId,
             submissionConversationId: submissionConvo.conversationId,
+            activeConversation,
           });
         }
 
         /* a11y announcements */
-        if (hasCurrentMessages) {
+        if (activeConversation) {
           announcePolite({ message: 'end', isStatus: true });
           announcePolite({ message: getAllContentText(responseMessage) });
         }
@@ -755,7 +802,7 @@ export default function useEventHandlers({
             setMessages,
             conversationId: id,
             messages: _messages,
-            updateActiveView: hasCurrentMessages,
+            updateActiveView: activeConversation,
           });
         };
 
@@ -817,6 +864,20 @@ export default function useEventHandlers({
 
         if (finalMessages.length > 0) {
           setFinalMessages(conversation.conversationId, finalMessages);
+          const finalConversationId = conversation.conversationId;
+          if (
+            finalConversationId &&
+            shouldRefetchFinalMessages({
+              activeConversation,
+              conversationId: finalConversationId,
+              isTemporary: _isTemporary,
+            })
+          ) {
+            void refetchFinalMessages({
+              queryClient,
+              conversationId: finalConversationId,
+            });
+          }
         } else if (
           isAssistantsEndpoint(submissionConvo.endpoint) &&
           (!submissionConvo.conversationId ||
@@ -838,7 +899,7 @@ export default function useEventHandlers({
          *  title yet — otherwise the chat reverts to "New Chat" until reload. This
          *  holds for a stopped turn too: the server persists a title that finished
          *  generating before the Stop, so the local one stays in sync. */
-        if (hasCurrentMessages && setConversation && isAddedRequest !== true) {
+        if (activeConversation && setConversation && isAddedRequest !== true) {
           setConversation((prevState) => {
             const update = {
               ...prevState,
@@ -907,6 +968,7 @@ export default function useEventHandlers({
       setIsSubmitting,
       setShowStopButton,
       location.pathname,
+      paramId,
       applyAgentTemplate,
       attachmentHandler,
       restorePendingQuotes,
