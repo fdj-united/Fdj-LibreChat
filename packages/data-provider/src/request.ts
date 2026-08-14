@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import axios, { AxiosRequestConfig } from 'axios';
+import axios, { AxiosHeaders } from 'axios';
+import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import type * as t from './types';
 import { setTokenHeader } from './headers-helpers';
 import * as endpoints from './api-endpoints';
@@ -185,10 +186,18 @@ const setRequestAuthorizationHeader = (config: AxiosRequestConfig, token: string
   config.headers = headers;
 };
 
+const clearRequestAuthorizationHeader = (config: InternalAxiosRequestConfig) => {
+  const headers = AxiosHeaders.from(config.headers as AxiosHeaders);
+  headers.delete('Authorization');
+  config.headers = headers;
+};
+
+const isRefreshRequest = (url?: string) => url?.includes('/api/auth/refresh') === true;
+
 const isAuthRecoveryEndpoint = (url?: string) =>
   url?.includes('/api/auth/2fa') === true ||
   url?.includes('/api/auth/logout') === true ||
-  url?.includes('/api/auth/refresh') === true;
+  isRefreshRequest(url);
 
 const startAuthRecovery = (retryRefresh?: boolean) => {
   const state = getAuthRecoveryState();
@@ -220,6 +229,7 @@ const redirectToLoginOnce = () => {
   }
 
   const href = endpoints.apiBaseUrl() + endpoints.buildLoginRedirectUrl();
+  setTokenHeader(undefined);
   setAuthRedirectStartedAt();
   window.dispatchEvent(new CustomEvent(AUTH_REDIRECT_EVENT, { detail: { href } }));
   window.location.href = href;
@@ -252,45 +262,84 @@ const getJwtExpiryMs = (token: string) => {
   }
 };
 
+const getBearerTokenTimeUntilExpiry = () => {
+  const token = getBearerToken();
+  if (!token) {
+    return null;
+  }
+
+  const expiresAt = getJwtExpiryMs(token);
+  return expiresAt == null ? null : expiresAt - Date.now();
+};
+
+const getResponseStatus = (error: unknown) => {
+  if (typeof error !== 'object' || error == null || !('response' in error)) {
+    return null;
+  }
+
+  const response = (error as { response?: { status?: number } }).response;
+  return typeof response?.status === 'number' ? response.status : null;
+};
+
+const isRejectedRefreshSession = (error: unknown) => {
+  const status = getResponseStatus(error);
+  return status === 401 || status === 403;
+};
+
 const shouldRefreshBeforeRequest = (url?: string) => {
   if (isAuthRecoveryEndpoint(url) || isAuthRedirectInProgress()) {
     return false;
   }
 
-  const token = getBearerToken();
-  if (!token) {
-    return false;
+  const timeUntilExpiry = getBearerTokenTimeUntilExpiry();
+  return timeUntilExpiry != null && timeUntilExpiry <= TOKEN_REFRESH_BUFFER_MS;
+};
+
+const recoverRequestAuthorization = async (
+  config: InternalAxiosRequestConfig,
+  recovery: Promise<string | null>,
+) => {
+  try {
+    const token = await recovery;
+    if (token) {
+      setRequestAuthorizationHeader(config, token);
+      return config;
+    }
+
+    redirectToLoginOnce();
+    return Promise.reject(new Error('Authentication refresh returned no token'));
+  } catch (error) {
+    if (isRejectedRefreshSession(error)) {
+      redirectToLoginOnce();
+      return Promise.reject(error);
+    }
+
+    const timeUntilExpiry = getBearerTokenTimeUntilExpiry();
+    if (timeUntilExpiry != null && timeUntilExpiry <= 0) {
+      return Promise.reject(error);
+    }
   }
 
-  const expiresAt = getJwtExpiryMs(token);
-  if (expiresAt == null) {
-    return false;
-  }
-
-  const timeUntilExpiry = expiresAt - Date.now();
-  return timeUntilExpiry > 0 && timeUntilExpiry <= TOKEN_REFRESH_BUFFER_MS;
+  return config;
 };
 
 if (typeof window !== 'undefined') {
   axios.interceptors.request.use(async (config) => {
+    if (isRefreshRequest(config.url)) {
+      clearRequestAuthorizationHeader(config);
+      return config;
+    }
+
     const state = getAuthRecoveryState();
     if (state.refreshPromise && !isAuthRecoveryEndpoint(config.url)) {
-      const token = await state.refreshPromise.catch(() => null);
-      if (token) {
-        setRequestAuthorizationHeader(config, token);
-      }
-      return config;
+      return recoverRequestAuthorization(config, state.refreshPromise);
     }
 
     if (!shouldRefreshBeforeRequest(config.url)) {
       return config;
     }
 
-    const token = await startAuthRecovery(false).catch(() => null);
-    if (token) {
-      setRequestAuthorizationHeader(config, token);
-    }
-    return config;
+    return recoverRequestAuthorization(config, startAuthRecovery(false));
   });
 
   axios.interceptors.response.use(
@@ -304,12 +353,12 @@ if (typeof window !== 'undefined') {
         return Promise.reject(error);
       }
 
-      const isRefreshRequest = originalRequest.url?.includes('/api/auth/refresh') === true;
-      if (isAuthRecoveryEndpoint(originalRequest.url) && !isRefreshRequest) {
+      const originalIsRefreshRequest = isRefreshRequest(originalRequest.url);
+      if (isAuthRecoveryEndpoint(originalRequest.url) && !originalIsRefreshRequest) {
         return Promise.reject(error);
       }
 
-      if (isRefreshRequest && getAuthRecoveryState().refreshPromise) {
+      if (originalIsRefreshRequest && getAuthRecoveryState().refreshPromise) {
         return Promise.reject(error);
       }
 
@@ -337,7 +386,7 @@ if (typeof window !== 'undefined') {
         try {
           const token = await startAuthRecovery(
             // Handle edge case where we get a blank screen if the initial 401 error is from a refresh token request
-            isRefreshRequest,
+            originalIsRefreshRequest,
           );
 
           if (token) {
@@ -348,6 +397,9 @@ if (typeof window !== 'undefined') {
           redirectToLoginOnce();
           return Promise.reject(error);
         } catch (err) {
+          if (isRejectedRefreshSession(err)) {
+            redirectToLoginOnce();
+          }
           return Promise.reject(err);
         }
       }

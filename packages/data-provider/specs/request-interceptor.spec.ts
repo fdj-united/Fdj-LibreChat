@@ -570,7 +570,7 @@ describe('axios 401 interceptor — Authorization header guard', () => {
   });
 
   it('refreshes a near-expiry bearer token before sending a request', async () => {
-    expect.assertions(4);
+    expect.assertions(5);
     setTokenHeader(createJwt(Date.now() + 60_000));
 
     mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
@@ -585,17 +585,38 @@ describe('axios 401 interceptor — Authorization header guard', () => {
     expect(response.data).toEqual({ ok: true });
 
     expect(mockAdapter.mock.calls[0][0].url).toContain('/api/auth/refresh');
+    expect(mockAdapter.mock.calls[0][0].headers?.Authorization).toBeUndefined();
     expect(mockAdapter.mock.calls[1][0].url).toBe('/api/messages');
     expect(mockAdapter.mock.calls[1][0].headers?.Authorization).toBe('Bearer fresh-token');
   });
 
-  it('does not wait on the in-flight recovery when the refresh request itself fails', async () => {
+  it('refreshes an expired bearer token before sending a request after an inactive tab resumes', async () => {
+    expect.assertions(5);
+    setTokenHeader(createJwt(Date.now() - 60_000));
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+      if (config.url?.includes('/api/auth/refresh') === true) {
+        return createAdapterResponse(config, { token: 'fresh-token' });
+      }
+      return createAdapterResponse(config, { ok: true });
+    });
+
+    const response = await axios.post('/api/agents/chat/agents', {});
+
+    expect(response.data).toEqual({ ok: true });
+    expect(mockAdapter.mock.calls[0][0].url).toContain('/api/auth/refresh');
+    expect(mockAdapter.mock.calls[0][0].headers?.Authorization).toBeUndefined();
+    expect(mockAdapter.mock.calls[1][0].url).toBe('/api/agents/chat/agents');
+    expect(mockAdapter.mock.calls[1][0].headers?.Authorization).toBe('Bearer fresh-token');
+  });
+
+  it('continues with a still-valid token when proactive refresh has a network failure', async () => {
     expect.assertions(3);
     setTokenHeader(createJwt(Date.now() + 60_000));
 
     mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
       if (config.url?.includes('/api/auth/refresh') === true) {
-        return create401Error(config);
+        return Promise.reject({ config });
       }
       return createAdapterResponse(config, { ok: true });
     });
@@ -605,5 +626,57 @@ describe('axios 401 interceptor — Authorization header guard', () => {
     expect(response.data).toEqual({ ok: true });
     expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
     expect(getCallsForUrl('/api/messages')).toHaveLength(1);
+  });
+
+  it.each([401, 403])(
+    'redirects to login when proactive refresh rejects the session with %s',
+    async (status) => {
+      expect.assertions(4);
+      setTokenHeader(createJwt(Date.now() - 60_000));
+      const hrefWrites = setTrackedWindowLocation({
+        href: 'http://localhost/c/inactive-tab',
+        pathname: '/c/inactive-tab',
+        search: '',
+        hash: '',
+      } as Partial<Location>);
+
+      mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+        if (config.url?.includes('/api/auth/refresh') === true) {
+          return Promise.reject({ response: { status }, config });
+        }
+        return createAdapterResponse(config, { ok: true });
+      });
+
+      await expect(axios.post('/api/agents/chat/agents', {})).rejects.toMatchObject({
+        response: { status },
+      });
+
+      expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+      expect(getCallsForUrl('/api/agents/chat/agents')).toHaveLength(0);
+      expect(hrefWrites).toEqual(['/login?redirect_to=%2Fc%2Finactive-tab']);
+    },
+  );
+
+  it('redirects when a request gets 401 and its cookie-only refresh also gets 401', async () => {
+    expect.assertions(4);
+    setTokenHeader('expired-token');
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/inactive-tab',
+      pathname: '/c/inactive-tab',
+      search: '',
+      hash: '',
+    } as Partial<Location>);
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+      return create401Error(config);
+    });
+
+    await expect(axios.post('/api/agents/chat/agents', {})).rejects.toMatchObject({
+      response: { status: 401 },
+    });
+
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+    expect(getCallsForUrl('/api/auth/refresh')[0][0].headers?.Authorization).toBeUndefined();
+    expect(hrefWrites).toEqual(['/login?redirect_to=%2Fc%2Finactive-tab']);
   });
 });
