@@ -423,6 +423,12 @@ describe('resolveHeaders', () => {
       emailVerified: true,
       twoFactorEnabled: false,
       termsAccepted: true,
+      jobTitle: 'Staff Engineer',
+      department: 'Platform',
+      companyName: 'FDJ United',
+      officeLocation: 'Paris',
+      managerName: 'Marie Dupont',
+      managerEmail: 'marie.dupont@example.com',
     };
 
     const headers = {
@@ -443,6 +449,12 @@ describe('resolveHeaders', () => {
       'X-User-EmailVerified': '{{LIBRECHAT_USER_EMAILVERIFIED}}',
       'X-User-TwoFactorEnabled': '{{LIBRECHAT_USER_TWOFACTORENABLED}}',
       'X-User-TermsAccepted': '{{LIBRECHAT_USER_TERMSACCEPTED}}',
+      'X-User-JobTitle': '{{LIBRECHAT_USER_JOBTITLE}}',
+      'X-User-Department': '{{LIBRECHAT_USER_DEPARTMENT}}',
+      'X-User-CompanyName': '{{LIBRECHAT_USER_COMPANYNAME}}',
+      'X-User-OfficeLocation': '{{LIBRECHAT_USER_OFFICELOCATION}}',
+      'X-User-ManagerName': '{{LIBRECHAT_USER_MANAGERNAME}}',
+      'X-User-ManagerEmail': '{{LIBRECHAT_USER_MANAGEREMAIL}}',
     };
 
     const result = resolveHeaders({ headers, user });
@@ -464,6 +476,59 @@ describe('resolveHeaders', () => {
     expect(result['X-User-EmailVerified']).toBe('true');
     expect(result['X-User-TwoFactorEnabled']).toBe('false');
     expect(result['X-User-TermsAccepted']).toBe('true');
+    expect(result['X-User-JobTitle']).toBe('Staff Engineer');
+    expect(result['X-User-Department']).toBe('Platform');
+    expect(result['X-User-CompanyName']).toBe('FDJ United');
+    expect(result['X-User-OfficeLocation']).toBe('Paris');
+    expect(result['X-User-ManagerName']).toBe('Marie Dupont');
+    expect(result['X-User-ManagerEmail']).toBe('marie.dupont@example.com');
+  });
+
+  it('should Base64 encode directory fields containing characters above Latin-1', () => {
+    const user = createTestUser({
+      jobTitle: 'Inżynier',
+      department: 'Płatności',
+      companyName: 'Društvo',
+      officeLocation: 'Łódź',
+      managerName: 'Marko Marić',
+      managerEmail: 'marić@example.com',
+    });
+
+    const headers = {
+      'X-User-JobTitle': '{{LIBRECHAT_USER_JOBTITLE}}',
+      'X-User-Department': '{{LIBRECHAT_USER_DEPARTMENT}}',
+      'X-User-CompanyName': '{{LIBRECHAT_USER_COMPANYNAME}}',
+      'X-User-OfficeLocation': '{{LIBRECHAT_USER_OFFICELOCATION}}',
+      'X-User-ManagerName': '{{LIBRECHAT_USER_MANAGERNAME}}',
+      'X-User-ManagerEmail': '{{LIBRECHAT_USER_MANAGEREMAIL}}',
+    };
+
+    const result = resolveHeaders({ headers, user });
+
+    for (const [header, original] of [
+      ['X-User-JobTitle', 'Inżynier'],
+      ['X-User-Department', 'Płatności'],
+      ['X-User-CompanyName', 'Društvo'],
+      ['X-User-OfficeLocation', 'Łódź'],
+      ['X-User-ManagerName', 'Marko Marić'],
+      ['X-User-ManagerEmail', 'marić@example.com'],
+    ]) {
+      expect(result[header].startsWith('b64:')).toBe(true);
+      expect(Buffer.from(result[header].slice(4), 'base64').toString('utf8')).toBe(original);
+    }
+  });
+
+  it('should leave Latin-1 directory values unencoded', () => {
+    const user = createTestUser({ jobTitle: 'Ingénieur', officeLocation: 'Kraków' });
+    const headers = {
+      'X-User-JobTitle': '{{LIBRECHAT_USER_JOBTITLE}}',
+      'X-User-OfficeLocation': '{{LIBRECHAT_USER_OFFICELOCATION}}',
+    };
+
+    const result = resolveHeaders({ headers, user });
+
+    expect(result['X-User-JobTitle']).toBe('Ingénieur');
+    expect(result['X-User-OfficeLocation']).toBe('Kraków');
   });
 
   it('should handle multiple placeholders in one value', () => {

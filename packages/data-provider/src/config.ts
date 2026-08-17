@@ -2747,6 +2747,12 @@ export const specialVariables = {
   current_user: true,
   iso_datetime: true,
   current_datetime: true,
+  librechat_user_jobtitle: true,
+  librechat_user_department: true,
+  librechat_user_companyname: true,
+  librechat_user_officelocation: true,
+  librechat_user_managername: true,
+  librechat_user_manageremail: true,
 };
 
 export type TSpecialVarLabel = `com_ui_special_var_${keyof typeof specialVariables}`;

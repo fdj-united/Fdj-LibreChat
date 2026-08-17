@@ -382,26 +382,6 @@ async function exchangeTokenForOverage(accessToken, sub) {
 }
 
 /**
- * Resolve the signed-in user's directory attributes (job title, department, manager) from Microsoft
- * Graph, exchanging the tokenset access token for a Graph-scoped token first.
- *
- * Enrichment is best-effort: failures are logged and swallowed so they never block a login.
- *
- * @param {string} accessToken - Access token from the OpenID tokenset (app audience)
- * @param {string} sub - The subject identifier of the user (for OBO exchange and cache keying)
- * @returns {Promise<import('@librechat/api').DirectoryProfile | null>} Resolved attributes or null
- */
-async function resolveDirectoryProfile(accessToken, sub) {
-  try {
-    const graphToken = await exchangeTokenForOverage(accessToken, sub);
-    return await fetchDirectoryProfile(graphToken);
-  } catch (error) {
-    logger.error('[openidStrategy] Failed to resolve directory profile attributes:', error);
-    return null;
-  }
-}
-
-/**
  * Resolve Azure AD groups when group overage is in effect (groups moved to _claim_names/_claim_sources).
  *
  * NOTE: Microsoft recommends treating _claim_names/_claim_sources as a signal only and using Microsoft Graph
@@ -841,7 +821,9 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   }
 
   if (tokenset.access_token && isEnabled(process.env.USE_ENTRA_ID_FOR_USER_PROFILE)) {
-    const directoryProfile = await resolveDirectoryProfile(tokenset.access_token, claims.sub);
+    const directoryProfile = await fetchDirectoryProfile({
+      resolveGraphToken: () => exchangeTokenForOverage(tokenset.access_token, claims.sub),
+    });
     if (directoryProfile) {
       Object.assign(user, directoryProfile);
     }

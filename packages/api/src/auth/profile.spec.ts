@@ -38,10 +38,15 @@ const alwaysJsonResponse = (body: Record<string, string | null>): void => {
   mockFetch.mockImplementation(async () => jsonResponse(body));
 };
 
+const neverResolves = <T>(): Promise<T> => new Promise<T>(() => {});
+
 describe('fetchDirectoryProfile', () => {
+  let resolveGraphToken: jest.Mock<Promise<string>, []>;
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetDispatcher.mockReturnValue(undefined);
+    resolveGraphToken = jest.fn<Promise<string>, []>().mockResolvedValue(GRAPH_TOKEN);
   });
 
   it('resolves job attributes and manager from Microsoft Graph', async () => {
@@ -58,7 +63,7 @@ describe('fetchDirectoryProfile', () => {
         jsonResponse({ displayName: 'Marie Dupont', mail: 'marie.dupont@example.com' }),
       );
 
-    const profile = await fetchDirectoryProfile(GRAPH_TOKEN);
+    const profile = await fetchDirectoryProfile({ resolveGraphToken });
 
     expect(profile).toEqual({
       jobTitle: 'Staff Engineer',
@@ -73,7 +78,7 @@ describe('fetchDirectoryProfile', () => {
   it('requests the user and manager resources with a bearer token', async () => {
     alwaysJsonResponse({});
 
-    await fetchDirectoryProfile(GRAPH_TOKEN);
+    await fetchDirectoryProfile({ resolveGraphToken });
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
     const [[meUrl, meOptions], [managerUrl]] = mockFetch.mock.calls;
@@ -96,7 +101,7 @@ describe('fetchDirectoryProfile', () => {
       }),
     );
 
-    const profile = await fetchDirectoryProfile(GRAPH_TOKEN);
+    const profile = await fetchDirectoryProfile({ resolveGraphToken });
 
     expect(profile).toMatchObject({
       managerName: 'Jean Martin',
@@ -104,12 +109,12 @@ describe('fetchDirectoryProfile', () => {
     });
   });
 
-  it('returns empty manager fields when the user has no manager', async () => {
+  it('clears manager fields when Graph confirms the user has no manager', async () => {
     mockFetch
       .mockResolvedValueOnce(jsonResponse({ jobTitle: 'Head of Data', department: 'Data' }))
       .mockResolvedValueOnce(emptyResponse(404, 'Not Found'));
 
-    const profile = await fetchDirectoryProfile(GRAPH_TOKEN);
+    const profile = await fetchDirectoryProfile({ resolveGraphToken });
 
     expect(profile).toEqual({
       jobTitle: 'Head of Data',
@@ -121,10 +126,27 @@ describe('fetchDirectoryProfile', () => {
     });
   });
 
+  it('omits manager fields when the manager request fails, preserving stored values', async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ jobTitle: 'Head of Data', department: 'Data' }))
+      .mockResolvedValueOnce(emptyResponse(503, 'Service Unavailable'));
+
+    const profile = await fetchDirectoryProfile({ resolveGraphToken });
+
+    expect(profile).toEqual({
+      jobTitle: 'Head of Data',
+      department: 'Data',
+      companyName: '',
+      officeLocation: '',
+    });
+    expect(profile).not.toHaveProperty('managerName');
+    expect(profile).not.toHaveProperty('managerEmail');
+  });
+
   it('normalizes missing attributes to empty strings', async () => {
     alwaysJsonResponse({});
 
-    const profile = await fetchDirectoryProfile(GRAPH_TOKEN);
+    const profile = await fetchDirectoryProfile({ resolveGraphToken });
 
     expect(profile).toEqual({
       jobTitle: '',
@@ -139,18 +161,47 @@ describe('fetchDirectoryProfile', () => {
   it('returns null when the user lookup is rejected by Graph', async () => {
     mockFetch.mockResolvedValue(emptyResponse(403, 'Forbidden'));
 
-    await expect(fetchDirectoryProfile(GRAPH_TOKEN)).resolves.toBeNull();
+    await expect(fetchDirectoryProfile({ resolveGraphToken })).resolves.toBeNull();
   });
 
   it('returns null when the Graph request throws', async () => {
     mockFetch.mockRejectedValue(new Error('network unreachable'));
 
-    await expect(fetchDirectoryProfile(GRAPH_TOKEN)).resolves.toBeNull();
+    await expect(fetchDirectoryProfile({ resolveGraphToken })).resolves.toBeNull();
   });
 
-  it('returns null without calling Graph when no token is provided', async () => {
-    await expect(fetchDirectoryProfile('')).resolves.toBeNull();
+  it('returns null when the token exchange fails', async () => {
+    resolveGraphToken.mockRejectedValue(new Error('OBO exchange failed'));
+
+    await expect(fetchDirectoryProfile({ resolveGraphToken })).resolves.toBeNull();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('returns null without calling Graph when the exchange yields no token', async () => {
+    resolveGraphToken.mockResolvedValue('');
+
+    await expect(fetchDirectoryProfile({ resolveGraphToken })).resolves.toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('gives up on a slow token exchange instead of holding the login', async () => {
+    resolveGraphToken.mockImplementation(() => neverResolves<string>());
+
+    await expect(fetchDirectoryProfile({ resolveGraphToken, timeoutMs: 20 })).resolves.toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('aborts in-flight Graph requests once the deadline passes', async () => {
+    const signals: Array<AbortSignal | null | undefined> = [];
+    mockFetch.mockImplementation((_url, options) => {
+      signals.push(options?.signal);
+      return neverResolves<Response>();
+    });
+
+    await expect(fetchDirectoryProfile({ resolveGraphToken, timeoutMs: 20 })).resolves.toBeNull();
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal?.aborted === true)).toBe(true);
   });
 
   it('routes requests through the proxy dispatcher when one is configured', async () => {
@@ -158,7 +209,7 @@ describe('fetchDirectoryProfile', () => {
     mockGetDispatcher.mockReturnValue(dispatcher);
     alwaysJsonResponse({});
 
-    await fetchDirectoryProfile(GRAPH_TOKEN);
+    await fetchDirectoryProfile({ resolveGraphToken });
 
     const [[, meOptions]] = mockFetch.mock.calls;
     expect(meOptions?.dispatcher).toBe(dispatcher);
