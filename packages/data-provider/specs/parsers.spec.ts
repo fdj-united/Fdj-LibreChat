@@ -224,6 +224,31 @@ describe('replaceSpecialVars', () => {
 
       expect(result).toBe('Platform and Platform');
     });
+
+    test('should resolve every registered librechat_user special variable', () => {
+      const registered = Object.keys(specialVariables).filter((key) =>
+        key.startsWith('librechat_user_'),
+      );
+
+      expect(registered).toHaveLength(6);
+
+      for (const key of registered) {
+        const result = replaceSpecialVars({ text: `[{{${key}}}]`, user: directoryUser });
+        expect(result).not.toContain(key);
+      }
+    });
+
+    test('should leave identity placeholders to manual handling in prompts', () => {
+      const text =
+        '{{LIBRECHAT_USER_NAME}} {{LIBRECHAT_USER_USERNAME}} {{LIBRECHAT_USER_EMAIL}} {{LIBRECHAT_USER_ROLE}}';
+
+      const result = replaceSpecialVars({
+        text,
+        user: { ...directoryUser, username: 'testuser', email: 'me@example.com', role: 'admin' },
+      });
+
+      expect(result).toBe(text);
+    });
   });
 });
 
