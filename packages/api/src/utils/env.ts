@@ -71,6 +71,7 @@ const HEADER_ENCODED_FIELDS: readonly string[] = [
   'companyName',
   'officeLocation',
   'managerName',
+  'managerEmail',
 ];
 
 type AllowedUserField = (typeof ALLOWED_USER_FIELDS)[number];
