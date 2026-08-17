@@ -18,6 +18,7 @@ const {
   getAvatarSaveParams,
   isEmailDomainAllowed,
   getAvatarFileStrategy,
+  fetchDirectoryProfile,
   resolveAppConfigForUser,
   getOpenIdProxyDispatcher,
   getOpenIdRoleSyncOptions,
@@ -378,6 +379,26 @@ async function exchangeTokenForOverage(accessToken, sub) {
   await tokensCache.set(cacheKey, { access_token: grantResponse.access_token }, ttlMs);
 
   return grantResponse.access_token;
+}
+
+/**
+ * Resolve the signed-in user's directory attributes (job title, department, manager) from Microsoft
+ * Graph, exchanging the tokenset access token for a Graph-scoped token first.
+ *
+ * Enrichment is best-effort: failures are logged and swallowed so they never block a login.
+ *
+ * @param {string} accessToken - Access token from the OpenID tokenset (app audience)
+ * @param {string} sub - The subject identifier of the user (for OBO exchange and cache keying)
+ * @returns {Promise<import('@librechat/api').DirectoryProfile | null>} Resolved attributes or null
+ */
+async function resolveDirectoryProfile(accessToken, sub) {
+  try {
+    const graphToken = await exchangeTokenForOverage(accessToken, sub);
+    return await fetchDirectoryProfile(graphToken);
+  } catch (error) {
+    logger.error('[openidStrategy] Failed to resolve directory profile attributes:', error);
+    return null;
+  }
 }
 
 /**
@@ -816,6 +837,13 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
         }),
       );
       user.avatar = imagePath ?? '';
+    }
+  }
+
+  if (tokenset.access_token && isEnabled(process.env.USE_ENTRA_ID_FOR_USER_PROFILE)) {
+    const directoryProfile = await resolveDirectoryProfile(tokenset.access_token, claims.sub);
+    if (directoryProfile) {
+      Object.assign(user, directoryProfile);
     }
   }
 

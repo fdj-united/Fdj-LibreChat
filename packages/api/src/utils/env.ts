@@ -26,7 +26,28 @@ const ALLOWED_USER_FIELDS = [
   'emailVerified',
   'twoFactorEnabled',
   'termsAccepted',
+  'jobTitle',
+  'department',
+  'companyName',
+  'officeLocation',
+  'managerName',
+  'managerEmail',
 ] as const;
+
+/**
+ * Fields whose values may contain non-ASCII characters and therefore need encoding
+ * before being used in HTTP headers.
+ */
+const HEADER_ENCODED_FIELDS: readonly string[] = [
+  'name',
+  'username',
+  'email',
+  'jobTitle',
+  'department',
+  'companyName',
+  'officeLocation',
+  'managerName',
+];
 
 type AllowedUserField = (typeof ALLOWED_USER_FIELDS)[number];
 type SafeUser = Pick<IUser, AllowedUserField>;
@@ -158,11 +179,8 @@ function processUserPlaceholders(
     // Encode non-ASCII characters when used in headers
     // Fields like name, username, email can contain non-ASCII characters
     // that would cause ByteString conversion errors in the Fetch API
-    if (isHeader) {
-      const fieldsToEncode = ['name', 'username', 'email'];
-      if (fieldsToEncode.includes(field)) {
-        replacementValue = encodeHeaderValue(replacementValue);
-      }
+    if (isHeader && HEADER_ENCODED_FIELDS.includes(field)) {
+      replacementValue = encodeHeaderValue(replacementValue);
     }
 
     value = value.replace(new RegExp(placeholder, 'g'), replacementValue);

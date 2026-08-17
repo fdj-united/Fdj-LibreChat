@@ -59,6 +59,13 @@ export interface IUser extends Document {
   /** Field for external source identification (for consistency with TPrincipal schema) */
   idOnTheSource?: string;
   tenantId?: string;
+  /** Directory attributes sourced from the identity provider on each login */
+  jobTitle?: string;
+  department?: string;
+  companyName?: string;
+  officeLocation?: string;
+  managerName?: string;
+  managerEmail?: string;
   federatedTokens?: OIDCTokens;
   openidTokens?: OIDCTokens;
 }

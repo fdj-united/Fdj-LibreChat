@@ -162,6 +162,25 @@ const userSchema: Schema<IUser> = new Schema<IUser>(
       type: String,
       index: true,
     },
+    /** Directory attributes sourced from the identity provider on each login */
+    jobTitle: {
+      type: String,
+    },
+    department: {
+      type: String,
+    },
+    companyName: {
+      type: String,
+    },
+    officeLocation: {
+      type: String,
+    },
+    managerName: {
+      type: String,
+    },
+    managerEmail: {
+      type: String,
+    },
   },
   { timestamps: true },
 );

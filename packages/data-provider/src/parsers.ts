@@ -430,6 +430,23 @@ export function findLastSeparatorIndex(text: string, separators = SEPARATORS): n
 }
 
 /**
+ * User fields exposed to prompts and agent instructions as `{{LIBRECHAT_USER_<FIELD>}}`.
+ * Kept in sync with the placeholders resolved for MCP headers in `@librechat/api`.
+ */
+const USER_PLACEHOLDER_FIELDS = [
+  'name',
+  'username',
+  'email',
+  'role',
+  'jobTitle',
+  'department',
+  'companyName',
+  'officeLocation',
+  'managerName',
+  'managerEmail',
+] as const satisfies readonly (keyof t.TUser)[];
+
+/**
  * Anchors a dayjs instant to the user's IANA timezone when one is supplied,
  * so local-time special vars reflect the user's wall clock rather than the
  * server's. Falls back to the original instant for missing or invalid zones.
@@ -476,6 +493,18 @@ export function replaceSpecialVars({
 
   if (user && user.name) {
     result = result.replace(/{{\s*current_user\s*}}/gi, user.name);
+  }
+
+  if (user) {
+    for (const field of USER_PLACEHOLDER_FIELDS) {
+      const fieldValue = user[field];
+      if (fieldValue == null || fieldValue === '') {
+        continue;
+      }
+
+      const placeholder = new RegExp(`{{\\s*LIBRECHAT_USER_${field.toUpperCase()}\\s*}}`, 'gi');
+      result = result.replace(placeholder, fieldValue);
+    }
   }
 
   return result;
