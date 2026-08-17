@@ -430,14 +430,14 @@ export function findLastSeparatorIndex(text: string, separators = SEPARATORS): n
 }
 
 /**
- * User fields exposed to prompts and agent instructions as `{{LIBRECHAT_USER_<FIELD>}}`.
- * Kept in sync with the placeholders resolved for MCP headers in `@librechat/api`.
+ * Directory attributes exposed to prompts and agent instructions as `{{LIBRECHAT_USER_<FIELD>}}`.
+ *
+ * Every entry must also be registered in `specialVariables`, otherwise prompt detection treats it
+ * as a manual variable while this parser resolves it automatically. Identity fields such as name
+ * and email are deliberately absent: `{{current_user}}` already covers the display name, and the
+ * broader set in `@librechat/api` applies to MCP headers rather than prompts.
  */
-const USER_PLACEHOLDER_FIELDS = [
-  'name',
-  'username',
-  'email',
-  'role',
+const DIRECTORY_PLACEHOLDER_FIELDS = [
   'jobTitle',
   'department',
   'companyName',
@@ -447,16 +447,16 @@ const USER_PLACEHOLDER_FIELDS = [
 ] as const satisfies readonly (keyof t.TUser)[];
 
 /**
- * Pre-computed patterns for the user placeholders, paired with the field each one resolves from.
+ * Pre-computed patterns for the directory placeholders, paired with the field each resolves from.
  * Unavailable fields resolve to an empty string so template syntax never reaches a model.
  */
-const USER_PLACEHOLDER_PATTERNS = USER_PLACEHOLDER_FIELDS.map(
+const DIRECTORY_PLACEHOLDER_PATTERNS = DIRECTORY_PLACEHOLDER_FIELDS.map(
   (field) =>
     [field, new RegExp(`{{\\s*LIBRECHAT_USER_${field.toUpperCase()}\\s*}}`, 'gi')] as const,
 );
 
 /** Cheap guard so the patterns above are only applied to text that could contain them */
-const USER_PLACEHOLDER_PREFIX = /{{\s*LIBRECHAT_USER_/i;
+const DIRECTORY_PLACEHOLDER_PREFIX = /{{\s*LIBRECHAT_USER_/i;
 
 /**
  * Anchors a dayjs instant to the user's IANA timezone when one is supplied,
@@ -507,8 +507,8 @@ export function replaceSpecialVars({
     result = result.replace(/{{\s*current_user\s*}}/gi, user.name);
   }
 
-  if (user && USER_PLACEHOLDER_PREFIX.test(result)) {
-    for (const [field, pattern] of USER_PLACEHOLDER_PATTERNS) {
+  if (user && DIRECTORY_PLACEHOLDER_PREFIX.test(result)) {
+    for (const [field, pattern] of DIRECTORY_PLACEHOLDER_PATTERNS) {
       result = result.replace(pattern, user[field] ?? '');
     }
   }
