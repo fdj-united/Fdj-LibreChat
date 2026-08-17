@@ -187,6 +187,12 @@ describe('getUserController', () => {
         createdAt,
         updatedAt,
         tenantId: 'tenant-id',
+        jobTitle: 'Staff Engineer',
+        department: 'Platform',
+        companyName: 'FDJ United',
+        officeLocation: 'Paris',
+        managerName: 'Marie Dupont',
+        managerEmail: 'marie.dupont@example.com',
         password: 'hashed-password',
         __v: 1,
         totpSecret: 'totp-secret',
@@ -238,6 +244,12 @@ describe('getUserController', () => {
       createdAt,
       updatedAt,
       tenantId: 'tenant-id',
+      jobTitle: 'Staff Engineer',
+      department: 'Platform',
+      companyName: 'FDJ United',
+      officeLocation: 'Paris',
+      managerName: 'Marie Dupont',
+      managerEmail: 'marie.dupont@example.com',
     });
     expect(sentUser).not.toHaveProperty('password');
     expect(sentUser).not.toHaveProperty('__v');

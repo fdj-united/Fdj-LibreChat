@@ -222,6 +222,13 @@ export type TUser = {
   role: string;
   provider: string;
   tenantId?: string;
+  /** Directory attributes sourced from the identity provider on each login */
+  jobTitle?: string;
+  department?: string;
+  companyName?: string;
+  officeLocation?: string;
+  managerName?: string;
+  managerEmail?: string;
   plugins?: string[];
   twoFactorEnabled?: boolean;
   backupCodes?: TBackupCode[];

@@ -18,6 +18,7 @@ const {
   getAvatarSaveParams,
   isEmailDomainAllowed,
   getAvatarFileStrategy,
+  fetchDirectoryProfile,
   resolveAppConfigForUser,
   getOpenIdProxyDispatcher,
   getOpenIdRoleSyncOptions,
@@ -816,6 +817,15 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
         }),
       );
       user.avatar = imagePath ?? '';
+    }
+  }
+
+  if (tokenset.access_token && isEnabled(process.env.USE_ENTRA_ID_FOR_USER_PROFILE)) {
+    const directoryProfile = await fetchDirectoryProfile({
+      resolveGraphToken: () => exchangeTokenForOverage(tokenset.access_token, claims.sub),
+    });
+    if (directoryProfile) {
+      Object.assign(user, directoryProfile);
     }
   }
 

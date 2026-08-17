@@ -159,6 +159,97 @@ describe('replaceSpecialVars', () => {
     expect(result).toContain('2024-04-29T16:34:56.000Z'); // iso_datetime
     expect(result).toContain('Test User'); // current_user
   });
+
+  describe('directory attribute placeholders', () => {
+    const directoryUser = {
+      name: 'Test User',
+      id: 'user123',
+      jobTitle: 'Staff Engineer',
+      department: 'Platform',
+      companyName: 'FDJ United',
+      officeLocation: 'Paris',
+      managerName: 'Marie Dupont',
+      managerEmail: 'marie.dupont@example.com',
+    } as TUser;
+
+    test('should replace every directory placeholder with its value', () => {
+      const result = replaceSpecialVars({
+        text: '{{LIBRECHAT_USER_JOBTITLE}} | {{LIBRECHAT_USER_DEPARTMENT}} | {{LIBRECHAT_USER_COMPANYNAME}} | {{LIBRECHAT_USER_OFFICELOCATION}} | {{LIBRECHAT_USER_MANAGERNAME}} | {{LIBRECHAT_USER_MANAGEREMAIL}}',
+        user: directoryUser,
+      });
+
+      expect(result).toBe(
+        'Staff Engineer | Platform | FDJ United | Paris | Marie Dupont | marie.dupont@example.com',
+      );
+    });
+
+    test('should replace directory placeholders regardless of case or whitespace', () => {
+      const result = replaceSpecialVars({
+        text: '{{ librechat_user_jobtitle }} at {{Librechat_User_CompanyName}}',
+        user: directoryUser,
+      });
+
+      expect(result).toBe('Staff Engineer at FDJ United');
+    });
+
+    test('should resolve blank attributes to an empty string', () => {
+      const result = replaceSpecialVars({
+        text: 'Manager: [{{LIBRECHAT_USER_MANAGERNAME}}]',
+        user: { ...directoryUser, managerName: '' } as TUser,
+      });
+
+      expect(result).toBe('Manager: []');
+    });
+
+    test('should not leak placeholders for users without directory attributes', () => {
+      const result = replaceSpecialVars({
+        text: 'Role: [{{LIBRECHAT_USER_JOBTITLE}}] Dept: [{{LIBRECHAT_USER_DEPARTMENT}}]',
+        user: mockUser,
+      });
+
+      expect(result).toBe('Role: [] Dept: []');
+    });
+
+    test('should leave placeholders untouched when no user is provided', () => {
+      const result = replaceSpecialVars({ text: 'Role: {{LIBRECHAT_USER_JOBTITLE}}' });
+
+      expect(result).toBe('Role: {{LIBRECHAT_USER_JOBTITLE}}');
+    });
+
+    test('should replace all occurrences of a repeated placeholder', () => {
+      const result = replaceSpecialVars({
+        text: '{{LIBRECHAT_USER_DEPARTMENT}} and {{LIBRECHAT_USER_DEPARTMENT}}',
+        user: directoryUser,
+      });
+
+      expect(result).toBe('Platform and Platform');
+    });
+
+    test('should resolve every registered librechat_user special variable', () => {
+      const registered = Object.keys(specialVariables).filter((key) =>
+        key.startsWith('librechat_user_'),
+      );
+
+      expect(registered).toHaveLength(6);
+
+      for (const key of registered) {
+        const result = replaceSpecialVars({ text: `[{{${key}}}]`, user: directoryUser });
+        expect(result).not.toContain(key);
+      }
+    });
+
+    test('should leave identity placeholders to manual handling in prompts', () => {
+      const text =
+        '{{LIBRECHAT_USER_NAME}} {{LIBRECHAT_USER_USERNAME}} {{LIBRECHAT_USER_EMAIL}} {{LIBRECHAT_USER_ROLE}}';
+
+      const result = replaceSpecialVars({
+        text,
+        user: { ...directoryUser, username: 'testuser', email: 'me@example.com', role: 'admin' },
+      });
+
+      expect(result).toBe(text);
+    });
+  });
 });
 
 describe('parseCompactConvo', () => {

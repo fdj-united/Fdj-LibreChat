@@ -430,6 +430,35 @@ export function findLastSeparatorIndex(text: string, separators = SEPARATORS): n
 }
 
 /**
+ * Directory attributes exposed to prompts and agent instructions as `{{LIBRECHAT_USER_<FIELD>}}`.
+ *
+ * Every entry must also be registered in `specialVariables`, otherwise prompt detection treats it
+ * as a manual variable while this parser resolves it automatically. Identity fields such as name
+ * and email are deliberately absent: `{{current_user}}` already covers the display name, and the
+ * broader set in `@librechat/api` applies to MCP headers rather than prompts.
+ */
+const DIRECTORY_PLACEHOLDER_FIELDS = [
+  'jobTitle',
+  'department',
+  'companyName',
+  'officeLocation',
+  'managerName',
+  'managerEmail',
+] as const satisfies readonly (keyof t.TUser)[];
+
+/**
+ * Pre-computed patterns for the directory placeholders, paired with the field each resolves from.
+ * Unavailable fields resolve to an empty string so template syntax never reaches a model.
+ */
+const DIRECTORY_PLACEHOLDER_PATTERNS = DIRECTORY_PLACEHOLDER_FIELDS.map(
+  (field) =>
+    [field, new RegExp(`{{\\s*LIBRECHAT_USER_${field.toUpperCase()}\\s*}}`, 'gi')] as const,
+);
+
+/** Cheap guard so the patterns above are only applied to text that could contain them */
+const DIRECTORY_PLACEHOLDER_PREFIX = /{{\s*LIBRECHAT_USER_/i;
+
+/**
  * Anchors a dayjs instant to the user's IANA timezone when one is supplied,
  * so local-time special vars reflect the user's wall clock rather than the
  * server's. Falls back to the original instant for missing or invalid zones.
@@ -476,6 +505,12 @@ export function replaceSpecialVars({
 
   if (user && user.name) {
     result = result.replace(/{{\s*current_user\s*}}/gi, user.name);
+  }
+
+  if (user && DIRECTORY_PLACEHOLDER_PREFIX.test(result)) {
+    for (const [field, pattern] of DIRECTORY_PLACEHOLDER_PATTERNS) {
+      result = result.replace(pattern, user[field] ?? '');
+    }
   }
 
   return result;
