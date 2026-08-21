@@ -342,9 +342,6 @@ export const defaultAgentFormValues = {
   /** Master toggle for skill use on this agent. `true` activates skills
    *  (full catalog unless `skills` narrows it). Anything else = inactive. */
   skills_enabled: undefined as boolean | undefined,
-  /** When true, the user's own active skills are included alongside required agent skills.
-   *  Defaults: `allow_other_skills ?? (!Array.isArray(skills) || skills.length === 0)`. */
-  allow_other_skills: undefined as boolean | undefined,
   /** `undefined` = feature disabled by default (no subagent tool injected). */
   subagents: undefined as
     | { enabled?: boolean; allowSelf?: boolean; agent_ids?: string[] }

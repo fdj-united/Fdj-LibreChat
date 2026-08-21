@@ -33,7 +33,6 @@ const {
   buildNonStreamingResponse,
   createOpenAIStreamTracker,
   resolveAgentScopedSkillIds,
-  resolveAgentSkillScope,
   createOpenAIContentAggregator,
   isChatCompletionValidationFailure,
 } = require('@librechat/api');
@@ -55,7 +54,6 @@ const {
   withDeploymentSkillIds,
   buildAgentToolContext,
   enrichLoadedToolsWithAgentContext,
-  canUseSkills: canUseSkillsCheck,
 } = require('~/server/services/Endpoints/agents/skillDeps');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { logViolation } = require('~/cache');
@@ -267,13 +265,10 @@ const OpenAIChatCompletionController = async (req, res) => {
       listSkillsByAccess: skillDbMethods.listSkillsByAccess,
       listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
       getSkillByName: skillDbMethods.getSkillByName,
-      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
     };
 
     const enabledCapabilities = new Set(agentsEConfig?.capabilities);
     const skillsCapabilityEnabled = enabledCapabilities.has(AgentCapabilities.skills);
-    const skillsUseAllowed = skillsCapabilityEnabled ? await canUseSkillsCheck({ req }) : false;
-    const skillsDelegationEnabled = skillsCapabilityEnabled && skillsUseAllowed;
     const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
     const accessibleSkillIds = skillsCapabilityEnabled
       ? withDeploymentSkillIds(
@@ -305,21 +300,12 @@ const OpenAIChatCompletionController = async (req, res) => {
     });
 
     const manualSkills = extractManualSkills(req.body);
-    const tenantId = req.user?.tenantId ?? null;
 
-    // Resolve the scope-aware skill set for the primary agent.
-    // `resolveAgentSkillScope` handles both ephemeral and persisted paths; for
-    // persisted agents it delegates required skills to recipients without direct
-    // Skill VIEW access, staying request-scoped and never touching user-level ACL.
-    const primaryAgentSkillScope = await resolveAgentSkillScope({
+    const primaryScopedSkillIds = resolveAgentScopedSkillIds({
       agent,
-      directAccessibleSkillIds: accessibleSkillIds,
-      skillsCapabilityEnabled: skillsDelegationEnabled,
-      skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+      accessibleSkillIds,
+      skillsCapabilityEnabled,
       ephemeralSkillsToggle,
-      isPersistedAndAuthorizedAgent: true, // agent VIEW already checked by route middleware
-      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
-      tenantId,
     });
     const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
       agent,
@@ -340,7 +326,7 @@ const OpenAIChatCompletionController = async (req, res) => {
         endpointOption,
         allowedProviders,
         isInitialAgent: true,
-        agentSkillScope: primaryAgentSkillScope,
+        accessibleSkillIds: primaryScopedSkillIds,
         skillAuthoringAvailable: canAuthorSkillFiles({
           agent,
           scopedEditableSkillIds: primaryScopedEditableSkillIds,
@@ -402,19 +388,12 @@ const OpenAIChatCompletionController = async (req, res) => {
           // sub-agent must clear the same sharing boundary, not the looser
           // in-app AGENT one.
           resourceType: ResourceType.REMOTE_AGENT,
-          // Per-sub-agent scope: each handoff agent gets its own required-skill
-          // delegation after passing its own authorization check. Parent required
-          // skill IDs are never inherited.
-          computeAgentSkillScope: (handoffAgent) =>
-            resolveAgentSkillScope({
+          computeAccessibleSkillIds: (handoffAgent) =>
+            resolveAgentScopedSkillIds({
               agent: handoffAgent,
-              directAccessibleSkillIds: accessibleSkillIds,
-              skillsCapabilityEnabled: skillsDelegationEnabled,
-              skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+              accessibleSkillIds,
+              skillsCapabilityEnabled,
               ephemeralSkillsToggle,
-              isPersistedAndAuthorizedAgent: true, // VIEW already checked in discoverConnectedAgents
-              findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
-              tenantId,
             }),
           computeSkillAuthoringAvailable: (handoffAgent) =>
             canAuthorSkillFiles({

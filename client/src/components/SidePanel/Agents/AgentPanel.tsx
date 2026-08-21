@@ -81,7 +81,6 @@ export function composeAgentUpdatePayload(data: AgentForm, agent_id?: string | n
     tool_options,
     skills,
     skills_enabled,
-    allow_other_skills,
     avatar_action: avatarActionState,
   } = data;
 
@@ -114,7 +113,6 @@ export function composeAgentUpdatePayload(data: AgentForm, agent_id?: string | n
       tool_options,
       skills,
       skills_enabled,
-      allow_other_skills,
       ...(shouldResetAvatar ? { avatar: null } : {}),
     },
     provider,

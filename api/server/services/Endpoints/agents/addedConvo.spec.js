@@ -2,7 +2,6 @@ const mockInitializeAgent = jest.fn();
 const mockValidateAgentModel = jest.fn();
 const mockLoadAddedAgent = jest.fn();
 const mockResolveAgentScopedSkillIds = jest.fn();
-const mockResolveAgentSkillScope = jest.fn();
 const mockResolveModelSpecSkillIds = jest.fn();
 const mockCanAuthorSkillFiles = jest.fn();
 const mockGetAgent = jest.fn();
@@ -23,7 +22,6 @@ jest.mock('@librechat/api', () => ({
   validateAgentModel: (...args) => mockValidateAgentModel(...args),
   loadAddedAgent: (params) => mockLoadAddedAgent(params),
   resolveAgentScopedSkillIds: (...args) => mockResolveAgentScopedSkillIds(...args),
-  resolveAgentSkillScope: (...args) => mockResolveAgentSkillScope(...args),
   resolveModelSpecSkillIds: (...args) => mockResolveModelSpecSkillIds(...args),
 }));
 
@@ -44,7 +42,6 @@ jest.mock('~/models', () => ({
   getSkillByName: jest.fn(),
   listSkillsByAccess: jest.fn(),
   listAlwaysApplySkills: jest.fn(),
-  findExistingSkillIdsForTenant: jest.fn().mockResolvedValue([]),
 }));
 
 const { processAddedConvo } = require('./addedConvo');
@@ -73,12 +70,6 @@ describe('processAddedConvo', () => {
     mockResolveAgentScopedSkillIds.mockImplementation(
       ({ accessibleSkillIds }) => accessibleSkillIds,
     );
-    mockResolveAgentSkillScope.mockResolvedValue({
-      requiredSkillIds: [],
-      optionalSkillIds: [],
-      effectiveSkillIds: [],
-      requiredSkillIdSet: new Set(),
-    });
     mockResolveModelSpecSkillIds.mockResolvedValue([]);
     mockCanAuthorSkillFiles.mockReturnValue(false);
   });
@@ -149,15 +140,9 @@ describe('processAddedConvo', () => {
       skills: [],
     });
     mockResolveModelSpecSkillIds.mockResolvedValue([resolvedSkillId]);
-    // resolveAgentSkillScope is used for the primary (effectiveSkillIds) scope.
-    mockResolveAgentSkillScope.mockResolvedValue({
-      requiredSkillIds: [],
-      optionalSkillIds: [scopedSkillId],
-      effectiveSkillIds: [scopedSkillId],
-      requiredSkillIdSet: new Set(),
-    });
-    // resolveAgentScopedSkillIds is used only for the editable scope.
-    mockResolveAgentScopedSkillIds.mockReturnValueOnce([scopedEditableSkillId]);
+    mockResolveAgentScopedSkillIds
+      .mockReturnValueOnce([scopedSkillId])
+      .mockReturnValueOnce([scopedEditableSkillId]);
     mockCanAuthorSkillFiles.mockReturnValue(true);
 
     await processAddedConvo(
@@ -198,20 +183,17 @@ describe('processAddedConvo', () => {
       accessibleSkillIds: [accessibleSkillId],
       getSkillByName: db.getSkillByName,
     });
-    expect(mockResolveAgentSkillScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agent: expect.objectContaining({
-          id: Constants.EPHEMERAL_AGENT_ID,
-          skills_enabled: true,
-          skills: ['resolved-skill'],
-        }),
-        directAccessibleSkillIds: [accessibleSkillId],
-        skillsCapabilityEnabled: true,
-        ephemeralSkillsToggle: false,
-        isPersistedAndAuthorizedAgent: false,
+    expect(mockResolveAgentScopedSkillIds).toHaveBeenNthCalledWith(1, {
+      agent: expect.objectContaining({
+        id: Constants.EPHEMERAL_AGENT_ID,
+        skills_enabled: true,
+        skills: ['resolved-skill'],
       }),
-    );
-    expect(mockResolveAgentScopedSkillIds).toHaveBeenCalledWith({
+      accessibleSkillIds: [accessibleSkillId],
+      skillsCapabilityEnabled: true,
+      ephemeralSkillsToggle: false,
+    });
+    expect(mockResolveAgentScopedSkillIds).toHaveBeenNthCalledWith(2, {
       agent: expect.objectContaining({
         id: Constants.EPHEMERAL_AGENT_ID,
         skills_enabled: true,
@@ -234,9 +216,7 @@ describe('processAddedConvo', () => {
     });
     expect(mockInitializeAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentSkillScope: expect.objectContaining({
-          effectiveSkillIds: [scopedSkillId],
-        }),
+        accessibleSkillIds: [scopedSkillId],
         skillAuthoringAvailable: true,
         skillStates,
         defaultActiveOnShare: true,

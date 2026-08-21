@@ -71,15 +71,6 @@ describe('composeAgentUpdatePayload', () => {
 
     expect(payload.avatar).toBeUndefined();
   });
-
-  it('preserves allow_other_skills: true in the payload', () => {
-    const form = createForm();
-    form.allow_other_skills = true;
-
-    const { payload } = composeAgentUpdatePayload(form, 'agent_123');
-
-    expect(payload.allow_other_skills).toBe(true);
-  });
 });
 
 describe('persistAvatarChanges', () => {

@@ -11,7 +11,6 @@ const {
   discoverConnectedAgents,
   resolveAgentTokenConfig,
   resolveAgentScopedSkillIds,
-  resolveAgentSkillScope,
   resolveModelSpecSkillIds,
   buildAgentContextAttachmentsByAgentId,
 } = require('@librechat/api');
@@ -39,7 +38,6 @@ const {
   withDeploymentSkillIds,
   buildAgentToolContext,
   enrichLoadedToolsWithAgentContext,
-  canUseSkills: canUseSkillsCheck,
 } = require('./skillDeps');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { checkPermission, findAccessibleResources } = require('~/server/services/PermissionService');
@@ -149,12 +147,6 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
   const codeEnvAvailable = enabledCapabilities.has(AgentCapabilities.execute_code);
   const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
   const skillDbMethods = getSkillDbMethods();
-
-  // P1: Gate skill delegation on SKILLS.USE role permission. Users who lack
-  // this role permission must not receive required-skill delegation even when
-  // an authorized agent has them attached.
-  const skillsUseAllowed = skillsCapabilityEnabled ? await canUseSkillsCheck({ req }) : false;
-  const skillsDelegationEnabled = skillsCapabilityEnabled && skillsUseAllowed;
 
   const accessibleSkillIds = skillsCapabilityEnabled
     ? withDeploymentSkillIds(
@@ -356,16 +348,11 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     }
   }
 
-  const tenantId = req.user?.tenantId ?? null;
-  const primaryAgentSkillScope = await resolveAgentSkillScope({
+  const primaryScopedSkillIds = resolveAgentScopedSkillIds({
     agent: primaryAgent,
-    directAccessibleSkillIds: accessibleSkillIds,
-    skillsCapabilityEnabled: skillsDelegationEnabled,
-    skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+    accessibleSkillIds,
+    skillsCapabilityEnabled,
     ephemeralSkillsToggle,
-    isPersistedAndAuthorizedAgent: !isEphemeralAgentId(primaryAgent.id),
-    findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
-    tenantId,
   });
   const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
     agent: primaryAgent,
@@ -393,7 +380,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       endpointOption,
       allowedProviders,
       isInitialAgent: true,
-      agentSkillScope: primaryAgentSkillScope,
+      accessibleSkillIds: primaryScopedSkillIds,
       skillAuthoringAvailable: primarySkillAuthoringAvailable,
       codeEnvAvailable,
       skillStates,
@@ -414,7 +401,6 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       listSkillsByAccess: skillDbMethods.listSkillsByAccess,
       listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
       getSkillByName: skillDbMethods.getSkillByName,
-      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
     },
   );
 
@@ -449,16 +435,12 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       requestFiles,
       conversationId,
       parentMessageId,
-      computeAgentSkillScope: (agent) =>
-        resolveAgentSkillScope({
+      computeAccessibleSkillIds: (agent) =>
+        resolveAgentScopedSkillIds({
           agent,
-          directAccessibleSkillIds: accessibleSkillIds,
-          skillsCapabilityEnabled: skillsDelegationEnabled,
-          skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+          accessibleSkillIds,
+          skillsCapabilityEnabled,
           ephemeralSkillsToggle,
-          isPersistedAndAuthorizedAgent: true, // VIEW checked in discoverConnectedAgents
-          findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
-          tenantId,
         }),
       computeSkillAuthoringAvailable: (agent) =>
         canAuthorSkillFiles({
@@ -495,7 +477,6 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         listSkillsByAccess: skillDbMethods.listSkillsByAccess,
         listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
         getSkillByName: skillDbMethods.getSkillByName,
-        findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
       },
       // The callback fires during BFS, before the helper prunes agents
       // whose edges end up filtered. Don't populate `agentConfigs` here —
@@ -542,8 +523,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     primaryAgentId: primaryConfig.id,
     accessibleSkillIds,
     editableSkillIds,
-    skillsCapabilityEnabled: skillsDelegationEnabled,
-    skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+    skillsCapabilityEnabled,
     ephemeralSkillsToggle,
     skillCreateAllowed,
     skillStates,
@@ -647,15 +627,11 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         skippedAgentIds.add(agentId);
         return null;
       }
-      const subagentSkillScope = await resolveAgentSkillScope({
+      const scopedSkillIds = resolveAgentScopedSkillIds({
         agent,
-        directAccessibleSkillIds: accessibleSkillIds,
-        skillsCapabilityEnabled: skillsDelegationEnabled,
-        skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+        accessibleSkillIds,
+        skillsCapabilityEnabled,
         ephemeralSkillsToggle,
-        isPersistedAndAuthorizedAgent: true, // VIEW already checked above
-        findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
-        tenantId,
       });
       const scopedEditableSkillIds = resolveAgentScopedSkillIds({
         agent,
@@ -674,7 +650,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
           parentMessageId,
           endpointOption: { ...endpointOption, endpoint: EModelEndpoint.agents },
           allowedProviders,
-          agentSkillScope: subagentSkillScope,
+          accessibleSkillIds: scopedSkillIds,
           skillAuthoringAvailable: canAuthorSkillFiles({
             agent,
             scopedEditableSkillIds,
@@ -708,7 +684,6 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
           listSkillsByAccess: skillDbMethods.listSkillsByAccess,
           listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
           getSkillByName: skillDbMethods.getSkillByName,
-          findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
         },
       );
       agentConfigs.set(agentId, config);

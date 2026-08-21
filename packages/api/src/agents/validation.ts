@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { MAX_SUBAGENTS, ViolationTypes, ErrorTypes } from 'librechat-data-provider';
 import type { Agent, TModelsConfig } from 'librechat-data-provider';
-import { Types } from 'mongoose';
 import type { Request, Response } from 'express';
 
 /**
@@ -690,7 +689,6 @@ export const agentBaseSchema: z.ZodObject<
   tools: z.array(z.string()).optional(),
   skills: z.array(z.string()).optional(),
   skills_enabled: z.boolean().optional(),
-  allow_other_skills: z.boolean().optional(),
   /** @deprecated Use edges instead */
   agent_ids: z.array(z.string()).optional(),
   edges: z.array(graphEdgeSchema).optional(),
@@ -1371,81 +1369,6 @@ export const agentUpdateSchema: z.ZodObject<
   provider: z.string().optional(),
   model: z.string().nullable().optional(),
 });
-
-export interface ValidateSkillAttachmentsParams {
-  /** Skill IDs being newly added in this create/update request. */
-  newSkillIds: string[];
-  /** Skill IDs already present on the agent (retained; no recheck needed). */
-  existingSkillIds: string[];
-  /** Skill ObjectIds the editor can directly SHARE (has PermissionBits.SHARE). */
-  editorShareableSkillIds: Types.ObjectId[];
-  tenantId?: string | null;
-  /** Batched existence check — returns only IDs that exist in the DB. */
-  findExistingSkillIdsForTenant: (
-    ids: Types.ObjectId[],
-    tenantId?: string | null,
-  ) => Promise<Types.ObjectId[]>;
-}
-
-export interface ValidateSkillAttachmentsResult {
-  /** IDs that were found in the DB but the editor lacks SHARE permission. */
-  forbidden: string[];
-  /** IDs that could not be found in the DB at all (malformed or deleted). */
-  invalid: string[];
-}
-
-/**
- * Validates skill IDs being newly attached to an agent. Attachment is a sharing
- * action — the editor must have direct SHARE access to each newly added skill.
- *
- * Existing retained IDs are skipped (MCP tool update pattern: an editor can
- * retain skills they can no longer share, but cannot re-add them once removed).
- *
- * Returns separate `forbidden` and `invalid` lists so callers can respond with
- * HTTP 403 vs 400 respectively.
- */
-export async function validateSkillAttachments({
-  newSkillIds,
-  editorShareableSkillIds,
-  tenantId,
-  findExistingSkillIdsForTenant,
-}: ValidateSkillAttachmentsParams): Promise<ValidateSkillAttachmentsResult> {
-  if (newSkillIds.length === 0) {
-    return { forbidden: [], invalid: [] };
-  }
-
-  const shareableSet = new Set(editorShareableSkillIds.map((id) => id.toString()));
-
-  const candidateObjectIds: Types.ObjectId[] = [];
-  const invalid: string[] = [];
-
-  for (const id of newSkillIds) {
-    if (!Types.ObjectId.isValid(id)) {
-      invalid.push(id);
-      continue;
-    }
-    candidateObjectIds.push(new Types.ObjectId(id));
-  }
-
-  if (candidateObjectIds.length === 0) {
-    return { forbidden: [], invalid };
-  }
-
-  const existingInDb = await findExistingSkillIdsForTenant(candidateObjectIds, tenantId);
-  const existingSet = new Set(existingInDb.map((id) => id.toString()));
-
-  const forbidden: string[] = [];
-  for (const oid of candidateObjectIds) {
-    const idStr = oid.toString();
-    if (!existingSet.has(idStr)) {
-      invalid.push(idStr);
-    } else if (!shareableSet.has(idStr)) {
-      forbidden.push(idStr);
-    }
-  }
-
-  return { forbidden, invalid };
-}
 
 export interface ValidateAgentModelParams {
   req: LooseRequest;

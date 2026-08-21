@@ -15,7 +15,6 @@ interface SharePermissionCache {
 type ShareRequest = ServerRequest & {
   params: {
     resourceType?: string;
-    resourceId?: string;
   };
   body: RequestBody & {
     public?: boolean;
@@ -35,7 +34,6 @@ interface ShareContext {
 export interface SharePolicyDeps {
   getRoleByName: (roleName: string, fieldsToSelect?: string | string[]) => Promise<IRole | null>;
   hasCapability: HasCapabilityFn;
-  getAgentById?: (params: { id: string }) => Promise<{ skills?: string[] } | null>;
 }
 
 type ShareMiddleware = (
@@ -92,11 +90,7 @@ function getShareContext(req: ShareRequest, res: Response, action: string): Shar
   };
 }
 
-export function createSharePolicyMiddleware({
-  getRoleByName,
-  hasCapability,
-  getAgentById,
-}: SharePolicyDeps): {
+export function createSharePolicyMiddleware({ getRoleByName, hasCapability }: SharePolicyDeps): {
   checkShareAccess: ShareMiddleware;
   checkSharePublicAccess: ShareMiddleware;
 } {
@@ -239,43 +233,6 @@ export function createSharePolicyMiddleware({
           error: 'Forbidden',
           message: `You do not have permission to share ${resourceType} resources publicly`,
         });
-      }
-
-      // P3: When publicly sharing an agent that has attached skills, the editor
-      // must also hold SKILLS.SHARE_PUBLIC — otherwise skill content is exposed
-      // publicly without the editor having that right on the skills resource type.
-      if (resourceType === ResourceType.AGENT && getAgentById) {
-        const resourceId = req.params.resourceId;
-        if (resourceId) {
-          const agent = await getAgentById({ id: resourceId });
-          if (agent?.skills?.length) {
-            const skillsContext: ShareContext = {
-              user,
-              resourceType: ResourceType.SKILL,
-              permissionType: PermissionTypes.SKILLS,
-            };
-            const skillPermsResult = await getResourcePerms(
-              req,
-              res,
-              'public sharing',
-              skillsContext,
-            );
-            if (!skillPermsResult) {
-              return;
-            }
-            const canShareSkillsPublic =
-              skillPermsResult.resourcePerms[Permissions.SHARE_PUBLIC] === true;
-            if (!canShareSkillsPublic) {
-              logger.warn(
-                `[checkSharePublicAccess][${user.id}] User denied SKILLS.SHARE_PUBLIC when sharing agent with skills`,
-              );
-              return res.status(403).json({
-                error: 'Forbidden',
-                message: 'You do not have permission to share skills publicly',
-              });
-            }
-          }
-        }
       }
 
       return next();

@@ -5,7 +5,7 @@ import { formatSkillCatalog, SkillToolDefinition } from '@librechat/agents';
 import type { LCToolRegistry, LCTool, InjectedMessage } from '@librechat/agents';
 import type { BaseMessage } from '@librechat/agents/langchain/messages';
 import type { Agent } from 'librechat-data-provider';
-import { Types } from 'mongoose';
+import type { Types } from 'mongoose';
 import type { InitializeAgentDbMethods } from './initialize';
 import { registerCodeExecutionTools } from './tools';
 import { logAxiosError } from '~/utils';
@@ -275,225 +275,6 @@ export function resolveAgentScopedSkillIds(
   return scopeSkillIds(accessibleSkillIds, agent.skills);
 }
 
-/**
- * Request-scoped skill scope produced by {@link resolveAgentSkillScope}.
- * Tracks provenance (required vs optional) so activation resolution can
- * bypass user-state checks for required skills without altering global ACL.
- */
-export interface AgentSkillScope {
-  /** Skills explicitly referenced by the agent's allowlist (persisted + authorized). */
-  requiredSkillIds: Types.ObjectId[];
-  /** Directly accessible skills included because `allow_other_skills` is true. */
-  optionalSkillIds: Types.ObjectId[];
-  /** Union of required and optional — the working set for this agent run. */
-  effectiveSkillIds: Types.ObjectId[];
-  /** Set of stringified IDs for O(1) required-skill membership checks. */
-  requiredSkillIdSet: Set<string>;
-}
-
-export const emptyScope: AgentSkillScope = {
-  requiredSkillIds: [],
-  optionalSkillIds: [],
-  effectiveSkillIds: [],
-  requiredSkillIdSet: new Set(),
-};
-
-export interface ResolveAgentSkillScopeParams {
-  /** Agent being initialized. */
-  agent: Pick<Agent, 'id' | 'skills' | 'skills_enabled' | 'allow_other_skills'>;
-  /** Full set of skill IDs the user can VIEW directly (pre-ACL). */
-  directAccessibleSkillIds: Types.ObjectId[];
-  skillsCapabilityEnabled: boolean;
-  ephemeralSkillsToggle: boolean;
-  /**
-   * Whether this agent is persisted (non-ephemeral) AND the current user is
-   * authorized to invoke it. Only persisted + authorized agents may delegate
-   * required skills to recipients who lack direct Skill VIEW access.
-   */
-  isPersistedAndAuthorizedAgent: boolean;
-  /**
-   * When true, `skillsCapabilityEnabled` is false because the user's role
-   * specifically denied SKILLS.USE (not because the capability is globally
-   * disabled). A persisted agent with required skills configured must fail
-   * loudly in this case rather than silently proceeding without its
-   * dependencies.
-   */
-  skillsUseDenied?: boolean;
-  /** Batched DB existence check — returns only the IDs that still exist. */
-  findExistingSkillIdsForTenant: (
-    ids: Types.ObjectId[],
-    tenantId?: string | null,
-  ) => Promise<Types.ObjectId[]>;
-  tenantId?: string | null;
-}
-
-/**
- * Resolves the full agent-scoped skill authorization structure for a single run.
- *
- * Semantics (preserved from `resolveAgentScopedSkillIds` + delegation layer):
- * - Ephemeral agents → no delegation; use the direct-accessible catalog only.
- * - Persisted + authorized agents → required skills are taken directly from
- *   the persisted `agent.skills` allowlist after an existence DB check, even
- *   if the invoking user lacks direct Skill VIEW access.
- * - `allow_other_skills` default:
- *   `agent.allow_other_skills ?? (!Array.isArray(agent.skills) || agent.skills.length === 0)`
- *   This preserves backward compat: enabled agents with no selected skills
- *   keep the full accessible catalog; agents with selected skills default to
- *   selected-only scope.
- * - Required skills bypass user skillStates and defaultActiveOnShare (see
- *   `resolveSkillActive`). Optional skills follow normal activation rules.
- */
-export async function resolveAgentSkillScope(
-  params: ResolveAgentSkillScopeParams,
-): Promise<AgentSkillScope> {
-  const {
-    agent,
-    directAccessibleSkillIds,
-    skillsCapabilityEnabled,
-    ephemeralSkillsToggle,
-    isPersistedAndAuthorizedAgent,
-    skillsUseDenied,
-    findExistingSkillIdsForTenant,
-    tenantId,
-  } = params;
-
-  if (!skillsCapabilityEnabled) {
-    // Any time skills cannot be resolved — whether because the capability is
-    // globally disabled or because the user's role lacks SKILLS.USE — a
-    // persisted agent that declared required skills must fail hard rather than
-    // silently run without its dependencies.
-    if (
-      isPersistedAndAuthorizedAgent &&
-      agent.skills_enabled === true &&
-      Array.isArray(agent.skills) &&
-      agent.skills.length > 0
-    ) {
-      const reason = skillsUseDenied ? 'SKILLS.USE denied' : 'Skills capability disabled';
-      const err = new Error(
-        JSON.stringify({
-          code: 'AGENT_SKILL_DEPENDENCY_MISSING',
-          agent_id: agent.id,
-          reason,
-        }),
-      );
-      (err as Error & { code?: string }).code = 'AGENT_SKILL_DEPENDENCY_MISSING';
-      throw err;
-    }
-    return emptyScope;
-  }
-
-  const isEphemeral = isEphemeralAgentId(agent.id);
-
-  // Ephemeral agents keep existing behavior — no delegation path.
-  // Mirror resolveAgentScopedSkillIds: skills_enabled===false → empty;
-  // skills_enabled===true → model-spec scoping; unset → badge toggle.
-  if (isEphemeral) {
-    if (agent.skills_enabled === false) {
-      return emptyScope;
-    }
-    let ephemeralIds: Types.ObjectId[];
-    if (agent.skills_enabled === true) {
-      if (Array.isArray(agent.skills) && agent.skills.length === 0) {
-        return emptyScope;
-      }
-      ephemeralIds = Array.isArray(agent.skills)
-        ? directAccessibleSkillIds.filter((id) =>
-            new Set(agent.skills as string[]).has(id.toString()),
-          )
-        : directAccessibleSkillIds;
-    } else {
-      ephemeralIds = ephemeralSkillsToggle ? directAccessibleSkillIds : [];
-    }
-    return {
-      requiredSkillIds: [],
-      optionalSkillIds: ephemeralIds,
-      effectiveSkillIds: ephemeralIds,
-      requiredSkillIdSet: new Set(),
-    };
-  }
-
-  if (agent.skills_enabled !== true) {
-    return emptyScope;
-  }
-
-  const selectedRefs = Array.isArray(agent.skills) ? [...new Set(agent.skills)] : [];
-
-  if (selectedRefs.length > SKILL_CATALOG_LIMIT) {
-    const err = new Error(
-      JSON.stringify({
-        code: 'AGENT_SKILL_CATALOG_OVERFLOW',
-        agent_id: agent.id,
-        skill_count: selectedRefs.length,
-        limit: SKILL_CATALOG_LIMIT,
-      }),
-    );
-    (err as Error & { code?: string }).code = 'AGENT_SKILL_CATALOG_OVERFLOW';
-    throw err;
-  }
-
-  // Validate and partition the selected refs into valid ObjectIds vs malformed.
-  const validSelectedIds: Types.ObjectId[] = [];
-  let malformedCount = 0;
-  for (const ref of selectedRefs) {
-    if (Types.ObjectId.isValid(ref)) {
-      validSelectedIds.push(new Types.ObjectId(ref));
-    } else {
-      malformedCount += 1;
-    }
-  }
-
-  // One batched DB query to confirm which selected IDs still exist.
-  const existingSelectedIds = isPersistedAndAuthorizedAgent
-    ? await findExistingSkillIdsForTenant(validSelectedIds, tenantId)
-    : [];
-  const existingSelectedIdSet = new Set(existingSelectedIds.map((id) => id.toString()));
-
-  const requiredSkillIds = existingSelectedIds;
-  const requiredSkillIdSet = new Set(requiredSkillIds.map((id) => id.toString()));
-
-  const allowOtherSkills =
-    agent.allow_other_skills ?? (!Array.isArray(agent.skills) || agent.skills.length === 0);
-
-  const optionalSkillIds = allowOtherSkills
-    ? directAccessibleSkillIds.filter((id) => !requiredSkillIdSet.has(id.toString()))
-    : [];
-
-  // Deduplicate the union: required first (preserves required-wins semantics).
-  const effectiveSet = new Set<string>();
-  const effectiveSkillIds: Types.ObjectId[] = [];
-  for (const id of requiredSkillIds) {
-    const key = id.toString();
-    if (!effectiveSet.has(key)) {
-      effectiveSet.add(key);
-      effectiveSkillIds.push(id);
-    }
-  }
-  for (const id of optionalSkillIds) {
-    const key = id.toString();
-    if (!effectiveSet.has(key)) {
-      effectiveSet.add(key);
-      effectiveSkillIds.push(id);
-    }
-  }
-
-  const missingCount =
-    malformedCount +
-    validSelectedIds.filter((id) => !existingSelectedIdSet.has(id.toString())).length;
-  if (missingCount > 0) {
-    const err = new Error(
-      JSON.stringify({
-        code: 'AGENT_SKILL_DEPENDENCY_MISSING',
-        agent_id: agent.id,
-        missing_count: missingCount,
-      }),
-    );
-    (err as Error & { code?: string }).code = 'AGENT_SKILL_DEPENDENCY_MISSING';
-    throw err;
-  }
-
-  return { requiredSkillIds, optionalSkillIds, effectiveSkillIds, requiredSkillIdSet };
-}
-
 export interface ResolveSkillActiveParams {
   /** Skill being evaluated. Only `_id` and `author` matter for resolution. */
   skill: { _id: Types.ObjectId | string; author: Types.ObjectId | string; deployment?: boolean };
@@ -503,32 +284,20 @@ export interface ResolveSkillActiveParams {
   userId?: string;
   /** Admin-configured default for shared skills. `true` = shared skills auto-activate. */
   defaultActiveOnShare?: boolean;
-  /**
-   * When `true`, the skill is required by the agent scope and bypasses all
-   * user-state checks — it is always active for the current run.
-   */
-  isRequired?: boolean;
 }
 
 /**
  * Resolves whether a skill should be injected into the agent catalog for the
  * current user. Precedence (pinned by unit tests):
  *
- * 0. Required skills (`isRequired === true`) are always active — bypasses all
- *    user-state checks. Required status takes precedence over `skillStates`,
- *    ownership defaults, and `defaultActiveOnShare`.
- * 1. Explicit override in `skillStates` wins above all (for non-required skills).
+ * 1. Explicit override in `skillStates` wins above all.
  * 2. Absent `userId` → fail closed. The caller lost user context, so we do
  *    not fall back to ownership-based defaults that could leak shared skills.
  * 3. Owned skills (author === userId) default to **active**.
  * 4. Shared skills default to `defaultActiveOnShare` (admin-configured, default `false`).
  */
 export function resolveSkillActive(params: ResolveSkillActiveParams): boolean {
-  const { skill, skillStates, userId, defaultActiveOnShare = false, isRequired = false } = params;
-  // Required skills are always active — bypasses all user-state checks.
-  if (isRequired) {
-    return true;
-  }
+  const { skill, skillStates, userId, defaultActiveOnShare = false } = params;
   const override = skillStates?.[skill._id.toString()];
   if (override !== undefined) {
     return override;
@@ -559,8 +328,6 @@ export interface InjectSkillCatalogParams {
   defaultActiveOnShare?: boolean;
   /** Admin-configured cap on the model-visible catalog. Defaults to 100. */
   maxCatalogSkills?: number;
-  /** Set of required skill IDs (from AgentSkillScope). Required skills are always active. */
-  requiredSkillIdSet?: Set<string>;
 }
 
 export interface InjectSkillCatalogResult {
@@ -613,7 +380,6 @@ export async function injectSkillCatalog(
     skillStates,
     defaultActiveOnShare = false,
     maxCatalogSkills,
-    requiredSkillIdSet,
   } = params;
   const catalogLimit = normalizeSkillCatalogLimit(maxCatalogSkills);
 
@@ -629,13 +395,7 @@ export async function injectSkillCatalog(
   type SkillSummary = Awaited<ReturnType<NonNullable<typeof listSkillsByAccess>>>['skills'][number];
 
   const isActive = (s: SkillSummary): boolean =>
-    resolveSkillActive({
-      skill: s,
-      skillStates,
-      userId,
-      defaultActiveOnShare,
-      isRequired: requiredSkillIdSet?.has(s._id.toString()) ?? false,
-    });
+    resolveSkillActive({ skill: s, skillStates, userId, defaultActiveOnShare });
 
   const activeSkills: SkillSummary[] = [];
   /**
@@ -652,53 +412,9 @@ export async function injectSkillCatalog(
   let pages = 0;
   let reachedEnd = false;
 
-  // P8: When required skills are present, fetch them first so they are
-  // guaranteed to occupy catalog slots before optional skills — the
-  // updatedAt-DESC cursor sort may otherwise push old required skills
-  // past the catalog limit and silently drop them.
-  const seenSkillIds = new Set<string>();
-  if (requiredSkillIdSet && requiredSkillIdSet.size > 0) {
-    const requiredIds = accessibleSkillIds.filter((id) => requiredSkillIdSet.has(id.toString()));
-    if (requiredIds.length > 0) {
-      const requiredPage = await listSkillsByAccess({
-        accessibleIds: requiredIds,
-        limit: requiredIds.length,
-        cursor: null,
-      });
-      for (const skill of requiredPage.skills) {
-        if (isActive(skill)) {
-          activeSkills.push(skill);
-          seenSkillIds.add(skill._id.toString());
-          if (skill.disableModelInvocation !== true) {
-            visibleCount += 1;
-          }
-        }
-      }
-      // Overflow check runs after the fetch so only model-visible required
-      // skills (disableModelInvocation !== true) count against the catalog
-      // limit — non-invocable required skills cost zero context slots.
-      if (visibleCount > catalogLimit) {
-        const err = new Error(
-          JSON.stringify({
-            code: 'AGENT_SKILL_CATALOG_OVERFLOW',
-            required_visible_count: visibleCount,
-            catalog_limit: catalogLimit,
-          }),
-        );
-        (err as Error & { code?: string }).code = 'AGENT_SKILL_CATALOG_OVERFLOW';
-        throw err;
-      }
-    }
-  }
-
-  const optionalIds =
-    seenSkillIds.size > 0
-      ? accessibleSkillIds.filter((id) => !seenSkillIds.has(id.toString()))
-      : accessibleSkillIds;
-
   while (visibleCount < catalogLimit && pages < MAX_CATALOG_PAGES) {
     const page = await listSkillsByAccess({
-      accessibleIds: optionalIds,
+      accessibleIds: accessibleSkillIds,
       limit: CATALOG_PAGE_SIZE,
       cursor,
     });
@@ -706,9 +422,6 @@ export async function injectSkillCatalog(
     for (const skill of page.skills) {
       if (visibleCount >= catalogLimit) {
         break;
-      }
-      if (seenSkillIds.has(skill._id.toString())) {
-        continue;
       }
       /**
        * Active set keeps `disable-model-invocation` skills so the runtime
@@ -931,8 +644,6 @@ export interface ResolveManualSkillsParams {
   skillStates?: Record<string, boolean>;
   /** Admin-configured default for shared skills. */
   defaultActiveOnShare?: boolean;
-  /** Set of required skill IDs (from AgentSkillScope). Required skills bypass active-state checks. */
-  requiredSkillIdSet?: Set<string>;
 }
 
 /**
@@ -1002,15 +713,8 @@ export type ResolvedAlwaysApplySkill = ResolvedSkillPrime;
 export async function resolveManualSkills(
   params: ResolveManualSkillsParams,
 ): Promise<ResolvedManualSkill[]> {
-  const {
-    names,
-    getSkillByName,
-    accessibleSkillIds,
-    userId,
-    skillStates,
-    defaultActiveOnShare,
-    requiredSkillIdSet,
-  } = params;
+  const { names, getSkillByName, accessibleSkillIds, userId, skillStates, defaultActiveOnShare } =
+    params;
 
   if (!names.length || accessibleSkillIds.length === 0) {
     return [];
@@ -1092,7 +796,6 @@ export async function resolveManualSkills(
           skillStates,
           userId,
           defaultActiveOnShare,
-          isRequired: requiredSkillIdSet?.has(skill._id.toString()) ?? false,
         });
         if (!active) {
           logger.warn(`[resolveManualSkills] Skill "${name}" is inactive for this user — skipping`);
@@ -1154,8 +857,6 @@ export interface ResolveAlwaysApplySkillsParams {
   defaultActiveOnShare?: boolean;
   /** Override cap on the number of always-apply primes to resolve. Defaults to `MAX_ALWAYS_APPLY_SKILLS`. */
   maxAlwaysApplySkills?: number;
-  /** Set of required skill IDs (from AgentSkillScope). Required skills bypass active-state checks. */
-  requiredSkillIdSet?: Set<string>;
 }
 
 /**
@@ -1201,7 +902,6 @@ export async function resolveAlwaysApplySkills(
     skillStates,
     defaultActiveOnShare,
     maxAlwaysApplySkills = MAX_ALWAYS_APPLY_SKILLS,
-    requiredSkillIdSet,
   } = params;
 
   if (accessibleSkillIds.length === 0 || maxAlwaysApplySkills <= 0) {
@@ -1245,7 +945,6 @@ export async function resolveAlwaysApplySkills(
         skillStates,
         userId,
         defaultActiveOnShare,
-        isRequired: requiredSkillIdSet?.has(skill._id.toString()) ?? false,
       });
       if (!active) {
         /**

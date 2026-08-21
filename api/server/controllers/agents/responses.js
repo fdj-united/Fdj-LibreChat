@@ -29,7 +29,6 @@ const {
   createToolExecuteHandler,
   getRemoteAgentPermissions,
   resolveAgentScopedSkillIds,
-  resolveAgentSkillScope,
   // Responses API
   writeDone,
   buildResponse,
@@ -67,7 +66,6 @@ const {
   withDeploymentSkillIds,
   buildAgentToolContext,
   enrichLoadedToolsWithAgentContext,
-  canUseSkills: canUseSkillsCheck,
 } = require('~/server/services/Endpoints/agents/skillDeps');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { resolveConfigServers } = require('~/server/services/MCP');
@@ -389,15 +387,12 @@ const createResponse = async (req, res) => {
       listSkillsByAccess: skillDbMethods.listSkillsByAccess,
       listAlwaysApplySkills: skillDbMethods.listAlwaysApplySkills,
       getSkillByName: skillDbMethods.getSkillByName,
-      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
     };
 
     const enabledCapabilities = new Set(
       appConfig?.endpoints?.[EModelEndpoint.agents]?.capabilities,
     );
     const skillsCapabilityEnabled = enabledCapabilities.has(AgentCapabilities.skills);
-    const skillsUseAllowed = skillsCapabilityEnabled ? await canUseSkillsCheck({ req }) : false;
-    const skillsDelegationEnabled = skillsCapabilityEnabled && skillsUseAllowed;
     const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
     const accessibleSkillIds = skillsCapabilityEnabled
       ? withDeploymentSkillIds(
@@ -429,17 +424,12 @@ const createResponse = async (req, res) => {
     });
 
     const manualSkills = extractManualSkills(req.body);
-    const tenantId = req.user?.tenantId ?? null;
 
-    const primaryAgentSkillScope = await resolveAgentSkillScope({
+    const primaryScopedSkillIds = resolveAgentScopedSkillIds({
       agent,
-      directAccessibleSkillIds: accessibleSkillIds,
-      skillsCapabilityEnabled: skillsDelegationEnabled,
-      skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+      accessibleSkillIds,
+      skillsCapabilityEnabled,
       ephemeralSkillsToggle,
-      isPersistedAndAuthorizedAgent: true, // agent VIEW already checked by route middleware
-      findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
-      tenantId,
     });
     const primaryScopedEditableSkillIds = resolveAgentScopedSkillIds({
       agent,
@@ -460,7 +450,7 @@ const createResponse = async (req, res) => {
         endpointOption,
         allowedProviders,
         isInitialAgent: true,
-        agentSkillScope: primaryAgentSkillScope,
+        accessibleSkillIds: primaryScopedSkillIds,
         skillAuthoringAvailable: canAuthorSkillFiles({
           agent,
           scopedEditableSkillIds: primaryScopedEditableSkillIds,
@@ -522,16 +512,12 @@ const createResponse = async (req, res) => {
           // sub-agent must clear the same sharing boundary, not the looser
           // in-app AGENT one.
           resourceType: ResourceType.REMOTE_AGENT,
-          computeAgentSkillScope: (handoffAgent) =>
-            resolveAgentSkillScope({
+          computeAccessibleSkillIds: (handoffAgent) =>
+            resolveAgentScopedSkillIds({
               agent: handoffAgent,
-              directAccessibleSkillIds: accessibleSkillIds,
-              skillsCapabilityEnabled: skillsDelegationEnabled,
-              skillsUseDenied: skillsCapabilityEnabled && !skillsUseAllowed,
+              accessibleSkillIds,
+              skillsCapabilityEnabled,
               ephemeralSkillsToggle,
-              isPersistedAndAuthorizedAgent: true,
-              findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
-              tenantId,
             }),
           computeSkillAuthoringAvailable: (handoffAgent) =>
             canAuthorSkillFiles({

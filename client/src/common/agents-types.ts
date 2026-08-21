@@ -41,7 +41,6 @@ export type AgentForm = {
   tool_options?: AgentToolOptions;
   skills?: string[];
   skills_enabled?: boolean;
-  allow_other_skills?: boolean;
   provider?: AgentProvider | OptionWithIcon;
   /** @deprecated Use edges instead */
   agent_ids?: string[];

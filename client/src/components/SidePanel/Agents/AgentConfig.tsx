@@ -493,31 +493,6 @@ export default function AgentConfig() {
                 </button>
               </div>
             </div>
-            {skillsActive === true && (skills ?? []).length > 0 && (
-              <div className="mt-3 flex items-center gap-2">
-                <Controller
-                  name="allow_other_skills"
-                  control={control}
-                  render={({ field }) => (
-                    <input
-                      id="allow_other_skills"
-                      type="checkbox"
-                      checked={field.value === true}
-                      onChange={(e) => field.onChange(e.target.checked)}
-                      className="h-4 w-4 rounded border-border-medium text-text-primary focus:ring-text-primary"
-                      aria-label={localize('com_agents_allow_other_skills')}
-                    />
-                  )}
-                />
-                <label
-                  htmlFor="allow_other_skills"
-                  className="cursor-pointer select-none text-sm text-text-secondary"
-                  title={localize('com_agents_allow_other_skills_tooltip')}
-                >
-                  {localize('com_agents_allow_other_skills')}
-                </label>
-              </div>
-            )}
           </div>
         )}
 
