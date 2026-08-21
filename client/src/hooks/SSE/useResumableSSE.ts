@@ -908,21 +908,41 @@ export default function useResumableSSE(
 
         // Check for 401 and try to refresh token (same pattern as useSSE)
         if (responseCode === 401) {
-          try {
-            const refreshResponse = await request.refreshToken();
-            const newToken = refreshResponse?.token ?? '';
-            if (!newToken) {
-              throw new Error('Token refresh failed.');
-            }
+          const { token: newToken, redirected } = await request.recoverAuth();
+          if (newToken) {
             sse.headers = {
               Authorization: `Bearer ${newToken}`,
             };
-            request.dispatchTokenUpdatedEvent(newToken);
             sse.stream();
             return;
-          } catch (error) {
-            console.log('[ResumableSSE] Token refresh failed:', error);
           }
+
+          if (redirected) {
+            console.log('[ResumableSSE] Token refresh redirected to login');
+            /**
+             * Login navigation is underway — do not fall through into the generic
+             * reconnect path, which would open a new SSE against a dead session.
+             */
+            sse.close();
+            removeActiveJob(currentStreamId);
+            resetLive({ ...currentSubmission, userMessage });
+            if (
+              !createdStreamIdsRef.current.has(currentStreamId) &&
+              optimisticStreamIdsRef.current.has(currentStreamId)
+            ) {
+              removeConvoFromAllQueries(queryClient, currentStreamId);
+            }
+            errorHandler({ data: undefined, submission: currentSubmission as EventSubmission });
+            setIsSubmitting(false);
+            setShowStopButton(false);
+            setStreamId(null);
+            optimisticStreamIdsRef.current.delete(currentStreamId);
+            createdStreamIdsRef.current.delete(currentStreamId);
+            reconnectAttemptRef.current = 0;
+            return;
+          }
+
+          console.log('[ResumableSSE] Token refresh failed transiently — will reconnect');
         }
 
         /**

@@ -10,6 +10,20 @@ instrumentMongooseQueryMetrics(mongoose);
 if (!MONGO_URI) {
   throw new Error('Please define the MONGO_URI environment variable');
 }
+/** Parses a non-negative integer duration in milliseconds from the named env var. Unset/empty returns undefined; a malformed explicit value fails startup so the URI-configured timeout is never silently kept. Zero is preserved — the driver treats 0 as "disable the timeout". */
+const parseNonNegativeMs = (name) => {
+  const value = process.env[name];
+  if (value == null || value.trim() === '') {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(
+      `Invalid ${name} value: "${value}". Expected a non-negative integer in milliseconds.`,
+    );
+  }
+  return parsed;
+};
 /** The maximum number of connections in the connection pool. */
 const maxPoolSize = parseInt(process.env.MONGO_MAX_POOL_SIZE) || undefined;
 /** The minimum number of connections in the connection pool. */
@@ -20,6 +34,10 @@ const maxConnecting = parseInt(process.env.MONGO_MAX_CONNECTING) || undefined;
 const maxIdleTimeMS = parseInt(process.env.MONGO_MAX_IDLE_TIME_MS) || undefined;
 /** The maximum time in milliseconds that a thread can wait for a connection to become available. */
 const waitQueueTimeoutMS = parseInt(process.env.MONGO_WAIT_QUEUE_TIMEOUT_MS) || undefined;
+/** The maximum time in milliseconds to attempt a send or receive on a socket before timing out. Takes precedence over `socketTimeoutMS` in `MONGO_URI`; 0 disables the timeout. */
+const socketTimeoutMS = parseNonNegativeMs('MONGO_SOCKET_TIMEOUT_MS');
+/** The maximum time in milliseconds to establish a single TCP/TLS connection before timing out. Takes precedence over `connectTimeoutMS` in `MONGO_URI`; 0 disables the timeout. */
+const connectTimeoutMS = parseNonNegativeMs('MONGO_CONNECT_TIMEOUT_MS');
 /** Set to false to disable automatic index creation for all models associated with this connection. */
 const autoIndex =
   process.env.MONGO_AUTO_INDEX != undefined
@@ -46,6 +64,43 @@ mongoose.connection.on('error', (err) => {
   logger.error('[connectDb] MongoDB connection error:', err);
 });
 
+const URI_DIAGNOSTIC_PARAMS = new Set([
+  'sockettimeoutms',
+  'connecttimeoutms',
+  'retryreads',
+  'retrywrites',
+  'readpreference',
+]);
+
+/** Extracts timeout/retry-related query params declared in the connection string for startup diagnostics; never includes credentials. */
+function getUriDriverParams(uri) {
+  const queryIndex = uri.indexOf('?');
+  if (queryIndex === -1) {
+    return {};
+  }
+  const declared = {};
+  for (const [key, value] of new URLSearchParams(uri.slice(queryIndex + 1))) {
+    if (URI_DIAGNOSTIC_PARAMS.has(key.toLowerCase())) {
+      declared[key] = value;
+    }
+  }
+  return declared;
+}
+
+/** Logs the driver's effective timeout/retry settings after URI params and explicit options are merged. */
+function logResolvedDriverOptions(mongooseInstance) {
+  const clientOptions = mongooseInstance.connection.getClient().options;
+  logger.info(
+    `Mongo resolved driver options: ${JSON.stringify({
+      socketTimeoutMS: clientOptions.socketTimeoutMS,
+      connectTimeoutMS: clientOptions.connectTimeoutMS,
+      retryReads: clientOptions.retryReads,
+      retryWrites: clientOptions.retryWrites,
+      readPreference: clientOptions.readPreference?.mode,
+    })}`,
+  );
+}
+
 async function connectDb() {
   if (cached.conn && cached.conn?._readyState === 1) {
     return cached.conn;
@@ -60,6 +115,8 @@ async function connectDb() {
       ...(maxConnecting ? { maxConnecting } : {}),
       ...(maxIdleTimeMS ? { maxIdleTimeMS } : {}),
       ...(waitQueueTimeoutMS ? { waitQueueTimeoutMS } : {}),
+      ...(socketTimeoutMS !== undefined ? { socketTimeoutMS } : {}),
+      ...(connectTimeoutMS !== undefined ? { connectTimeoutMS } : {}),
       ...(autoIndex != undefined ? { autoIndex } : {}),
       ...(autoCreate != undefined ? { autoCreate } : {}),
       // useNewUrlParser: true,
@@ -70,9 +127,14 @@ async function connectDb() {
     };
     logger.info('Mongo Connection options');
     logger.info(JSON.stringify(opts, null, 2));
+    const uriDriverParams = getUriDriverParams(MONGO_URI);
+    if (Object.keys(uriDriverParams).length > 0) {
+      logger.info(`MONGO_URI driver params: ${JSON.stringify(uriDriverParams)}`);
+    }
     mongoose.set('strictQuery', true);
-    cached.promise = mongoose.connect(MONGO_URI, opts).then((mongoose) => {
-      return mongoose;
+    cached.promise = mongoose.connect(MONGO_URI, opts).then((mongooseInstance) => {
+      logResolvedDriverOptions(mongooseInstance);
+      return mongooseInstance;
     });
   }
   cached.conn = await cached.promise;

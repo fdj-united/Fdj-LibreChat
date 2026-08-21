@@ -226,24 +226,17 @@ export default function useSSE(
       /* @ts-ignore */
       if (e.responseCode === 401) {
         /* token expired, refresh and retry */
-        try {
-          const refreshResponse = await request.refreshToken();
-          const token = refreshResponse?.token ?? '';
-          if (!token) {
-            throw new Error('Token refresh failed.');
-          }
+        const { token } = await request.recoverAuth();
+        if (token) {
           sse.headers = {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           };
 
-          request.dispatchTokenUpdatedEvent(token);
           sse.stream();
           return;
-        } catch (error) {
-          /* token refresh failed, continue handling the original 401 */
-          console.log(error);
         }
+        console.log('[SSE] Token refresh failed');
       }
 
       console.log('error in server stream.');
