@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import axios, { AxiosHeaders } from 'axios';
+import axios, { AxiosError, AxiosHeaders } from 'axios';
 import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import type * as t from './types';
 import { setTokenHeader } from './headers-helpers';
@@ -69,10 +69,12 @@ const AUTH_REDIRECT_DEDUPE_MS = 15_000;
 const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 
 type RetryableAxiosRequestConfig = AxiosRequestConfig & { _retry?: boolean };
+type AuthRecoveryReason = 'proactive' | 'reactive';
 
 type AuthRecoveryState = {
   lastRedirectStartedAt: number;
   refreshPromise: Promise<string | null> | null;
+  refreshReason: AuthRecoveryReason | null;
 };
 
 type AuthRecoveryWindow = Window & {
@@ -133,6 +135,7 @@ const getAuthRecoveryState = (): AuthRecoveryState => {
   browserWindow.__librechatAuthRecovery ??= {
     lastRedirectStartedAt: 0,
     refreshPromise: null,
+    refreshReason: null,
   };
   return browserWindow.__librechatAuthRecovery;
 };
@@ -192,20 +195,31 @@ const clearRequestAuthorizationHeader = (config: InternalAxiosRequestConfig) => 
   config.headers = headers;
 };
 
-const isRefreshRequest = (url?: string) => url?.includes('/api/auth/refresh') === true;
+const getApiPathname = (url?: string) => stripBasePath(getRequestPathname(url));
 
-const isAuthRecoveryEndpoint = (url?: string) =>
-  url?.includes('/api/auth/2fa') === true ||
-  url?.includes('/api/auth/logout') === true ||
-  isRefreshRequest(url);
+const isRefreshRequest = (url?: string) => getApiPathname(url) === '/api/auth/refresh';
 
-const startAuthRecovery = (retryRefresh?: boolean) => {
+const isAuthRecoveryEndpoint = (url?: string) => {
+  const pathname = getApiPathname(url);
+  return (
+    pathname === '/api/auth/refresh' ||
+    pathname === '/api/auth/logout' ||
+    pathname === '/api/auth/2fa' ||
+    pathname.startsWith('/api/auth/2fa/')
+  );
+};
+
+const startAuthRecovery = (retryRefresh: boolean, reason: AuthRecoveryReason) => {
   const state = getAuthRecoveryState();
   if (state.refreshPromise) {
+    if (reason === 'reactive') {
+      state.refreshReason = reason;
+    }
     return state.refreshPromise;
   }
 
   dispatchAuthRecoveryEvent('started');
+  state.refreshReason = reason;
   state.refreshPromise = refreshToken(retryRefresh)
     .then((response) => {
       const token = response?.token ?? '';
@@ -217,6 +231,7 @@ const startAuthRecovery = (retryRefresh?: boolean) => {
     })
     .finally(() => {
       state.refreshPromise = null;
+      state.refreshReason = null;
       dispatchAuthRecoveryEvent('finished');
     });
 
@@ -272,6 +287,25 @@ const getBearerTokenTimeUntilExpiry = () => {
   return expiresAt == null ? null : expiresAt - Date.now();
 };
 
+const shouldRedirectAfterRefreshNetworkFailure = (error: unknown, request?: AxiosRequestConfig) => {
+  if (
+    !isRefreshRequest(request?.url) ||
+    !axios.isAxiosError(error) ||
+    error.response != null ||
+    error.code !== AxiosError.ERR_NETWORK ||
+    window.navigator.onLine === false
+  ) {
+    return false;
+  }
+
+  const timeUntilExpiry = getBearerTokenTimeUntilExpiry();
+  return (
+    getAuthRecoveryState().refreshReason === 'reactive' ||
+    timeUntilExpiry == null ||
+    timeUntilExpiry <= 0
+  );
+};
+
 const getResponseStatus = (error: unknown) => {
   if (typeof error !== 'object' || error == null || !('response' in error)) {
     return null;
@@ -284,6 +318,33 @@ const getResponseStatus = (error: unknown) => {
 const isRejectedRefreshSession = (error: unknown) => {
   const status = getResponseStatus(error);
   return status === 401 || status === 403;
+};
+
+/** Deduped reactive auth recovery for callers outside the axios interceptors (e.g. SSE hooks
+ *  reacting to a 401). Joins any in-flight refresh instead of racing a parallel one, and applies
+ *  the interceptors' redirect policy on failure. Always resolves so callers can distinguish a
+ *  login redirect (terminal) from a transient refresh failure (safe to retry/reconnect). */
+const recoverAuth = async (
+  retryRefresh = false,
+): Promise<{ token: string | null; redirected: boolean }> => {
+  try {
+    const token = await startAuthRecovery(retryRefresh, 'reactive');
+    if (!token) {
+      redirectToLoginOnce();
+      return { token: null, redirected: isAuthRedirectInProgress() };
+    }
+    return { token, redirected: false };
+  } catch (error) {
+    if (isRejectedRefreshSession(error)) {
+      redirectToLoginOnce();
+    }
+    /**
+     * The refresh response interceptor may already have started a login redirect
+     * (e.g. App Proxy CORS ERR_NETWORK). Surface that so SSE callers can terminate
+     * instead of reconnecting into a dead session.
+     */
+    return { token: null, redirected: isAuthRedirectInProgress() };
+  }
 };
 
 const shouldRefreshBeforeRequest = (url?: string) => {
@@ -314,6 +375,10 @@ const recoverRequestAuthorization = async (
       return Promise.reject(error);
     }
 
+    if (isAuthRedirectInProgress()) {
+      return Promise.reject(error);
+    }
+
     const timeUntilExpiry = getBearerTokenTimeUntilExpiry();
     if (timeUntilExpiry != null && timeUntilExpiry <= 0) {
       return Promise.reject(error);
@@ -339,7 +404,7 @@ if (typeof window !== 'undefined') {
       return config;
     }
 
-    return recoverRequestAuthorization(config, startAuthRecovery(false));
+    return recoverRequestAuthorization(config, startAuthRecovery(false, 'proactive'));
   });
 
   axios.interceptors.response.use(
@@ -347,6 +412,9 @@ if (typeof window !== 'undefined') {
     async (error) => {
       const originalRequest = error.config as RetryableAxiosRequestConfig | undefined;
       if (!error.response) {
+        if (shouldRedirectAfterRefreshNetworkFailure(error, originalRequest)) {
+          redirectToLoginOnce();
+        }
         return Promise.reject(error);
       }
       if (!originalRequest) {
@@ -387,6 +455,7 @@ if (typeof window !== 'undefined') {
           const token = await startAuthRecovery(
             // Handle edge case where we get a blank screen if the initial 401 error is from a refresh token request
             originalIsRefreshRequest,
+            'reactive',
           );
 
           if (token) {
@@ -420,5 +489,6 @@ export default {
   deleteWithOptions: _deleteWithOptions,
   patch: _patch,
   refreshToken,
+  recoverAuth,
   dispatchTokenUpdatedEvent,
 };
