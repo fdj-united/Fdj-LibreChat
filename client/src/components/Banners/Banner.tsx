@@ -3,8 +3,9 @@ import { useRecoilState } from 'recoil';
 import { Button, cn } from '@librechat/client';
 import { useEffect, useMemo, useRef } from 'react';
 import {
-  CONFIG_HTML_TEXT_TAGS,
-  CONFIG_HTML_CLASS_ATTR,
+  CONFIG_HTML_BANNER_TAGS,
+  CONFIG_HTML_BANNER_ATTR,
+  BANNER_CSS_VALIDATORS,
   createConfigHtmlSanitizer,
 } from '~/utils/configHtml';
 import { useGetBannerQuery } from '~/data-provider';
@@ -17,8 +18,9 @@ export const Banner = ({ onHeightChange }: { onHeightChange?: (height: number) =
   const sanitize = useMemo(
     () =>
       createConfigHtmlSanitizer({
-        allowedTags: CONFIG_HTML_TEXT_TAGS,
-        allowedAttr: CONFIG_HTML_CLASS_ATTR,
+        allowedTags: CONFIG_HTML_BANNER_TAGS,
+        allowedAttr: CONFIG_HTML_BANNER_ATTR,
+        cssValidators: BANNER_CSS_VALIDATORS,
       }),
     [],
   );
@@ -58,7 +60,7 @@ export const Banner = ({ onHeightChange }: { onHeightChange?: (height: number) =
   return (
     <div
       ref={bannerRef}
-      className="sticky top-0 z-20 flex items-center bg-presentation px-2 py-1 text-text-primary dark:bg-gradient-to-r md:relative"
+      className="sticky top-0 z-20 flex max-h-24 items-center overflow-hidden bg-presentation px-2 py-1 text-text-primary dark:bg-gradient-to-r md:relative"
     >
       <div
         className={cn(
