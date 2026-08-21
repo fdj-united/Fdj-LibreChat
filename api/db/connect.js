@@ -20,6 +20,10 @@ const maxConnecting = parseInt(process.env.MONGO_MAX_CONNECTING) || undefined;
 const maxIdleTimeMS = parseInt(process.env.MONGO_MAX_IDLE_TIME_MS) || undefined;
 /** The maximum time in milliseconds that a thread can wait for a connection to become available. */
 const waitQueueTimeoutMS = parseInt(process.env.MONGO_WAIT_QUEUE_TIMEOUT_MS) || undefined;
+/** The maximum time in milliseconds to attempt a send or receive on a socket before timing out. Takes precedence over `socketTimeoutMS` in `MONGO_URI`. */
+const socketTimeoutMS = parseInt(process.env.MONGO_SOCKET_TIMEOUT_MS) || undefined;
+/** The maximum time in milliseconds to establish a single TCP/TLS connection before timing out. Takes precedence over `connectTimeoutMS` in `MONGO_URI`. */
+const connectTimeoutMS = parseInt(process.env.MONGO_CONNECT_TIMEOUT_MS) || undefined;
 /** Set to false to disable automatic index creation for all models associated with this connection. */
 const autoIndex =
   process.env.MONGO_AUTO_INDEX != undefined
@@ -60,6 +64,8 @@ async function connectDb() {
       ...(maxConnecting ? { maxConnecting } : {}),
       ...(maxIdleTimeMS ? { maxIdleTimeMS } : {}),
       ...(waitQueueTimeoutMS ? { waitQueueTimeoutMS } : {}),
+      ...(socketTimeoutMS ? { socketTimeoutMS } : {}),
+      ...(connectTimeoutMS ? { connectTimeoutMS } : {}),
       ...(autoIndex != undefined ? { autoIndex } : {}),
       ...(autoCreate != undefined ? { autoCreate } : {}),
       // useNewUrlParser: true,
