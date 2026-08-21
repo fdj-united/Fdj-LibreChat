@@ -1,4 +1,7 @@
 import {
+  BANNER_CSS_VALIDATORS,
+  CONFIG_HTML_BANNER_ATTR,
+  CONFIG_HTML_BANNER_TAGS,
   CONFIG_HTML_BLOCK_TAGS,
   CONFIG_HTML_CLASS_ATTR,
   CONFIG_HTML_INLINE_TAGS,
@@ -58,5 +61,59 @@ describe('configHtml', () => {
     expect(sanitized).toBe(
       '<span>Powered by <img src="/assets/brand.svg" alt="Brand"> AI</span><img>',
     );
+  });
+});
+
+describe('banner sanitizer', () => {
+  const makeBannerSanitize = () =>
+    createConfigHtmlSanitizer({
+      allowedTags: CONFIG_HTML_BANNER_TAGS,
+      allowedAttr: CONFIG_HTML_BANNER_ATTR,
+      cssValidators: BANNER_CSS_VALIDATORS,
+    });
+
+  it('preserves safe banner styles', () => {
+    const sanitize = makeBannerSanitize();
+    const result = sanitize(
+      '<div style="background-color: #040458; color: white; padding: 14px 16px; margin: -1px -16px;">Message</div>',
+    );
+    expect(result).toContain('background-color');
+    expect(result).toMatch(/(?<!-)color\s*:/);
+    expect(result).toContain('padding');
+    expect(result).toContain('margin');
+  });
+
+  it('strips layout-takeover properties: transform, display, position', () => {
+    const sanitize = makeBannerSanitize();
+    const result = sanitize(
+      '<div style="transform: translateY(100vh) scale(1000); display: none; position: fixed; background-color: red;">x</div>',
+    );
+    expect(result).not.toMatch(/transform\s*:/);
+    expect(result).not.toMatch(/\bdisplay\s*:/);
+    expect(result).not.toMatch(/position\s*:/);
+    expect(result).toContain('background-color');
+  });
+
+  it('strips unbounded padding and margin values exceeding 200px', () => {
+    const sanitize = makeBannerSanitize();
+    const result = sanitize('<div style="padding: 100000px; margin: -100000px;">x</div>');
+    expect(result).not.toContain('100000px');
+  });
+
+  it('does not allow style or div through the shared sanitizer', () => {
+    const sharedSanitize = createConfigHtmlSanitizer({
+      allowedTags: CONFIG_HTML_BLOCK_TAGS,
+      allowedAttr: CONFIG_HTML_CLASS_ATTR,
+    });
+    const result = sharedSanitize('<div style="background-color: red;">text</div>');
+    expect(result).not.toContain('style=');
+    expect(result).not.toContain('<div');
+  });
+
+  it('BANNER_CSS_VALIDATORS does not contain layout-affecting properties', () => {
+    expect(BANNER_CSS_VALIDATORS).not.toHaveProperty('transform');
+    expect(BANNER_CSS_VALIDATORS).not.toHaveProperty('display');
+    expect(BANNER_CSS_VALIDATORS).not.toHaveProperty('position');
+    expect(BANNER_CSS_VALIDATORS).not.toHaveProperty('z-index');
   });
 });
