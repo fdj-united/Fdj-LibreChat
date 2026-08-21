@@ -270,6 +270,7 @@ jest.mock('librechat-data-provider', () => {
         generationCreatedAt: 1000,
       }),
       refreshToken: jest.fn(),
+      recoverAuth: jest.fn(),
       dispatchTokenUpdatedEvent: jest.fn(),
     },
   };
@@ -408,6 +409,7 @@ describe('useResumableSSE', () => {
       generationCreatedAt: 1000,
     });
     (request.refreshToken as jest.Mock).mockReset();
+    (request.recoverAuth as jest.Mock).mockReset();
     (request.dispatchTokenUpdatedEvent as jest.Mock).mockReset();
     mockPostGenerationRequest.mockReset();
     mockPostGenerationRequest.mockImplementation((url: string, body: Record<string, unknown>) =>
@@ -1418,7 +1420,10 @@ describe('useResumableSSE', () => {
   });
 
   it('preserves the generation protocol header across a 401 token refresh', async () => {
-    (request.refreshToken as jest.Mock).mockResolvedValueOnce({ token: 'refreshed-token' });
+    (request.recoverAuth as jest.Mock).mockResolvedValueOnce({
+      token: 'refreshed-token',
+      redirected: false,
+    });
     const submission = buildSubmission();
     const chatHelpers = buildChatHelpers();
 
@@ -1435,8 +1440,39 @@ describe('useResumableSSE', () => {
       Authorization: 'Bearer refreshed-token',
       'X-LibreChat-Generation-Protocol': '2',
     });
-    expect(request.dispatchTokenUpdatedEvent).toHaveBeenCalledWith('refreshed-token');
+    expect(request.recoverAuth).toHaveBeenCalledTimes(1);
     expect(sse.stream).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it('terminates without reconnecting when 401 recovery redirects to login', async () => {
+    jest.useFakeTimers();
+    (request.recoverAuth as jest.Mock).mockResolvedValueOnce({ token: null, redirected: true });
+    const submission = buildSubmission();
+    const chatHelpers = buildChatHelpers();
+
+    const { unmount } = renderHook(() => useResumableSSE(submission, chatHelpers));
+    await flushMicrotasks();
+    const sse = getLastSSE();
+    const streamCallsBefore401 = sse.stream.mock.calls.length;
+
+    await act(async () => {
+      sse._emit('error', { responseCode: 401 });
+      await Promise.resolve();
+    });
+    const instanceCountAfter401 = mockSSEInstances.length;
+
+    expect(request.recoverAuth).toHaveBeenCalledTimes(1);
+    expect(sse.stream).toHaveBeenCalledTimes(streamCallsBefore401);
+    expect(sse.close).toHaveBeenCalled();
+    expect(mockErrorHandler).toHaveBeenCalledWith(expect.objectContaining({ data: undefined }));
+    expect(mockSetIsSubmitting).toHaveBeenCalledWith(false);
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(mockSSEInstances).toHaveLength(instanceCountAfter401);
     unmount();
   });
 

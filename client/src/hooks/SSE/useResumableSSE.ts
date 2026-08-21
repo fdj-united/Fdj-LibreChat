@@ -3398,29 +3398,50 @@ export default function useResumableSSE(
 
         // Check for 401 and try to refresh token (same pattern as useSSE)
         if (responseCode === 401) {
-          try {
-            const refreshResponse = await request.refreshToken();
-            if (!isCurrentSubscription()) {
-              return;
-            }
-            const newToken = refreshResponse?.token ?? '';
-            if (!newToken) {
-              throw new Error('Token refresh failed.');
-            }
+          const { token: newToken, redirected } = await request.recoverAuth();
+          if (!isCurrentSubscription()) {
+            return;
+          }
+          if (newToken) {
             sse.headers = {
               ...sse.headers,
               ...generationProtocolHeaders(),
               Authorization: `Bearer ${newToken}`,
             };
-            request.dispatchTokenUpdatedEvent(newToken);
             sse.stream();
             return;
-          } catch (error) {
-            if (!isCurrentSubscription()) {
-              return;
-            }
-            logger.log('ResumableSSE', 'Token refresh failed:', error);
           }
+
+          if (redirected) {
+            logger.log('ResumableSSE', 'Token refresh redirected to login');
+            const recoveryConvoId =
+              currentSubmission.conversation?.conversationId ?? currentStreamId;
+            closeStream();
+            removeActiveJob(currentStreamId);
+            resetLive({ ...currentSubmission, userMessage });
+            if (
+              !createdStreamIdsRef.current.has(currentStreamId) &&
+              optimisticStreamIdsRef.current.has(currentStreamId)
+            ) {
+              removeConvoFromAllQueries(queryClient, currentStreamId);
+            }
+            errorHandler({ data: undefined, submission: currentSubmission as EventSubmission });
+            setIsSubmitting(false);
+            setShowStopButton(false);
+            setRunEnd({
+              conversationId: recoveryConvoId,
+              outcome: 'aborted',
+              startedAsNewConvo: optimisticStreamIdsRef.current.has(currentStreamId),
+              endedAt: Date.now(),
+            });
+            setStreamId(null);
+            optimisticStreamIdsRef.current.delete(currentStreamId);
+            createdStreamIdsRef.current.delete(currentStreamId);
+            reconnectAttemptRef.current = 0;
+            return;
+          }
+
+          logger.log('ResumableSSE', 'Token refresh failed transiently — will reconnect');
         }
 
         /**
