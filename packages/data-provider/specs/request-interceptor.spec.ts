@@ -1,7 +1,7 @@
 /**
  * @jest-environment @happy-dom/jest-environment
  */
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import type { InternalAxiosRequestConfig } from 'axios';
 import { setTokenHeader } from '../src/headers-helpers';
 
@@ -20,6 +20,7 @@ import { setTokenHeader } from '../src/headers-helpers';
 const mockAdapter = jest.fn();
 let originalAdapter: typeof axios.defaults.adapter;
 let savedLocation: Location;
+let savedNavigatorOnlineDescriptor: PropertyDescriptor | undefined;
 let dataRequest: typeof import('../src/request').default;
 
 type RetryableAdapterConfig = InternalAxiosRequestConfig & { _retry?: boolean };
@@ -81,6 +82,7 @@ beforeAll(async () => {
 beforeEach(() => {
   mockAdapter.mockReset();
   savedLocation = window.location;
+  savedNavigatorOnlineDescriptor = Object.getOwnPropertyDescriptor(window.navigator, 'onLine');
 });
 
 afterAll(() => {
@@ -96,6 +98,11 @@ afterEach(() => {
     writable: true,
     configurable: true,
   });
+  if (savedNavigatorOnlineDescriptor) {
+    Object.defineProperty(window.navigator, 'onLine', savedNavigatorOnlineDescriptor);
+  } else {
+    Reflect.deleteProperty(window.navigator, 'onLine');
+  }
 });
 
 function setWindowLocation(overrides: Partial<Location>) {
@@ -125,6 +132,14 @@ function setTrackedWindowLocation(overrides: Partial<Location>) {
     configurable: true,
   });
   return hrefWrites;
+}
+
+function setNavigatorOnline(online: boolean) {
+  Object.defineProperty(window.navigator, 'onLine', {
+    value: online,
+    writable: false,
+    configurable: true,
+  });
 }
 
 describe('axios 401 interceptor — Authorization header guard', () => {
@@ -779,13 +794,20 @@ describe('axios 401 interceptor — Authorization header guard', () => {
     expect(retriedHeaders.get('Authorization')).toBe('Bearer fresh-token');
   });
 
-  it('continues with a still-valid token when proactive refresh has a network failure', async () => {
-    expect.assertions(3);
+  it('continues with a still-valid token when proactive refresh has an online network failure', async () => {
+    expect.assertions(4);
     setTokenHeader(createJwt(Date.now() + 60_000));
+    setNavigatorOnline(true);
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/still-valid',
+      pathname: '/c/still-valid',
+      search: '',
+      hash: '',
+    } as Partial<Location>);
 
     mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
       if (config.url?.includes('/api/auth/refresh') === true) {
-        return Promise.reject({ config });
+        return Promise.reject(new AxiosError('Network Error', AxiosError.ERR_NETWORK, config));
       }
       return createAdapterResponse(config, { ok: true });
     });
@@ -795,6 +817,131 @@ describe('axios 401 interceptor — Authorization header guard', () => {
     expect(response.data).toEqual({ ok: true });
     expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
     expect(getCallsForUrl('/api/messages')).toHaveLength(1);
+    expect(hrefWrites).toEqual([]);
+  });
+
+  it('redirects once when an expired-token refresh fails online without a response', async () => {
+    expect.assertions(4);
+    setTokenHeader(createJwt(Date.now() - 60_000));
+    setNavigatorOnline(true);
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/conversation-123?projectId=test#latest',
+      pathname: '/c/conversation-123',
+      search: '?projectId=test',
+      hash: '#latest',
+    } as Partial<Location>);
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+      if (config.url?.includes('/api/auth/refresh') === true) {
+        return Promise.reject(new AxiosError('Network Error', AxiosError.ERR_NETWORK, config));
+      }
+      return createAdapterResponse(config, { ok: true });
+    });
+
+    await expect(axios.post('/api/agents/chat/bedrock', {})).rejects.toMatchObject({
+      code: AxiosError.ERR_NETWORK,
+    });
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+    expect(getCallsForUrl('/api/agents/chat/bedrock')).toHaveLength(0);
+    expect(hrefWrites).toEqual([
+      '/login?redirect_to=%2Fc%2Fconversation-123%3FprojectId%3Dtest%23latest',
+    ]);
+  });
+
+  it('does not redirect when an offline refresh fails without a response', async () => {
+    expect.assertions(2);
+    setTokenHeader(createJwt(Date.now() - 60_000));
+    setNavigatorOnline(false);
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/offline',
+      pathname: '/c/offline',
+      search: '',
+      hash: '',
+    } as Partial<Location>);
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+      if (config.url?.includes('/api/auth/refresh') === true) {
+        return Promise.reject(new AxiosError('Network Error', AxiosError.ERR_NETWORK, config));
+      }
+      return createAdapterResponse(config, { ok: true });
+    });
+
+    await expect(axios.post('/api/agents/chat/bedrock', {})).rejects.toMatchObject({
+      code: AxiosError.ERR_NETWORK,
+    });
+    expect(hrefWrites).toEqual([]);
+  });
+
+  it('proactively refreshes when a request query merely mentions an auth endpoint', async () => {
+    expect.assertions(2);
+    setTokenHeader(createJwt(Date.now() + 60_000));
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) => {
+      if (config.url?.includes('/api/auth/refresh') === true) {
+        return createAdapterResponse(config, { token: createJwt(Date.now() + 60 * 60_000) });
+      }
+      return createAdapterResponse(config, { ok: true });
+    });
+
+    await axios.get('/api/messages?next=/api/auth/logout');
+    expect(getCallsForUrl('/api/auth/refresh')).toHaveLength(1);
+    expect(getCallsForUrl('/api/messages')).toHaveLength(1);
+  });
+
+  it('recoverAuth redirects after an online network failure', async () => {
+    expect.assertions(2);
+    setTokenHeader(createJwt(Date.now() + 60 * 60_000));
+    setNavigatorOnline(true);
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/sse-recovery',
+      pathname: '/c/sse-recovery',
+      search: '',
+      hash: '',
+    } as Partial<Location>);
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) =>
+      Promise.reject(new AxiosError('Network Error', AxiosError.ERR_NETWORK, config)),
+    );
+
+    await expect(dataRequest.recoverAuth()).resolves.toEqual({ token: null, redirected: true });
+    expect(hrefWrites).toEqual(['/login?redirect_to=%2Fc%2Fsse-recovery']);
+  });
+
+  it('recoverAuth keeps offline network failures retryable', async () => {
+    expect.assertions(2);
+    setTokenHeader(createJwt(Date.now() + 60 * 60_000));
+    setNavigatorOnline(false);
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/sse-offline',
+      pathname: '/c/sse-offline',
+      search: '',
+      hash: '',
+    } as Partial<Location>);
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) =>
+      Promise.reject(new AxiosError('Network Error', AxiosError.ERR_NETWORK, config)),
+    );
+
+    await expect(dataRequest.recoverAuth()).resolves.toEqual({ token: null, redirected: false });
+    expect(hrefWrites).toEqual([]);
+  });
+
+  it('recoverAuth does not redirect for a non-auth refresh error', async () => {
+    expect.assertions(2);
+    setTokenHeader(createJwt(Date.now() + 60 * 60_000));
+    const hrefWrites = setTrackedWindowLocation({
+      href: 'http://localhost/c/sse-500',
+      pathname: '/c/sse-500',
+      search: '',
+      hash: '',
+    } as Partial<Location>);
+
+    mockAdapter.mockImplementation((config: InternalAxiosRequestConfig) =>
+      Promise.reject({ response: { status: 500 }, config }),
+    );
+
+    await expect(dataRequest.recoverAuth()).resolves.toEqual({ token: null, redirected: false });
+    expect(hrefWrites).toEqual([]);
   });
 
   it.each([401, 403])(
