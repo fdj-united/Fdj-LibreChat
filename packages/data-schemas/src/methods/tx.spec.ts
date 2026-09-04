@@ -2603,12 +2603,12 @@ describe('Claude Model Tests', () => {
     );
   });
 
-  it('should pin Claude Sonnet 5 to introductory $2 / $10 per MTok (through 2026-08-31)', () => {
-    expect(tokenValues['claude-sonnet-5']).toEqual({ prompt: 2, completion: 10 });
+  it('should use Claude Sonnet 5 standard $3 / $15 per MTok pricing', () => {
+    expect(tokenValues['claude-sonnet-5']).toEqual({ prompt: 3, completion: 15 });
   });
 
-  it('should apply introductory cache rates ($2.50 / $0.20) for Claude Sonnet 5', () => {
-    expect(cacheTokenValues['claude-sonnet-5']).toEqual({ write: 2.5, read: 0.2 });
+  it('should use Claude Sonnet 5 standard cache rates ($3.75 / $0.30)', () => {
+    expect(cacheTokenValues['claude-sonnet-5']).toEqual({ write: 3.75, read: 0.3 });
   });
 
   it('should handle Claude Sonnet 5 model name variations without matching Sonnet 4', () => {
