@@ -968,6 +968,15 @@ export function createSkillMethods(
       codeEnvRef: CodeEnvRef;
     }>,
   ) => Promise<{ matchedCount: number; modifiedCount: number }>;
+  /**
+   * Batched existence check: given a list of ObjectIds, returns only those that
+   * actually exist in the Skill collection for the given tenant. No ACL check —
+   * used for agent skill-attachment validation and required-skill scope resolution.
+   */
+  findExistingSkillIdsForTenant: (
+    ids: Types.ObjectId[],
+    tenantId?: string | null,
+  ) => Promise<Types.ObjectId[]>;
 } {
   const { ObjectId } = mongoose.Types;
 
@@ -1775,6 +1784,22 @@ export function createSkillMethods(
     return { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount };
   }
 
+  async function findExistingSkillIdsForTenant(
+    ids: Types.ObjectId[],
+    tenantId?: string | null,
+  ): Promise<Types.ObjectId[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const Skill = mongoose.models.Skill as Model<ISkillDocument>;
+    const filter: FilterQuery<ISkillDocument> = { _id: { $in: ids } };
+    if (tenantId) {
+      filter.tenantId = tenantId;
+    }
+    const docs = await Skill.find(filter, { _id: 1 }).lean<Array<{ _id: Types.ObjectId }>>();
+    return docs.map((doc) => doc._id);
+  }
+
   return {
     createSkill,
     getSkillById,
@@ -1793,6 +1818,7 @@ export function createSkillMethods(
     getSkillFileByPath,
     updateSkillFileContent,
     updateSkillFileCodeEnvIds,
+    findExistingSkillIdsForTenant,
   };
 }
 
