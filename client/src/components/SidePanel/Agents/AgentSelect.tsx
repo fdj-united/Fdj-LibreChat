@@ -120,6 +120,11 @@ function AgentSelect({
           return;
         }
 
+        if (name === 'allow_other_skills' && (typeof value === 'boolean' || value == null)) {
+          formValues[name] = value ?? undefined;
+          return;
+        }
+
         if (name === 'edges' && Array.isArray(value)) {
           formValues[name] = value;
           return;

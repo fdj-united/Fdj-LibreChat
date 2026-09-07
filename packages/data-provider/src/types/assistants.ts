@@ -300,6 +300,10 @@ export type Agent = {
   /** Master toggle for skill use on this agent. `true` = active (full catalog unless
    *  `skills` narrows it). `false`/undefined = inactive (no skills available). */
   skills_enabled?: boolean;
+  /** When true, the user's own directly-accessible active skills are included alongside
+   *  the required skills attached to this agent (effective for this agent run only).
+   *  Defaults: `allow_other_skills ?? (!Array.isArray(skills) || skills.length === 0)`. */
+  allow_other_skills?: boolean;
   /** Subagent spawning configuration — isolated-context child agents. */
   subagents?: AgentSubagentsConfig;
 };
@@ -332,6 +336,7 @@ export type AgentCreateParams = {
   | 'tool_options'
   | 'skills'
   | 'skills_enabled'
+  | 'allow_other_skills'
   | 'subagents'
 >;
 
@@ -362,6 +367,7 @@ export type AgentUpdateParams = {
   | 'tool_options'
   | 'skills'
   | 'skills_enabled'
+  | 'allow_other_skills'
   | 'subagents'
 >;
 
