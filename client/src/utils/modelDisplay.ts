@@ -5,6 +5,12 @@ const CLAUDE_FAMILY: Record<string, string> = {
   fable: 'Fable',
 };
 
+const GPT_5_VARIANTS: Record<string, string> = {
+  luna: 'Luna',
+  terra: 'Terra',
+  sol: 'Sol',
+};
+
 /** `('4', '5')` → `4.5`; `('4')` → `4`. */
 const formatVersion = (major: string, minor?: string): string =>
   minor != null ? `${major}.${minor}` : major;
@@ -50,9 +56,11 @@ export function getModelDisplayName(modelId: string): string {
   if (id.includes('gpt-5-nano')) {
     return 'GPT-5 nano';
   }
-  const gpt5 = id.match(/gpt-5[.-](\d+)/);
+  const gpt5 = id.match(/gpt-5[.-](\d+)(?:-(luna|terra|sol))?/);
   if (gpt5) {
-    return `GPT-5.${gpt5[1]}`;
+    const variantKey = gpt5[2];
+    const variant = variantKey ? GPT_5_VARIANTS[variantKey] : undefined;
+    return `GPT-5.${gpt5[1]}${variant ? ` ${variant}` : ''}`;
   }
   if (id.includes('gpt-5')) {
     return 'GPT-5';
