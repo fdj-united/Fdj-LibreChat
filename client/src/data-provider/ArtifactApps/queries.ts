@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { QueryKeys, dataService } from 'librechat-data-provider';
 import type {
-  TArtifactApp,
   TArtifactAppList,
   TArtifactVersion,
   TArtifactVersionList,

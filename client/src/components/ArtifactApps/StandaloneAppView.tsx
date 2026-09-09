@@ -49,6 +49,18 @@ export default function StandaloneAppView() {
     return <StateMessage message={localize('com_ui_artifact_app_not_found')} />;
   }
 
+  if (versionId && versionQuery.isLoading) {
+    return <StateMessage message={localize('com_ui_artifact_app_loading')} />;
+  }
+
+  if (versionId && versionQuery.isError) {
+    const status = errorStatus(versionQuery.error);
+    if (status === 403) {
+      return <StateMessage message={localize('com_ui_artifact_app_forbidden')} />;
+    }
+    return <StateMessage message={localize('com_ui_artifact_app_not_found')} />;
+  }
+
   const app = appQuery.data?.app;
   if (!app) {
     return <StateMessage message={localize('com_ui_artifact_app_not_found')} />;

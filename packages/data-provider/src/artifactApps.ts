@@ -181,7 +181,7 @@ export interface TArtifactVersion {
 
 export interface TArtifactAppWithVersion {
   app: TArtifactApp;
-  version: TArtifactVersion;
+  version: TArtifactVersion | null;
 }
 
 export interface TArtifactAppList {

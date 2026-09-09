@@ -5,6 +5,7 @@ import type { Artifact } from '~/common';
 import { ArtifactPreview } from '~/components/Artifacts/ArtifactPreview';
 import useArtifactProps from '~/hooks/Artifacts/useArtifactProps';
 import { useGetStartupConfig } from '~/data-provider';
+import { getArtifactMimeType } from './runtime';
 
 export default function AppRenderer({
   title,
@@ -19,7 +20,7 @@ export default function AppRenderer({
   const artifact: Artifact = {
     id: version.artifactVersionId,
     lastUpdateTime: Date.now(),
-    type: version.artifactType,
+    type: getArtifactMimeType(version.artifactType),
     content: version.sourceSnapshot,
     title,
   };
