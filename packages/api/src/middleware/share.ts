@@ -44,7 +44,7 @@ type ShareMiddleware = (
   next: NextFunction,
 ) => Promise<Response | void>;
 
-const resourceToPermissionType: Record<ResourceType, PermissionTypes> = {
+const resourceToPermissionType: Partial<Record<ResourceType, PermissionTypes>> = {
   [ResourceType.AGENT]: PermissionTypes.AGENTS,
   [ResourceType.PROMPTGROUP]: PermissionTypes.PROMPTS,
   [ResourceType.MCPSERVER]: PermissionTypes.MCP_SERVERS,
