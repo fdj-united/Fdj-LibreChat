@@ -9,6 +9,7 @@ import type { ProcessedMermaidSvg } from '~/utils/diagram/export';
 import { TOOL_ARTIFACT_TYPES, isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
 import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
 import CopyButton from '~/components/Messages/Content/CopyButton';
+import { PublishArtifactButton } from '~/components/ArtifactApps';
 import { useShareContext, useMutationState } from '~/Providers';
 import useArtifacts from '~/hooks/Artifacts/useArtifacts';
 import { useFocusTrap, useLocalize } from '~/hooks';
@@ -505,6 +506,7 @@ export default function Artifacts() {
               ) : (
                 <DownloadArtifact artifact={currentArtifact} />
               )}
+              <PublishArtifactButton artifact={currentArtifact} />
               <Button
                 size="icon"
                 variant="ghost"
