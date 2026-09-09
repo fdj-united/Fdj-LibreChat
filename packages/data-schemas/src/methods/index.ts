@@ -193,6 +193,13 @@ import {
 } from './mcpAuthority';
 /* Insights */
 import { createInsightsMethods, type InsightsMethods } from './insights';
+/* Artifact Apps */
+import {
+  createArtifactAppMethods,
+  computeSourceHash,
+  ARTIFACT_SCHEMA_VERSION,
+  type ArtifactAppMethods,
+} from './artifactApp';
 
 export {
   runAfterTransaction,
@@ -231,6 +238,7 @@ export {
   AgentQueuedTurnConflictError,
   AgentQueuedTurnLaneRetiredError,
 };
+export { createArtifactAppMethods, computeSourceHash, ARTIFACT_SCHEMA_VERSION };
 
 export type AllMethods = UserMethods &
   SessionMethods &
@@ -278,7 +286,8 @@ export type AllMethods = UserMethods &
   AgentMethods &
   ConfigMethods &
   MCPAuthorityMethods &
-  InsightsMethods;
+  InsightsMethods &
+  ArtifactAppMethods;
 
 /** Dependencies injected from the api layer into createMethods */
 export interface CreateMethodsDeps {
@@ -528,6 +537,8 @@ export function createMethods(
     ...createMCPAuthorityMethods(mongoose),
     /* Insights */
     ...createInsightsMethods(mongoose),
+    /* Artifact Apps */
+    ...createArtifactAppMethods(mongoose),
   };
 }
 
@@ -612,6 +623,7 @@ export type {
   MCPAuthorityConfigSourceDocument,
   MCPAuthorityCredentialSourceDocument,
   InsightsMethods,
+  ArtifactAppMethods,
 };
 
 export { recordAgentEventActorReceiptMetric, setAgentEventActorReceiptMetricObserver };

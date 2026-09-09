@@ -3,3 +3,4 @@ export { dropSupersededPromptGroupIndexes } from './promptGroupIndexes';
 export { createMCPAuthorityLookupIndexes } from './mcpAuthorityIndexes';
 export { MCPServerNameMigrationError, backfillMCPServerNormalizedNames } from './mcpServerNames';
 export { ensureBalanceIndexes, dedupeBalanceDocuments } from './balanceIndexes';
+export { ensureArtifactAppIndexes } from './artifactAppIndexes';
