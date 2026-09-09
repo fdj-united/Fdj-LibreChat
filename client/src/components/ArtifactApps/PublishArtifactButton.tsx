@@ -11,17 +11,19 @@ interface Props {
   messageId?: string;
 }
 
+const PUBLISHABLE_ARTIFACT_TYPES = new Set([
+  'application/vnd.react',
+  'application/vnd.ant.react',
+  'application/vnd.mermaid',
+  'text/html',
+  'application/vnd.code-html',
+]);
+
 export default function PublishArtifactButton({ artifact, conversationId, messageId }: Props) {
   const localize = useLocalize();
   const [open, setOpen] = useState(false);
 
-  const publishableTypes = [
-    'application/vnd.react',
-    'application/vnd.ant.react',
-    'text/html',
-    'application/vnd.code-html',
-  ];
-  if (!artifact.type || !publishableTypes.includes(artifact.type)) {
+  if (!artifact.type || !PUBLISHABLE_ARTIFACT_TYPES.has(artifact.type)) {
     return null;
   }
 

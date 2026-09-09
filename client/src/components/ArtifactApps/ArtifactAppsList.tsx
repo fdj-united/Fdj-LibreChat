@@ -12,14 +12,14 @@ function visibilityIcon(v: TArtifactApp['visibility']) {
 
 function statusBadge(s: TArtifactApp['status']) {
   const colors: Record<TArtifactApp['status'], string> = {
-    draft: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
-    pending_review: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-    published: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-    suspended: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-    archived: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+    draft: 'border-border-medium bg-surface-tertiary text-text-secondary',
+    pending_review: 'border-border-heavy bg-surface-active text-text-primary',
+    published: 'border-border-heavy bg-surface-active text-text-primary',
+    suspended: 'border-destructive/30 bg-destructive/10 text-text-destructive',
+    archived: 'border-border-light bg-surface-secondary text-text-tertiary',
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[s] ?? ''}`}>
+    <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${colors[s]}`}>
       {s.replace('_', ' ')}
     </span>
   );
@@ -89,7 +89,11 @@ export default function ArtifactAppsList() {
                   {app.description && (
                     <p className="mt-0.5 truncate text-sm text-text-secondary">{app.description}</p>
                   )}
-                  <p className="mt-1 text-xs text-text-secondary">v{app.latestVersionNumber}</p>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    {localize('com_ui_artifact_app_version_number', {
+                      0: String(app.latestVersionNumber),
+                    })}
+                  </p>
                 </div>
               </button>
             </li>
