@@ -1,6 +1,7 @@
 import { createSkillSyncCredentialModel } from './skillSyncCredential';
 import { createSkillSyncStatusModel } from './skillSyncStatus';
 import { createConversationTagModel } from './conversationTag';
+import { createArtifactVersionModel } from './artifactVersion';
 import { createBalanceRequestModel } from './balanceRequest';
 import { createAgentCategoryModel } from './agentCategory';
 import { createNotificationModel } from './notification';
@@ -9,6 +10,7 @@ import { createAgentApiKeyModel } from './agentApiKey';
 import { createTransactionModel } from './transaction';
 import { createPromptGroupModel } from './promptGroup';
 import { createSystemGrantModel } from './systemGrant';
+import { createArtifactAppModel } from './artifactApp';
 import { createPluginAuthModel } from './pluginAuth';
 import { createSharedLinkModel } from './sharedLink';
 import { createAccessRoleModel } from './accessRole';
@@ -79,6 +81,8 @@ export function createModels(mongoose: typeof import('mongoose')): {
   AuditLog: ReturnType<typeof createAuditLogModel>;
   Group: ReturnType<typeof createGroupModel>;
   Config: ReturnType<typeof createConfigModel>;
+  ArtifactApp: ReturnType<typeof createArtifactAppModel>;
+  ArtifactVersion: ReturnType<typeof createArtifactVersionModel>;
 } {
   return {
     User: createUserModel(mongoose),
@@ -119,5 +123,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
     AuditLog: createAuditLogModel(mongoose),
     Group: createGroupModel(mongoose),
     Config: createConfigModel(mongoose),
+    ArtifactApp: createArtifactAppModel(mongoose),
+    ArtifactVersion: createArtifactVersionModel(mongoose),
   };
 }
