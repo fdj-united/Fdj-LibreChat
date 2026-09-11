@@ -27,6 +27,23 @@ export interface IArtifactAppSourceMetadata {
   conversationId?: string;
   messageId?: string;
   originalArtifactId?: string;
+  /** Stable identity within a conversation, independent of the rendering message. */
+  sourceKey?: string;
+}
+
+export interface IArtifactAppSyncLock {
+  token: string;
+  expiresAt: Date;
+}
+
+export interface ArtifactAppListCursor {
+  updatedAt: Date;
+  _id: Types.ObjectId;
+}
+
+export interface ArtifactAppListOptions {
+  cursor?: ArtifactAppListCursor;
+  limit?: number;
 }
 
 export interface IArtifactAppReview {
@@ -62,6 +79,7 @@ export interface IArtifactApp extends Document {
   toolPolicy: IArtifactAppToolPolicy;
   marketplace: IArtifactAppMarketplace;
   sourceMetadata?: IArtifactAppSourceMetadata;
+  syncLock?: IArtifactAppSyncLock;
   review?: IArtifactAppReview;
 
   createdAt: Date;
@@ -138,6 +156,18 @@ export interface CreateArtifactVersionInput {
 export interface ArtifactAppWithVersion {
   app: IArtifactApp;
   version: IArtifactVersion;
+}
+
+export interface SyncArtifactAppResult extends ArtifactAppWithVersion {
+  created: boolean;
+  versionCreated: boolean;
+}
+
+export interface ArtifactAppSourceQuery {
+  tenantId?: string;
+  createdBy: string;
+  conversationId: string;
+  sourceKey: string;
 }
 
 export type ArtifactAppQuery = {

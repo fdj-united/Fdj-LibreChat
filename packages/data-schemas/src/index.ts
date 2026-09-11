@@ -58,6 +58,7 @@ export {
 } from './config/tenantContext';
 export type { TenantContext } from './config/tenantContext';
 export {
+  ensureArtifactAppIndexes,
   dropSupersededTenantIndexes,
   dropSupersededPromptGroupIndexes,
   ensureBalanceIndexes,

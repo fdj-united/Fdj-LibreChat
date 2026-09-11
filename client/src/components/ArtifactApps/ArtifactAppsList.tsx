@@ -1,55 +1,77 @@
 import { useMemo, useState } from 'react';
+import { useSetRecoilState } from 'recoil';
 import { useNavigate } from 'react-router-dom';
 import { useMediaQuery } from '@librechat/client';
-import { Shapes, Lock, Globe, Users } from 'lucide-react';
-import type { TArtifactApp } from 'librechat-data-provider';
+import { Shapes, Lock, Users } from 'lucide-react';
+import type { ArtifactAppListScope } from 'librechat-data-provider';
 import ArtifactAppsAdminSettings from './ArtifactAppsAdminSettings';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import ArtifactAppsSearchBar from './ArtifactAppsSearchBar';
 import { useListArtifactAppsQuery } from '~/data-provider';
-import { useLocalize } from '~/hooks';
+import { useAuthContext, useLocalize } from '~/hooks';
+import store from '~/store';
 
-function visibilityIcon(v: TArtifactApp['visibility']) {
-  if (v === 'public') return <Globe size={14} className="text-text-secondary" aria-hidden="true" />;
-  if (v === 'tenant') return <Users size={14} className="text-text-secondary" aria-hidden="true" />;
-  return <Lock size={14} className="text-text-secondary" aria-hidden="true" />;
-}
-
-function statusBadge(s: TArtifactApp['status']) {
-  const colors: Record<TArtifactApp['status'], string> = {
-    draft: 'border-border-medium bg-surface-tertiary text-text-secondary',
-    pending_review: 'border-border-heavy bg-surface-active text-text-primary',
-    published: 'border-border-heavy bg-surface-active text-text-primary',
-    suspended: 'border-destructive/30 bg-destructive/10 text-text-destructive',
-    archived: 'border-border-light bg-surface-secondary text-text-tertiary',
-  };
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${colors[s]}`}>
-      {s.replace('_', ' ')}
-    </span>
-  );
-}
+const SCOPES: ArtifactAppListScope[] = ['personal', 'shared', 'all'];
+const SCOPE_LABELS = {
+  personal: 'com_ui_artifact_scope_personal',
+  shared: 'com_ui_artifact_scope_shared',
+  all: 'com_ui_artifact_scope_all',
+} as const;
 
 export default function ArtifactAppsList() {
   const localize = useLocalize();
   const navigate = useNavigate();
+  const { user } = useAuthContext();
+  const setArtifactNavigationRequest = useSetRecoilState(store.artifactNavigationRequest);
   const isSmallScreen = useMediaQuery('(max-width: 768px)');
   const [searchQuery, setSearchQuery] = useState('');
-  const { data, isLoading, isError } = useListArtifactAppsQuery();
-  const apps = data?.apps;
+  const [scope, setScope] = useState<ArtifactAppListScope>('personal');
+  const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
+    useListArtifactAppsQuery(scope);
+  const apps = useMemo(() => data?.pages.flatMap((page) => page.apps) ?? [], [data]);
   const filteredApps = useMemo(() => {
-    const availableApps = apps ?? [];
     const query = searchQuery.trim().toLocaleLowerCase();
     if (!query) {
-      return availableApps;
+      return apps;
     }
 
-    return availableApps.filter((app) =>
+    return apps.filter((app) =>
       [app.title, app.description, app.category, ...(app.tags ?? [])]
         .filter(Boolean)
         .some((value) => value?.toLocaleLowerCase().includes(query)),
     );
   }, [apps, searchQuery]);
+
+  const openArtifact = (app: (typeof filteredApps)[number]) => {
+    const source = app.sourceMetadata;
+    if (app.createdBy === user?.id && source?.conversationId) {
+      const artifactKey = source.sourceKey ?? source.originalArtifactId ?? source.messageId;
+      const params = new URLSearchParams();
+      if (artifactKey) {
+        params.set('artifact', artifactKey);
+      }
+      if (source.sourceKey && source.originalArtifactId) {
+        params.set('artifactId', source.originalArtifactId);
+      }
+      if (source.sourceKey && source.messageId) {
+        params.set('artifactMessageId', source.messageId);
+      }
+      const query = params.size > 0 ? `?${params.toString()}` : '';
+      setArtifactNavigationRequest(
+        artifactKey
+          ? {
+              conversationId: source.conversationId,
+              sourceKey: artifactKey,
+              originalArtifactId: source.originalArtifactId,
+              messageId: source.messageId,
+            }
+          : null,
+      );
+      navigate(`/c/${source.conversationId}${query}`);
+      return;
+    }
+    navigate(`/apps/${app.artifactAppId}`);
+  };
 
   const renderContent = () => {
     if (isLoading) {
@@ -68,7 +90,7 @@ export default function ArtifactAppsList() {
       );
     }
 
-    if (filteredApps.length === 0) {
+    if (filteredApps.length === 0 && !hasNextPage) {
       const titleKey = searchQuery
         ? 'com_ui_artifact_apps_no_results'
         : 'com_ui_artifact_apps_empty';
@@ -86,35 +108,61 @@ export default function ArtifactAppsList() {
     }
 
     return (
-      <ul>
-        {filteredApps.map((app) => (
-          <li key={app.artifactAppId}>
-            <button
-              className="mb-3 flex w-full items-start gap-4 rounded-xl border border-border-light bg-surface-secondary p-4 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => navigate(`/apps/${app.artifactAppId}`)}
-            >
-              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-surface-primary text-xl">
-                {app.icon ?? <Shapes size={20} className="text-text-secondary" />}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium text-text-primary">{app.title}</span>
-                  {visibilityIcon(app.visibility)}
-                  {statusBadge(app.status)}
+      <>
+        <ul>
+          {filteredApps.map((app) => (
+            <li key={app.artifactAppId}>
+              <button
+                className="mb-3 flex w-full items-start gap-4 rounded-xl border border-border-light bg-surface-secondary p-4 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => openArtifact(app)}
+              >
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-surface-primary text-xl">
+                  {app.icon ?? <Shapes size={20} className="text-text-secondary" />}
                 </div>
-                {app.description && (
-                  <p className="mt-0.5 truncate text-sm text-text-secondary">{app.description}</p>
-                )}
-                <p className="mt-1 text-xs text-text-secondary">
-                  {localize('com_ui_artifact_app_version_number', {
-                    0: String(app.latestVersionNumber),
-                  })}
-                </p>
-              </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium text-text-primary">{app.title}</span>
+                    {app.createdBy === user?.id ? (
+                      <Lock size={14} className="text-text-secondary" aria-hidden="true" />
+                    ) : (
+                      <Users size={14} className="text-text-secondary" aria-hidden="true" />
+                    )}
+                    <span className="rounded-full border border-border-light bg-surface-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
+                      {localize(
+                        app.createdBy === user?.id
+                          ? 'com_ui_artifact_scope_personal'
+                          : 'com_ui_artifact_shared_with_you',
+                      )}
+                    </span>
+                  </div>
+                  {app.description && (
+                    <p className="mt-0.5 truncate text-sm text-text-secondary">{app.description}</p>
+                  )}
+                  <p className="mt-1 text-xs text-text-secondary">
+                    {localize('com_ui_artifact_app_version_number', {
+                      0: String(app.latestVersionNumber),
+                    })}
+                  </p>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {hasNextPage && (
+          <div className="flex justify-center pt-2">
+            <button
+              type="button"
+              disabled={isFetchingNextPage}
+              onClick={() => fetchNextPage()}
+              className="rounded-lg border border-border-light bg-surface-secondary px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isFetchingNextPage
+                ? localize('com_ui_artifact_app_loading')
+                : localize('com_ui_load_more')}
             </button>
-          </li>
-        ))}
-      </ul>
+          </div>
+        )}
+      </>
     );
   };
 
@@ -143,6 +191,28 @@ export default function ArtifactAppsList() {
             <div className="mx-auto flex max-w-2xl items-center gap-2 pb-6">
               <ArtifactAppsSearchBar value={searchQuery} onChange={setSearchQuery} />
               {!isSmallScreen && <ArtifactAppsAdminSettings />}
+            </div>
+            <div
+              className="mx-auto flex max-w-2xl gap-1 rounded-xl bg-surface-secondary p-1"
+              role="tablist"
+              aria-label={localize('com_ui_artifact_catalog_filters')}
+            >
+              {SCOPES.map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  role="tab"
+                  aria-selected={scope === candidate}
+                  onClick={() => setScope(candidate)}
+                  className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                    scope === candidate
+                      ? 'bg-surface-primary text-text-primary shadow-sm'
+                      : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                  }`}
+                >
+                  {localize(SCOPE_LABELS[candidate])}
+                </button>
+              ))}
             </div>
           </div>
         </div>

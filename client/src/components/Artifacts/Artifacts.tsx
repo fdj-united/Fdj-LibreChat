@@ -4,17 +4,20 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { Code, Play, RefreshCw, X } from 'lucide-react';
 import { useSetRecoilState, useResetRecoilState } from 'recoil';
 import { Button, Spinner, useMediaQuery, Radio } from '@librechat/client';
+import { Permissions, PermissionTypes, ResourceType } from 'librechat-data-provider';
 import type { SandpackPreviewRef } from '@codesandbox/sandpack-react';
+import useClearArtifactNavigationRequest from '~/hooks/Artifacts/useClearArtifactNavigationRequest';
 import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
 import { isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
+import useArtifactCatalogSync from '~/hooks/Artifacts/useArtifactCatalogSync';
 import CopyButton from '~/components/Messages/Content/CopyButton';
-import { PublishArtifactButton } from '~/components/ArtifactApps';
+import { GenericGrantAccessDialog } from '~/components/Sharing';
 import { useShareContext, useMutationState } from '~/Providers';
 import useArtifacts from '~/hooks/Artifacts/useArtifacts';
+import { useHasAccess, useLocalize } from '~/hooks';
 import DownloadArtifact from './DownloadArtifact';
 import ArtifactVersion from './ArtifactVersion';
 import ArtifactTabs from './ArtifactTabs';
-import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import store from '~/store';
 
@@ -39,6 +42,7 @@ export default function Artifacts() {
   const dragStartHeight = useRef(90);
   const setArtifactsVisible = useSetRecoilState(store.artifactsVisibility);
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
+  const clearArtifactNavigationRequest = useClearArtifactNavigationRequest();
 
   const allTabOptions = useMemo(
     () => [
@@ -93,6 +97,13 @@ export default function Artifacts() {
     orderedArtifactIds,
     setCurrentArtifactId,
   } = useArtifacts();
+  const { artifactEntry, isSyncing } = useArtifactCatalogSync(
+    isSharedConvo ? null : currentArtifact,
+  );
+  const canShareArtifacts = useHasAccess({
+    permissionType: PermissionTypes.ARTIFACTS,
+    permission: Permissions.SHARE,
+  });
 
   /* Office artifacts have no source view, and source-code artifacts have
    * no useful rendered preview. Filter each down to the only meaningful
@@ -188,6 +199,7 @@ export default function Artifacts() {
   };
 
   const closeArtifacts = () => {
+    clearArtifactNavigationRequest();
     if (isMobile) {
       setIsClosing(true);
       setIsVisible(false);
@@ -331,7 +343,23 @@ export default function Artifacts() {
               )}
               <CopyButton isCopied={isCopied} iconOnly onClick={handleCopyArtifact} />
               <DownloadArtifact artifact={currentArtifact} />
-              <PublishArtifactButton artifact={currentArtifact} />
+              {isSyncing && (
+                <span
+                  className="flex h-9 w-9 items-center justify-center text-text-secondary"
+                  aria-label={localize('com_ui_artifact_syncing')}
+                >
+                  <Spinner size={16} />
+                </span>
+              )}
+              {!isSharedConvo && canShareArtifacts && artifactEntry?.app && (
+                <GenericGrantAccessDialog
+                  resourceDbId={artifactEntry.app.id}
+                  resourceId={artifactEntry.app.artifactAppId}
+                  resourceName={artifactEntry.app.title}
+                  resourceType={ResourceType.ARTIFACT_APP}
+                  buttonClassName="border-0 bg-transparent hover:bg-surface-hover"
+                />
+              )}
               <Button
                 size="icon"
                 variant="ghost"

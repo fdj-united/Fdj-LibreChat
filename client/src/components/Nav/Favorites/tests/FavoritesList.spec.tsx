@@ -58,6 +58,7 @@ jest.mock('~/hooks', () => ({
   useFavorites: () => mockUseFavorites(),
   useLocalize: () => (key: string) => key,
   useShowMarketplace: () => mockShowMarketplace,
+  useHasAccess: () => true,
   useNewConvo: () => ({ newConversation: jest.fn() }),
   useGetConversation: () => () => null,
 }));

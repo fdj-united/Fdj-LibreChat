@@ -448,6 +448,7 @@ export const getRole = (roleName: string) => `${roles()}/${encodeURIComponent(ro
 export const updatePromptPermissions = (roleName: string) => `${getRole(roleName)}/prompts`;
 export const updateMemoryPermissions = (roleName: string) => `${getRole(roleName)}/memories`;
 export const updateAgentPermissions = (roleName: string) => `${getRole(roleName)}/agents`;
+export const updateArtifactPermissions = (roleName: string) => `${getRole(roleName)}/artifacts`;
 export const updatePeoplePickerPermissions = (roleName: string) =>
   `${getRole(roleName)}/people-picker`;
 export const updateMCPServersPermissions = (roleName: string) => `${getRole(roleName)}/mcp-servers`;
@@ -555,6 +556,13 @@ export const graphToken = (scopes: string) =>
 export const artifactAppsRoot = `${BASE_URL}/api/artifact-apps`;
 
 export const artifactApps = () => artifactAppsRoot;
+
+export const syncArtifactApp = () => `${artifactAppsRoot}/sync`;
+
+export const artifactAppBySource = (conversationId: string, sourceKey: string) => {
+  const params = new URLSearchParams({ conversationId, sourceKey });
+  return `${artifactAppsRoot}/source?${params.toString()}`;
+};
 
 export const artifactAppById = (artifactAppId: string) =>
   `${artifactAppsRoot}/${encodeURIComponent(artifactAppId)}`;
