@@ -52,10 +52,12 @@ const mockUseFavorites = jest.fn(() => ({
   isLoading: false,
 }));
 
+let mockShowMarketplace = false;
+
 jest.mock('~/hooks', () => ({
   useFavorites: () => mockUseFavorites(),
   useLocalize: () => (key: string) => key,
-  useShowMarketplace: () => false,
+  useShowMarketplace: () => mockShowMarketplace,
   useNewConvo: () => ({ newConversation: jest.fn() }),
   useGetConversation: () => () => null,
 }));
@@ -122,6 +124,7 @@ const renderWithProviders = (ui: React.ReactElement) => {
 describe('FavoritesList', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockShowMarketplace = false;
     mockFavorites.length = 0;
     mockUseFavorites.mockImplementation(() => ({
       favorites: mockFavorites,
@@ -134,9 +137,21 @@ describe('FavoritesList', () => {
   });
 
   describe('rendering', () => {
-    it('should render nothing when favorites is empty and marketplace is hidden', () => {
-      const { container } = renderWithProviders(<FavoritesList />);
-      expect(container.firstChild).toBeNull();
+    it('should render Artifact Apps when favorites are empty and marketplace is hidden', () => {
+      const { getByTestId, queryByTestId } = renderWithProviders(<FavoritesList />);
+
+      expect(getByTestId('nav-artifact-apps-button')).toHaveTextContent('com_nav_artifact_apps');
+      expect(queryByTestId('nav-agents-marketplace-button')).toBeNull();
+    });
+
+    it('should render Artifact Apps immediately below Agent Marketplace', () => {
+      mockShowMarketplace = true;
+      const { getAllByRole } = renderWithProviders(<FavoritesList />);
+
+      expect(getAllByRole('button').map((button) => button.dataset.testid)).toEqual([
+        'nav-agents-marketplace-button',
+        'nav-artifact-apps-button',
+      ]);
     });
 
     it('should render skeleton while loading', () => {
