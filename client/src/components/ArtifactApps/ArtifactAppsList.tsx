@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Rocket, Lock, Globe, Users } from 'lucide-react';
+import { WandSparkles, Lock, Globe, Users } from 'lucide-react';
 import type { TArtifactApp } from 'librechat-data-provider';
 import { useListArtifactAppsQuery } from '~/data-provider';
 import { useLocalize } from '~/hooks';
@@ -51,7 +51,7 @@ export default function ArtifactAppsList() {
     <div className="flex h-full flex-col bg-surface-primary">
       <header className="border-b border-border-light px-6 py-4">
         <div className="flex items-center gap-2">
-          <Rocket size={20} className="text-text-primary" aria-hidden="true" />
+          <WandSparkles size={20} className="text-text-primary" aria-hidden="true" />
           <h1 className="text-lg font-semibold text-text-primary">
             {localize('com_ui_artifact_apps')}
           </h1>
@@ -63,7 +63,7 @@ export default function ArtifactAppsList() {
 
       {apps.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-          <Rocket size={40} className="text-text-secondary opacity-40" aria-hidden="true" />
+          <WandSparkles size={40} className="text-text-secondary opacity-40" aria-hidden="true" />
           <p className="text-text-secondary">{localize('com_ui_artifact_apps_empty')}</p>
           <p className="max-w-sm text-sm text-text-secondary">
             {localize('com_ui_artifact_apps_empty_hint')}
@@ -78,7 +78,7 @@ export default function ArtifactAppsList() {
                 onClick={() => navigate(`/apps/${app.artifactAppId}`)}
               >
                 <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-surface-primary text-xl">
-                  {app.icon ?? <Rocket size={20} className="text-text-secondary" />}
+                  {app.icon ?? <WandSparkles size={20} className="text-text-secondary" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
