@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { logger } from '@librechat/data-schemas';
 import {
   ResourceType,
@@ -5,6 +6,8 @@ import {
   PrincipalType,
   PermissionBits,
   publishArtifactAppSchema,
+  syncArtifactAppSchema,
+  artifactAppListRequestSchema,
   updateArtifactAppSchema,
   createArtifactVersionSchema,
 } from 'librechat-data-provider';
@@ -15,15 +18,22 @@ import type {
   ArtifactVersionQuery,
   ArtifactAppWithVersion,
   ArtifactAppIdResolution,
+  ArtifactAppSourceQuery,
+  SyncArtifactAppResult,
   CreateArtifactAppInput,
   CreateArtifactVersionInput,
   RecordAuditEntryInput,
   IAuditLog,
+  ArtifactAppListCursor,
+  ArtifactAppListOptions,
 } from '@librechat/data-schemas';
 import type { TArtifactApp, TArtifactVersion, ArtifactRuntimeType } from 'librechat-data-provider';
+import type { FilterQuery } from 'mongoose';
 import type { Response } from 'express';
-import type { Types } from 'mongoose';
 import type { ServerRequest } from '~/types';
+
+const ARTIFACT_APP_SCAN_BATCH_SIZE = 100;
+const ARTIFACT_APP_MAX_SCAN_BATCHES = 10;
 
 /**
  * All dependencies required to serve Artifact App HTTP requests. Every dep is
@@ -32,9 +42,14 @@ import type { ServerRequest } from '~/types';
  */
 export interface ArtifactAppHandlersDeps {
   createArtifactAppWithVersion: (input: CreateArtifactAppInput) => Promise<ArtifactAppWithVersion>;
+  syncArtifactAppWithVersion: (input: CreateArtifactAppInput) => Promise<SyncArtifactAppResult>;
   getArtifactAppByAppId: (query: ArtifactAppQuery) => Promise<IArtifactApp | null>;
+  getArtifactAppBySource: (query: ArtifactAppSourceQuery) => Promise<IArtifactApp | null>;
   resolveArtifactAppId: (query: ArtifactAppQuery) => Promise<ArtifactAppIdResolution | null>;
-  listArtifactApps: (filter: Record<string, unknown>) => Promise<IArtifactApp[]>;
+  listArtifactApps: (
+    filter: FilterQuery<IArtifactApp>,
+    options?: ArtifactAppListOptions,
+  ) => Promise<IArtifactApp[]>;
   updateArtifactApp: (
     query: ArtifactAppQuery,
     update: Partial<IArtifactApp>,
@@ -55,12 +70,12 @@ export interface ArtifactAppHandlersDeps {
   activateArtifactVersion: (query: ArtifactVersionQuery) => Promise<ArtifactAppWithVersion | null>;
   withdrawArtifactVersion: (query: ArtifactVersionQuery) => Promise<IArtifactVersion | null>;
 
-  findAccessibleResources: (params: {
+  getResourcePermissionsMap: (params: {
     userId: string;
     role?: string | null;
     resourceType: string;
-    requiredPermissions: number;
-  }) => Promise<Types.ObjectId[]>;
+    resourceIds: Types.ObjectId[];
+  }) => Promise<Map<string, number>>;
   grantPermission: (params: {
     principalType: string;
     principalId: string | Types.ObjectId;
@@ -70,6 +85,35 @@ export interface ArtifactAppHandlersDeps {
     grantedBy: string | Types.ObjectId;
   }) => Promise<unknown>;
   recordAuditEntry: (input: RecordAuditEntryInput) => Promise<IAuditLog | null>;
+}
+
+function encodeListCursor(app: Pick<IArtifactApp, '_id' | 'updatedAt'>): string {
+  return Buffer.from(
+    JSON.stringify({
+      updatedAt: app.updatedAt.toISOString(),
+      _id: app._id.toString(),
+    }),
+  ).toString('base64');
+}
+
+function decodeListCursor(cursor: string | undefined): ArtifactAppListCursor | undefined {
+  if (!cursor) {
+    return undefined;
+  }
+  const decoded = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as {
+    updatedAt?: string;
+    _id?: string;
+  };
+  const updatedAt = decoded.updatedAt ? new Date(decoded.updatedAt) : null;
+  if (
+    !updatedAt ||
+    Number.isNaN(updatedAt.getTime()) ||
+    !decoded._id ||
+    !Types.ObjectId.isValid(decoded._id)
+  ) {
+    throw new Error('Invalid artifact cursor');
+  }
+  return { updatedAt, _id: new Types.ObjectId(decoded._id) };
 }
 
 function toIso(value: Date | undefined): string {
@@ -82,6 +126,7 @@ function toIsoOptional(value: Date | undefined): string | undefined {
 
 function serializeApp(app: IArtifactApp): TArtifactApp {
   return {
+    id: app._id.toString(),
     artifactAppId: app.artifactAppId,
     tenantId: app.tenantId,
     title: app.title,
@@ -115,6 +160,7 @@ function serializeApp(app: IArtifactApp): TArtifactApp {
           conversationId: app.sourceMetadata.conversationId,
           messageId: app.sourceMetadata.messageId,
           originalArtifactId: app.sourceMetadata.originalArtifactId,
+          sourceKey: app.sourceMetadata.sourceKey,
         }
       : undefined,
     review: app.review
@@ -180,7 +226,9 @@ function requireUser(req: ServerRequest, res: Response): ServerRequest['user'] |
  */
 export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
   publish: (req: ServerRequest, res: Response) => Promise<Response>;
+  sync: (req: ServerRequest, res: Response) => Promise<Response>;
   list: (req: ServerRequest, res: Response) => Promise<Response>;
+  getBySource: (req: ServerRequest, res: Response) => Promise<Response>;
   get: (req: ServerRequest, res: Response) => Promise<Response>;
   update: (req: ServerRequest, res: Response) => Promise<Response>;
   remove: (req: ServerRequest, res: Response) => Promise<Response>;
@@ -193,7 +241,9 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
 } {
   const {
     createArtifactAppWithVersion,
+    syncArtifactAppWithVersion,
     getArtifactAppByAppId,
+    getArtifactAppBySource,
     listArtifactApps,
     updateArtifactApp,
     deleteArtifactApp,
@@ -203,7 +253,7 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
     releaseArtifactVersion,
     activateArtifactVersion,
     withdrawArtifactVersion,
-    findAccessibleResources,
+    getResourcePermissionsMap,
     grantPermission,
     recordAuditEntry,
   } = deps;
@@ -304,23 +354,189 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
     }
   }
 
+  async function sync(req: ServerRequest, res: Response) {
+    try {
+      const user = requireUser(req, res);
+      if (!user) {
+        return res as Response;
+      }
+      const parsed = syncArtifactAppSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Validation failed', issues: parsed.error.issues });
+      }
+
+      const userId = user.id as string;
+      const data = parsed.data;
+      const result = await syncArtifactAppWithVersion({
+        tenantId: user.tenantId,
+        createdBy: userId,
+        title: data.title,
+        visibility: 'private',
+        marketplace: { listed: true },
+        sourceMetadata: data.source,
+        version: toVersionInput(data.artifact, undefined, undefined, userId),
+      });
+
+      try {
+        await grantPermission({
+          principalType: PrincipalType.USER,
+          principalId: userId,
+          resourceType: ResourceType.ARTIFACT_APP,
+          resourceId: result.app._id as Types.ObjectId,
+          accessRoleId: AccessRoleIds.ARTIFACT_APP_OWNER,
+          grantedBy: userId,
+        });
+      } catch (permissionError) {
+        logger.error(
+          `[POST /artifact-apps/sync] Failed to ensure owner permission for ${result.app.artifactAppId}:`,
+          permissionError,
+        );
+        return res.status(500).json({ error: 'Failed to initialize artifact permissions' });
+      }
+
+      if (result.created || result.versionCreated) {
+        audit({
+          tenantId: user.tenantId,
+          action: result.created ? 'artifact_app.created' : 'artifact_version.created',
+          actor: { type: 'user', id: userId, name: user.name ?? user.username ?? userId },
+          target: {
+            type: ResourceType.ARTIFACT_APP,
+            id: result.app.artifactAppId,
+            name: result.app.title,
+          },
+          metadata: { versionNumber: result.version.versionNumber, automatic: true },
+        });
+      }
+
+      return res.status(result.created ? 201 : 200).json({
+        app: serializeApp(result.app),
+        version: serializeVersion(result.version),
+        created: result.created,
+        versionCreated: result.versionCreated,
+      });
+    } catch (error) {
+      logger.error('[POST /artifact-apps/sync] Error syncing artifact', error);
+      return res.status(500).json({ error: 'Error syncing artifact' });
+    }
+  }
+
   async function list(req: ServerRequest, res: Response) {
     try {
       const user = requireUser(req, res);
       if (!user) {
         return res as Response;
       }
-      const accessibleIds = await findAccessibleResources({
-        userId: user.id as string,
-        role: user.role,
-        resourceType: ResourceType.ARTIFACT_APP,
-        requiredPermissions: PermissionBits.VIEW,
+      const parsed = artifactAppListRequestSchema.safeParse(req.query);
+      if (!parsed.success) {
+        return res.status(400).json({ error: 'Invalid artifact list request' });
+      }
+      let scanCursor: ArtifactAppListCursor | undefined;
+      try {
+        scanCursor = decodeListCursor(parsed.data.cursor);
+      } catch {
+        return res.status(400).json({ error: 'Invalid artifact cursor' });
+      }
+      const userId = user.id as string;
+      let ownershipFilter: FilterQuery<IArtifactApp> = {};
+      if (parsed.data.scope === 'personal') {
+        ownershipFilter = { createdBy: userId };
+      } else if (parsed.data.scope === 'shared') {
+        ownershipFilter = { createdBy: { $ne: userId } };
+      }
+      const accessibleApps: IArtifactApp[] = [];
+      let exhausted = false;
+
+      for (
+        let batch = 0;
+        batch < ARTIFACT_APP_MAX_SCAN_BATCHES && accessibleApps.length <= parsed.data.limit;
+        batch++
+      ) {
+        const candidates = await listArtifactApps(ownershipFilter, {
+          cursor: scanCursor,
+          limit: ARTIFACT_APP_SCAN_BATCH_SIZE,
+        });
+        if (candidates.length === 0) {
+          exhausted = true;
+          break;
+        }
+
+        const permissions = await getResourcePermissionsMap({
+          userId,
+          role: user.role,
+          resourceType: ResourceType.ARTIFACT_APP,
+          resourceIds: candidates.map((app) => app._id),
+        });
+        for (const app of candidates) {
+          const permissionBits = permissions.get(app._id.toString()) ?? 0;
+          if ((permissionBits & PermissionBits.VIEW) === PermissionBits.VIEW) {
+            accessibleApps.push(app);
+            if (accessibleApps.length > parsed.data.limit) {
+              break;
+            }
+          }
+        }
+
+        const lastCandidate = candidates[candidates.length - 1];
+        if (lastCandidate) {
+          scanCursor = { updatedAt: lastCandidate.updatedAt, _id: lastCandidate._id };
+        }
+        if (candidates.length < ARTIFACT_APP_SCAN_BATCH_SIZE) {
+          exhausted = true;
+          break;
+        }
+      }
+
+      const apps = accessibleApps.slice(0, parsed.data.limit);
+      const hasMore = accessibleApps.length > parsed.data.limit || !exhausted;
+      const cursorApp =
+        accessibleApps.length > parsed.data.limit ? apps[apps.length - 1] : undefined;
+      const cursorSource = cursorApp ?? scanCursor;
+      const after = hasMore && cursorSource ? encodeListCursor(cursorSource) : null;
+      return res.status(200).json({
+        apps: apps.map(serializeApp),
+        has_more: hasMore,
+        after,
       });
-      const apps = await listArtifactApps({ _id: { $in: accessibleIds } });
-      return res.status(200).json({ apps: apps.map(serializeApp) });
     } catch (error) {
       logger.error('[GET /artifact-apps] Error listing artifact apps', error);
       return res.status(500).json({ error: 'Error listing artifact apps' });
+    }
+  }
+
+  async function getBySource(req: ServerRequest, res: Response) {
+    try {
+      const user = requireUser(req, res);
+      if (!user) {
+        return res as Response;
+      }
+      const conversationId =
+        typeof req.query.conversationId === 'string' ? req.query.conversationId : '';
+      const sourceKey = typeof req.query.sourceKey === 'string' ? req.query.sourceKey : '';
+      if (!conversationId || !sourceKey) {
+        return res.status(400).json({ error: 'conversationId and sourceKey are required' });
+      }
+      const app = await getArtifactAppBySource({
+        tenantId: user.tenantId,
+        createdBy: user.id as string,
+        conversationId,
+        sourceKey,
+      });
+      if (!app) {
+        return res.status(404).json({ error: 'Artifact not found' });
+      }
+      const version = app.activeVersionId
+        ? await getArtifactVersion({
+            artifactAppId: app.artifactAppId,
+            artifactVersionId: app.activeVersionId,
+          })
+        : null;
+      return res.status(200).json({
+        app: serializeApp(app),
+        version: version ? serializeVersion(version) : null,
+      });
+    } catch (error) {
+      logger.error('[GET /artifact-apps/source] Error fetching artifact', error);
+      return res.status(500).json({ error: 'Error fetching artifact' });
     }
   }
 
@@ -567,7 +783,9 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
 
   return {
     publish,
+    sync,
     list,
+    getBySource,
     get,
     update,
     remove,

@@ -4,6 +4,12 @@ const ARTIFACT_MIME_TYPES: Record<ArtifactRuntimeType, string> = {
   react: 'application/vnd.react',
   html: 'text/html',
   mermaid: 'application/vnd.mermaid',
+  markdown: 'text/markdown',
+  text: 'text/plain',
+  code: 'application/vnd.code',
+  document: 'application/vnd.librechat.docx-preview',
+  spreadsheet: 'application/vnd.librechat.spreadsheet-preview',
+  presentation: 'application/vnd.librechat.presentation-preview',
 };
 
 export function getArtifactMimeType(runtimeType: ArtifactRuntimeType): string {

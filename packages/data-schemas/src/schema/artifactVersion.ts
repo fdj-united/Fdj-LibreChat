@@ -56,7 +56,17 @@ const artifactVersionSchema: Schema<IArtifactVersion> = new Schema<IArtifactVers
     },
     artifactType: {
       type: String,
-      enum: ['react', 'html', 'mermaid'],
+      enum: [
+        'react',
+        'html',
+        'mermaid',
+        'markdown',
+        'text',
+        'code',
+        'document',
+        'spreadsheet',
+        'presentation',
+      ],
       required: true,
     },
     sourceSnapshot: {

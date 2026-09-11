@@ -105,6 +105,12 @@ const checkResourcePermissionAccess = (requiredPermission) =>
           requiredPermission,
           resourceIdParam: 'resourceId',
         });
+      } else if (resourceType === ResourceType.ARTIFACT_APP) {
+        middleware = canAccessResource({
+          resourceType: ResourceType.ARTIFACT_APP,
+          requiredPermission,
+          resourceIdParam: 'resourceId',
+        });
       } else {
         return res.status(400).json({
           error: 'Bad Request',
