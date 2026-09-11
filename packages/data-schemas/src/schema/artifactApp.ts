@@ -35,6 +35,15 @@ const sourceMetadataSchema = new Schema(
     conversationId: { type: String },
     messageId: { type: String },
     originalArtifactId: { type: String },
+    sourceKey: { type: String },
+  },
+  { _id: false },
+);
+
+const syncLockSchema = new Schema(
+  {
+    token: { type: String, required: true },
+    expiresAt: { type: Date, required: true },
   },
   { _id: false },
 );
@@ -122,6 +131,11 @@ const artifactAppSchema: Schema<IArtifactApp> = new Schema<IArtifactApp>(
       type: sourceMetadataSchema,
       default: undefined,
     },
+    syncLock: {
+      type: syncLockSchema,
+      default: undefined,
+      select: false,
+    },
     review: {
       type: reviewSchema,
       default: undefined,
@@ -139,6 +153,23 @@ artifactAppSchema.index({ tenantId: 1, artifactAppId: 1 }, { unique: true });
 artifactAppSchema.index({ tenantId: 1, status: 1, visibility: 1 });
 artifactAppSchema.index({ tenantId: 1, 'marketplace.listed': 1, 'marketplace.featured': 1 });
 artifactAppSchema.index({ tenantId: 1, createdBy: 1 });
+artifactAppSchema.index({ tenantId: 1, updatedAt: -1, _id: -1 });
+artifactAppSchema.index({ tenantId: 1, createdBy: 1, updatedAt: -1, _id: -1 });
 artifactAppSchema.index({ tenantId: 1, activeVersionId: 1 });
+artifactAppSchema.index(
+  {
+    tenantId: 1,
+    createdBy: 1,
+    'sourceMetadata.conversationId': 1,
+    'sourceMetadata.sourceKey': 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      'sourceMetadata.conversationId': { $type: 'string' },
+      'sourceMetadata.sourceKey': { $type: 'string' },
+    },
+  },
+);
 
 export default artifactAppSchema;

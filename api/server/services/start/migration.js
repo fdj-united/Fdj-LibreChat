@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
-const { logger, ensureBalanceIndexes } = require('@librechat/data-schemas');
+const {
+  logger,
+  ensureArtifactAppIndexes,
+  ensureBalanceIndexes,
+} = require('@librechat/data-schemas');
 const {
   logAgentMigrationWarning,
   logPromptMigrationWarning,
@@ -14,6 +18,11 @@ const { findRoleByIdentifier } = require('~/models');
  */
 async function checkMigrations() {
   await ensureBalanceIndexes(mongoose);
+  try {
+    await ensureArtifactAppIndexes(mongoose.connection);
+  } catch (error) {
+    logger.error('Failed to ensure artifact catalog indexes:', error);
+  }
   try {
     const agentMigrationResult = await checkAgentPermissionsMigration({
       mongoose,

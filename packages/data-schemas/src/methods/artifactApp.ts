@@ -10,12 +10,40 @@ import type {
   CreateArtifactVersionInput,
   ArtifactAppWithVersion,
   ArtifactAppIdResolution,
+  ArtifactAppSourceQuery,
+  SyncArtifactAppResult,
   IArtifactVersionRuntimeConfig,
+  ArtifactAppListOptions,
 } from '~/types';
 import { supportsTransactions } from '~/utils/transactions';
 
 /** Snapshot schema version — bump when the canonical snapshot shape changes. */
 export const ARTIFACT_SCHEMA_VERSION = 1;
+const SYNC_LOCK_LEASE_MS = 5000;
+const SYNC_LOCK_RETRY_DELAY_MS = 50;
+const SYNC_LOCK_RETRY_ATTEMPTS = 100;
+const SYNC_WRITE_RETRY_ATTEMPTS = 3;
+
+interface MongoWriteError {
+  code?: number;
+  errorLabels?: string[];
+}
+
+class ArtifactSyncRetryError extends Error {}
+
+function isRetryableWriteError(error: unknown): boolean {
+  const writeError = error as MongoWriteError;
+  return (
+    error instanceof ArtifactSyncRetryError ||
+    writeError.code === 11000 ||
+    writeError.code === 112 ||
+    writeError.errorLabels?.includes('TransientTransactionError') === true
+  );
+}
+
+function waitForSyncLock(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, SYNC_LOCK_RETRY_DELAY_MS));
+}
 
 /**
  * Deterministic SHA-256 over the canonical version payload
@@ -53,9 +81,14 @@ function canonicalize(value: unknown): unknown {
 
 export interface ArtifactAppMethods {
   createArtifactAppWithVersion: (input: CreateArtifactAppInput) => Promise<ArtifactAppWithVersion>;
+  syncArtifactAppWithVersion: (input: CreateArtifactAppInput) => Promise<SyncArtifactAppResult>;
   getArtifactAppByAppId: (query: ArtifactAppQuery) => Promise<IArtifactApp | null>;
+  getArtifactAppBySource: (query: ArtifactAppSourceQuery) => Promise<IArtifactApp | null>;
   resolveArtifactAppId: (query: ArtifactAppQuery) => Promise<ArtifactAppIdResolution | null>;
-  listArtifactApps: (filter: FilterQuery<IArtifactApp>) => Promise<IArtifactApp[]>;
+  listArtifactApps: (
+    filter: FilterQuery<IArtifactApp>,
+    options?: ArtifactAppListOptions,
+  ) => Promise<IArtifactApp[]>;
   updateArtifactApp: (
     query: ArtifactAppQuery,
     update: Partial<IArtifactApp>,
@@ -150,15 +183,23 @@ export function createArtifactAppMethods(mongoose: typeof import('mongoose')): A
     };
 
     const versionSeed = buildVersionDoc(artifactAppId, input.tenantId, 1, input.version, 'draft');
+    const activeVersionId = versionSeed.artifactVersionId;
+    if (!activeVersionId) {
+      throw new Error('[createArtifactAppWithVersion] Version seed has no identifier');
+    }
+    appDoc.activeVersionId = activeVersionId;
 
     const useTransaction = await supportsTransactions(mongoose);
 
     if (!useTransaction) {
-      const [app] = await ArtifactApp.create([appDoc]);
       const [version] = await ArtifactVersion.create([versionSeed]);
-      app.activeVersionId = version.artifactVersionId;
-      await app.save();
-      return { app, version };
+      try {
+        const [app] = await ArtifactApp.create([appDoc]);
+        return { app, version };
+      } catch (error) {
+        await ArtifactVersion.deleteOne({ artifactVersionId: version.artifactVersionId }).exec();
+        throw error;
+      }
     }
 
     const session: ClientSession = await mongoose.startSession();
@@ -167,8 +208,6 @@ export function createArtifactAppMethods(mongoose: typeof import('mongoose')): A
       await session.withTransaction(async () => {
         const [app] = await ArtifactApp.create([appDoc], { session });
         const [version] = await ArtifactVersion.create([versionSeed], { session });
-        app.activeVersionId = version.artifactVersionId;
-        await app.save({ session });
         result = { app, version };
       });
       if (!result) {
@@ -184,6 +223,334 @@ export function createArtifactAppMethods(mongoose: typeof import('mongoose')): A
     return getApp().findOne({ artifactAppId: query.artifactAppId }).lean<IArtifactApp>().exec();
   }
 
+  function buildSourceFilter(query: ArtifactAppSourceQuery): FilterQuery<IArtifactApp> {
+    const filter: FilterQuery<IArtifactApp> = {
+      createdBy: query.createdBy,
+      'sourceMetadata.conversationId': query.conversationId,
+      'sourceMetadata.sourceKey': query.sourceKey,
+    };
+    if (query.tenantId != null) {
+      filter.tenantId = query.tenantId;
+    } else {
+      filter.tenantId = { $exists: false };
+    }
+    return filter;
+  }
+
+  async function getArtifactAppBySource(
+    query: ArtifactAppSourceQuery,
+  ): Promise<IArtifactApp | null> {
+    return getApp().findOne(buildSourceFilter(query)).lean<IArtifactApp>().exec();
+  }
+
+  /**
+   * Creates the catalog record once, then appends and activates a new snapshot
+   * only when its canonical content hash changes. Version history remains in
+   * the separate ArtifactVersion collection so it can grow independently.
+   */
+  async function syncArtifactAppWithVersion(
+    input: CreateArtifactAppInput,
+  ): Promise<SyncArtifactAppResult> {
+    const source = input.sourceMetadata;
+    if (!source?.conversationId || !source.sourceKey) {
+      throw new Error('[syncArtifactAppWithVersion] Stable source metadata is required');
+    }
+
+    const sourceQuery: ArtifactAppSourceQuery = {
+      tenantId: input.tenantId,
+      createdBy: input.createdBy,
+      conversationId: source.conversationId,
+      sourceKey: source.sourceKey,
+    };
+    let filter = buildSourceFilter(sourceQuery);
+    let existing = await getApp().findOne(filter).select({ _id: 1 }).lean().exec();
+
+    // Upgrade path for records created by the original manual Publish dialog,
+    // which stored an originalArtifactId but had no stable sourceKey.
+    if (!existing && source.originalArtifactId) {
+      const legacyFilter: FilterQuery<IArtifactApp> = {
+        createdBy: input.createdBy,
+        'sourceMetadata.conversationId': source.conversationId,
+        'sourceMetadata.originalArtifactId': source.originalArtifactId,
+        'sourceMetadata.sourceKey': { $exists: false },
+        ...(input.tenantId != null
+          ? { tenantId: input.tenantId }
+          : { tenantId: { $exists: false } }),
+      };
+      existing = await getApp().findOne(legacyFilter).select({ _id: 1 }).lean().exec();
+      if (existing) {
+        filter = { _id: existing._id };
+      }
+    }
+
+    if (!existing) {
+      try {
+        const { app, version } = await createArtifactAppWithVersion({
+          ...input,
+          visibility: 'private',
+          marketplace: { ...input.marketplace, listed: true },
+        });
+        return { app, version, created: true, versionCreated: true };
+      } catch (error) {
+        // A concurrent first sync may win the unique source index. Re-enter the
+        // update path so both requests resolve to the same catalog record.
+        if (!isRetryableWriteError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    const ArtifactApp = getApp();
+    const ArtifactVersion = getVersion();
+    const sourceHash = computeSourceHash(
+      input.version.artifactType,
+      input.version.sourceSnapshot,
+      input.version.runtimeConfig,
+    );
+
+    const applyStandaloneSync = async (): Promise<SyncArtifactAppResult> => {
+      const lockToken = `sync_${nanoid()}`;
+      let app: IArtifactApp | null = null;
+      let versionStaged = false;
+
+      for (let attempt = 0; attempt < SYNC_LOCK_RETRY_ATTEMPTS; attempt++) {
+        const now = new Date();
+        app = await ArtifactApp.findOneAndUpdate(
+          {
+            ...filter,
+            $or: [{ syncLock: { $exists: false } }, { 'syncLock.expiresAt': { $lte: now } }],
+          },
+          {
+            $set: {
+              syncLock: {
+                token: lockToken,
+                expiresAt: new Date(now.getTime() + SYNC_LOCK_LEASE_MS),
+              },
+            },
+          },
+          { new: true },
+        ).exec();
+        if (app) {
+          break;
+        }
+        if (!(await ArtifactApp.exists(filter))) {
+          throw new Error(
+            '[syncArtifactAppWithVersion] Artifact app not found after source lookup',
+          );
+        }
+        await waitForSyncLock();
+      }
+
+      if (!app) {
+        throw new Error('[syncArtifactAppWithVersion] Timed out waiting for artifact sync lock');
+      }
+
+      try {
+        let recoveredVersion = false;
+        const recoverableVersion = await ArtifactVersion.findOne({
+          artifactAppId: app.artifactAppId,
+          versionNumber: app.latestVersionNumber + 1,
+        }).exec();
+        if (recoverableVersion) {
+          const recoveredApp = await ArtifactApp.findOneAndUpdate(
+            {
+              _id: app._id,
+              'syncLock.token': lockToken,
+              latestVersionNumber: app.latestVersionNumber,
+            },
+            {
+              $set: {
+                latestVersionNumber: recoverableVersion.versionNumber,
+                activeVersionId: recoverableVersion.artifactVersionId,
+              },
+            },
+            { new: true },
+          ).exec();
+          if (!recoveredApp) {
+            throw new Error('[syncArtifactAppWithVersion] Artifact sync lock was lost');
+          }
+          app = recoveredApp;
+          recoveredVersion = true;
+        }
+
+        const versionQuery = app.activeVersionId
+          ? ArtifactVersion.findOne({
+              artifactAppId: app.artifactAppId,
+              artifactVersionId: app.activeVersionId,
+            })
+          : ArtifactVersion.findOne({ artifactAppId: app.artifactAppId }).sort({
+              versionNumber: -1,
+            });
+        const activeVersion = await versionQuery.exec();
+        const metadata = {
+          ...source,
+          conversationId: source.conversationId,
+          sourceKey: source.sourceKey,
+        };
+
+        if (activeVersion?.integrity.sourceHash === sourceHash) {
+          const updatedApp = await ArtifactApp.findOneAndUpdate(
+            { _id: app._id, 'syncLock.token': lockToken },
+            {
+              $set: {
+                title: input.title,
+                sourceMetadata: metadata,
+                'marketplace.listed': true,
+              },
+              $unset: { syncLock: 1 },
+            },
+            { new: true },
+          ).exec();
+          if (!updatedApp) {
+            throw new Error('[syncArtifactAppWithVersion] Artifact sync lock was lost');
+          }
+          return {
+            app: updatedApp,
+            version: activeVersion,
+            created: false,
+            versionCreated: recoveredVersion,
+          };
+        }
+
+        const nextVersionNumber = app.latestVersionNumber + 1;
+        const versionSeed = buildVersionDoc(
+          app.artifactAppId,
+          app.tenantId,
+          nextVersionNumber,
+          input.version,
+          'draft',
+        );
+        const stagedVersionId = versionSeed.artifactVersionId;
+        if (!stagedVersionId) {
+          throw new Error('[syncArtifactAppWithVersion] Version seed has no identifier');
+        }
+        const [version] = await ArtifactVersion.create([versionSeed]);
+        versionStaged = true;
+        const updatedApp = await ArtifactApp.findOneAndUpdate(
+          {
+            _id: app._id,
+            'syncLock.token': lockToken,
+            latestVersionNumber: app.latestVersionNumber,
+          },
+          {
+            $set: {
+              title: input.title,
+              sourceMetadata: metadata,
+              'marketplace.listed': true,
+              latestVersionNumber: nextVersionNumber,
+              activeVersionId: version.artifactVersionId,
+            },
+            $unset: { syncLock: 1 },
+          },
+          { new: true },
+        ).exec();
+        if (!updatedApp) {
+          throw new Error('[syncArtifactAppWithVersion] Artifact sync lock was lost');
+        }
+        return {
+          app: updatedApp,
+          version,
+          created: false,
+          versionCreated: true,
+        };
+      } catch (error) {
+        await ArtifactApp.updateOne(
+          { _id: app._id, 'syncLock.token': lockToken },
+          { $unset: { syncLock: 1 } },
+        ).exec();
+        if (versionStaged) {
+          throw new ArtifactSyncRetryError(
+            '[syncArtifactAppWithVersion] Recovering staged artifact version',
+          );
+        }
+        throw error;
+      }
+    };
+
+    const applySync = async (session?: ClientSession): Promise<SyncArtifactAppResult> => {
+      const appQuery = ArtifactApp.findOne(filter);
+      if (session) appQuery.session(session);
+      const app = await appQuery.exec();
+      if (!app) {
+        throw new Error('[syncArtifactAppWithVersion] Artifact app not found after source lookup');
+      }
+
+      const versionQuery = app.activeVersionId
+        ? ArtifactVersion.findOne({
+            artifactAppId: app.artifactAppId,
+            artifactVersionId: app.activeVersionId,
+          })
+        : ArtifactVersion.findOne({ artifactAppId: app.artifactAppId }).sort({ versionNumber: -1 });
+      if (session) versionQuery.session(session);
+      const activeVersion = await versionQuery.exec();
+
+      app.title = input.title;
+      app.sourceMetadata = {
+        ...source,
+        conversationId: source.conversationId,
+        sourceKey: source.sourceKey,
+      };
+      app.set('marketplace.listed', true);
+
+      if (activeVersion?.integrity.sourceHash === sourceHash) {
+        await app.save(session ? { session } : undefined);
+        return {
+          app: app.toObject() as IArtifactApp,
+          version: activeVersion.toObject() as IArtifactVersion,
+          created: false,
+          versionCreated: false,
+        };
+      }
+
+      const nextNumber = app.latestVersionNumber + 1;
+      const versionSeed = buildVersionDoc(
+        app.artifactAppId,
+        app.tenantId,
+        nextNumber,
+        input.version,
+        'draft',
+      );
+      const createOptions = session ? { session } : undefined;
+      const [version] = await ArtifactVersion.create([versionSeed], createOptions);
+      app.latestVersionNumber = nextNumber;
+      app.activeVersionId = version.artifactVersionId;
+      await app.save(session ? { session } : undefined);
+      return {
+        app: app.toObject() as IArtifactApp,
+        version: version.toObject() as IArtifactVersion,
+        created: false,
+        versionCreated: true,
+      };
+    };
+
+    if (!(await supportsTransactions(mongoose))) {
+      for (let attempt = 0; attempt < SYNC_WRITE_RETRY_ATTEMPTS; attempt++) {
+        try {
+          return await applyStandaloneSync();
+        } catch (error) {
+          if (!isRetryableWriteError(error) || attempt === SYNC_WRITE_RETRY_ATTEMPTS - 1) {
+            throw error;
+          }
+        }
+      }
+      throw new Error('[syncArtifactAppWithVersion] Standalone sync exhausted retries');
+    }
+
+    const session = await mongoose.startSession();
+    try {
+      let result: SyncArtifactAppResult | undefined;
+      await session.withTransaction(async () => {
+        result = await applySync(session);
+      });
+      if (!result) {
+        throw new Error('[syncArtifactAppWithVersion] Transaction produced no result');
+      }
+      return result;
+    } finally {
+      await session.endSession();
+    }
+  }
+
   async function resolveArtifactAppId(
     query: ArtifactAppQuery,
   ): Promise<ArtifactAppIdResolution | null> {
@@ -195,8 +562,25 @@ export function createArtifactAppMethods(mongoose: typeof import('mongoose')): A
     return doc;
   }
 
-  async function listArtifactApps(filter: FilterQuery<IArtifactApp>): Promise<IArtifactApp[]> {
-    return getApp().find(filter).sort({ updatedAt: -1 }).lean<IArtifactApp[]>().exec();
+  async function listArtifactApps(
+    filter: FilterQuery<IArtifactApp>,
+    options: ArtifactAppListOptions = {},
+  ): Promise<IArtifactApp[]> {
+    const cursorFilter: FilterQuery<IArtifactApp> | undefined = options.cursor
+      ? {
+          $or: [
+            { updatedAt: { $lt: options.cursor.updatedAt } },
+            { updatedAt: options.cursor.updatedAt, _id: { $lt: options.cursor._id } },
+          ],
+        }
+      : undefined;
+    const query = getApp()
+      .find(cursorFilter ? { $and: [filter, cursorFilter] } : filter)
+      .sort({ updatedAt: -1, _id: -1 });
+    if (options.limit) {
+      query.limit(options.limit);
+    }
+    return query.lean<IArtifactApp[]>().exec();
   }
 
   async function updateArtifactApp(
@@ -310,7 +694,9 @@ export function createArtifactAppMethods(mongoose: typeof import('mongoose')): A
 
   return {
     createArtifactAppWithVersion,
+    syncArtifactAppWithVersion,
     getArtifactAppByAppId,
+    getArtifactAppBySource,
     resolveArtifactAppId,
     listArtifactApps,
     updateArtifactApp,

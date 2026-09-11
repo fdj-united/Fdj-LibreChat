@@ -108,6 +108,7 @@ export type { TenantContext } from './config/tenantContext';
 export {
   MCPServerNameMigrationError,
   createMCPAuthorityLookupIndexes,
+  ensureArtifactAppIndexes,
   dropSupersededTenantIndexes,
   migrateTenantIndexes,
   dropSupersededPromptGroupIndexes,

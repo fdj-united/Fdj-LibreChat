@@ -1,10 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
-import { useRecoilValue } from 'recoil';
+import { useLocation } from 'react-router-dom';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { useRecoilValue, useResetRecoilState } from 'recoil';
 import { EModelEndpoint, FileSources, LocalStorageKeys } from 'librechat-data-provider';
 import type { ExtendedFile } from '~/common';
 import useResetArtifactsOnConversationChange from '~/hooks/Artifacts/useResetArtifactsOnConversationChange';
 import { ParentSubagentsProvider } from '~/components/Chat/Subagents/ParentSubagentsProvider';
+import ArtifactCatalogRegistrar from '~/components/ArtifactApps/ArtifactCatalogRegistrar';
 import DragDropWrapper from '~/components/Chat/Input/Files/DragDropWrapper';
 import { activeSubagentPanel } from '~/components/Chat/Subagents/state';
 import { EditorProvider, ArtifactsProvider } from '~/Providers';
@@ -19,6 +21,7 @@ const Artifacts = lazy(() => import('~/components/Artifacts/Artifacts'));
 const SubagentThreadPanel = lazy(() => import('~/components/Chat/Subagents/SubagentThreadPanel'));
 
 export default function Presentation({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
   const artifacts = useRecoilValue(store.artifactsState);
   const artifactsVisibility = useRecoilValue(store.artifactsVisibility);
   // Render-gating the panel on `currentArtifactId != null` (in addition
@@ -29,6 +32,17 @@ export default function Presentation({ children }: { children: React.ReactNode }
   // arriving via SSE auto-focus through `ToolArtifactCard`'s mount effect
   // (gated on `isSubmitting`), restoring the legacy streaming UX.
   const currentArtifactId = useRecoilValue(store.currentArtifactId);
+  const artifactNavigationRequest = useRecoilValue(store.artifactNavigationRequest);
+  const resetArtifacts = useResetRecoilState(store.artifactsState);
+  const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
+  const handledArtifactRequestRef = useRef<string | null>(null);
+  const hasStateArtifactRequest =
+    artifactNavigationRequest != null &&
+    location.pathname.endsWith(`/c/${artifactNavigationRequest.conversationId}`);
+  const hasArtifactRequest = useMemo(
+    () => new URLSearchParams(location.search).has('artifact') || hasStateArtifactRequest,
+    [hasStateArtifactRequest, location.search],
+  );
   const conversationId = useRecoilValue(store.conversationIdByIndex(0));
   const conversationEndpoint = useRecoilValue(store.effectiveEndpointByIndex(0));
   const conversationAgentId = useRecoilValue(store.conversationAgentIdByIndex(0));
@@ -39,6 +53,27 @@ export default function Presentation({ children }: { children: React.ReactNode }
   const previousConversationIdRef = useRef<string | null>(null);
 
   useResetArtifactsOnConversationChange();
+
+  useEffect(() => {
+    if (!hasArtifactRequest) {
+      handledArtifactRequestRef.current = null;
+      return;
+    }
+    const requestKey = `${location.key}:${location.search}:${artifactNavigationRequest?.sourceKey ?? ''}`;
+    if (handledArtifactRequestRef.current === requestKey) {
+      return;
+    }
+    handledArtifactRequestRef.current = requestKey;
+    resetArtifacts();
+    resetCurrentArtifactId();
+  }, [
+    artifactNavigationRequest?.sourceKey,
+    hasArtifactRequest,
+    location.key,
+    location.search,
+    resetArtifacts,
+    resetCurrentArtifactId,
+  ]);
 
   useEffect(() => {
     const previous = previousConversationIdRef.current;
@@ -102,22 +137,20 @@ export default function Presentation({ children }: { children: React.ReactNode }
 
   const artifactsElement = useMemo(() => {
     if (
-      artifactsVisibility === true &&
-      currentArtifactId != null &&
+      (artifactsVisibility === true || hasArtifactRequest) &&
+      (currentArtifactId != null || hasArtifactRequest) &&
       Object.keys(artifacts ?? {}).length > 0
     ) {
       return (
-        <ArtifactsProvider>
-          <EditorProvider>
-            <Suspense fallback={null}>
-              <Artifacts />
-            </Suspense>
-          </EditorProvider>
-        </ArtifactsProvider>
+        <EditorProvider>
+          <Suspense fallback={null}>
+            <Artifacts />
+          </Suspense>
+        </EditorProvider>
       );
     }
     return null;
-  }, [artifactsVisibility, artifacts, currentArtifactId]);
+  }, [artifactsVisibility, artifacts, currentArtifactId, hasArtifactRequest]);
 
   useEffect(() => {
     if (artifactsElement != null && selectedSubagent != null) resetSelectedSubagent();
@@ -141,20 +174,23 @@ export default function Presentation({ children }: { children: React.ReactNode }
   const panelElement = artifactsElement ?? subagentElement;
 
   return (
-    <DragDropWrapper className="relative flex w-full grow overflow-hidden bg-presentation">
-      <AppChatSurface>
-        <ParentSubagentsProvider
-          conversationId={conversationId ?? ''}
-          enabled={conversationEndpoint === EModelEndpoint.agents && conversationAgentId != null}
-          isSubmitting={isSubmitting}
-        >
-          <SidePanelGroup panel={panelElement}>
-            <main className="flex h-full flex-col overflow-y-auto" role="main">
-              {children}
-            </main>
-          </SidePanelGroup>
-        </ParentSubagentsProvider>
-      </AppChatSurface>
-    </DragDropWrapper>
+    <ArtifactsProvider>
+      <ArtifactCatalogRegistrar />
+      <DragDropWrapper className="relative flex w-full grow overflow-hidden bg-presentation">
+        <AppChatSurface>
+          <ParentSubagentsProvider
+            conversationId={conversationId ?? ''}
+            enabled={conversationEndpoint === EModelEndpoint.agents && conversationAgentId != null}
+            isSubmitting={isSubmitting}
+          >
+            <SidePanelGroup panel={panelElement}>
+              <main className="flex h-full flex-col overflow-y-auto" role="main">
+                {children}
+              </main>
+            </SidePanelGroup>
+          </ParentSubagentsProvider>
+        </AppChatSurface>
+      </DragDropWrapper>
+    </ArtifactsProvider>
   );
 }

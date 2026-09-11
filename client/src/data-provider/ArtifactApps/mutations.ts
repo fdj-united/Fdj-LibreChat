@@ -5,6 +5,8 @@ import type {
   TArtifactVersion,
   TArtifactAppWithVersion,
   TPublishArtifactAppRequest,
+  TSyncArtifactAppRequest,
+  TSyncArtifactAppResponse,
   TUpdateArtifactAppRequest,
   TCreateArtifactVersionRequest,
 } from 'librechat-data-provider';
@@ -18,6 +20,23 @@ export const usePublishArtifactAppMutation = (): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation((payload) => dataService.publishArtifactApp(payload), {
     onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.artifactApps]);
+    },
+  });
+};
+
+export const useSyncArtifactAppMutation = (): UseMutationResult<
+  TSyncArtifactAppResponse,
+  Error,
+  TSyncArtifactAppRequest
+> => {
+  const queryClient = useQueryClient();
+  return useMutation((payload) => dataService.syncArtifactApp(payload), {
+    onSuccess: (data, payload) => {
+      queryClient.setQueryData(
+        [QueryKeys.artifactApp, 'source', payload.source.conversationId, payload.source.sourceKey],
+        data,
+      );
       queryClient.invalidateQueries([QueryKeys.artifactApps]);
     },
   });
