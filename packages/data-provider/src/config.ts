@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ZodError } from 'zod';
 import type { TEndpointsConfig, TModelsConfig, TConfig } from './types';
+import type { ArtifactAppsConfig } from './artifactApps';
 import {
   filtersConfigSchema,
   MAX_PII_CUSTOM_REGEX_CHARACTERS,
@@ -40,6 +41,7 @@ import {
 import { ComponentTypes, SettingTypes, OptionTypes } from './generate';
 import { STATEFUL_CODE_ENVIRONMENTS } from './stateful-code';
 import { specsConfigSchema, TSpecsConfig } from './models';
+import { artifactAppsConfigSchema } from './artifactApps';
 import { fileConfigSchema } from './file-config';
 import { isActionTool } from './types/tools';
 import { apiBaseUrl } from './api-endpoints';
@@ -2552,6 +2554,7 @@ export type TStartupConfig = {
   SAS_STORAGE_ACCOUNT?: string;
   SAS_TABLE_NAME?: string;
   SAS_CONTAINER_NAME?: string;
+  artifactApps?: ArtifactAppsConfig;
   socialLogins?: string[];
   langfuseFanoutEnabled?: boolean;
   langfuseConnectionAccess?: boolean;
@@ -3200,6 +3203,7 @@ export const configSchema = z.object({
   version: z.string(),
   permissions: z.object({ maxWriteAttempts: permissionWriteAttemptsSchema }).optional(),
   cache: z.boolean().default(true),
+  artifactApps: artifactAppsConfigSchema,
   ocr: ocrSchema.optional(),
   webSearch: webSearchSchema.optional(),
   langfuse: langfuseConfigSchema.optional(),
