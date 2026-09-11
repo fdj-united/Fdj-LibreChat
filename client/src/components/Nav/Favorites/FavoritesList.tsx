@@ -1,9 +1,9 @@
 import React, { useRef, useCallback, useMemo, useEffect } from 'react';
 import { useRecoilValue } from 'recoil';
 import { useDrag, useDrop } from 'react-dnd';
+import { LayoutGrid, Shapes } from 'lucide-react';
 import { useQueries } from '@tanstack/react-query';
 import { Button, Skeleton } from '@librechat/client';
-import { LayoutGrid, WandSparkles } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { QueryKeys, dataService } from 'librechat-data-provider';
 import type { Agent, TEndpointsConfig, TModelSpec } from 'librechat-data-provider';
@@ -230,7 +230,7 @@ export default function FavoritesList({
   const artifactAppsItem = (
     <DestinationItem
       ref={artifactAppsRef}
-      icon={WandSparkles}
+      icon={Shapes}
       isActive={pathname === '/apps' || pathname.startsWith('/apps/')}
       label={localize('com_nav_artifact_apps')}
       onClick={handleArtifactApps}
