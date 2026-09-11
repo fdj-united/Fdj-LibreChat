@@ -1,7 +1,8 @@
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { ResourceType, AccessRoleIds } from 'librechat-data-provider';
 import { createModels, createArtifactAppMethods } from '@librechat/data-schemas';
+import { ResourceType, AccessRoleIds, PermissionBits } from 'librechat-data-provider';
+import type { IUser } from '@librechat/data-schemas';
 import type { Response } from 'express';
 import type { Types } from 'mongoose';
 import type { ServerRequest } from '~/types';
@@ -21,6 +22,7 @@ interface GrantRecord {
 let grants: GrantRecord[];
 let auditActions: string[];
 let accessibleIds: Types.ObjectId[];
+let permissionBatchSizes: number[];
 
 function makeRes(): Response & { statusCode: number; body: unknown } {
   const res = {
@@ -40,11 +42,27 @@ function makeRes(): Response & { statusCode: number; body: unknown } {
 
 /** Route bodies are validated by zod inside the handlers, so the mock body is
  * deliberately unconstrained rather than the chat-shaped `ServerRequest['body']`. */
-type ReqOverrides = Partial<Omit<ServerRequest, 'body'>> & { body?: unknown };
+type ReqOverrides = Partial<Omit<ServerRequest, 'body' | 'user'>> & {
+  body?: unknown;
+  user?: IUser;
+};
 
-function makeReq(overrides: ReqOverrides): ServerRequest {
+function makeUser(overrides: Partial<IUser> = {}): IUser {
   return {
-    user: { id: 'user-1', name: 'User One', tenantId: undefined },
+    _id: new mongoose.Types.ObjectId(),
+    id: 'user-1',
+    name: 'User One',
+    email: 'user-one@example.com',
+    emailVerified: true,
+    provider: 'local',
+    tenantId: undefined,
+    ...overrides,
+  } as IUser;
+}
+
+function makeReq(overrides: ReqOverrides = {}): ServerRequest {
+  return {
+    user: makeUser(),
     params: {},
     body: {},
     query: {},
@@ -70,7 +88,15 @@ beforeAll(async () => {
   methods = createArtifactAppMethods(mongoose);
   handlers = createArtifactAppHandlers({
     ...methods,
-    findAccessibleResources: async () => accessibleIds,
+    getResourcePermissionsMap: async ({ resourceIds }) => {
+      permissionBatchSizes.push(resourceIds.length);
+      const accessibleSet = new Set(accessibleIds.map((id) => id.toString()));
+      return new Map(
+        resourceIds
+          .filter((id) => accessibleSet.has(id.toString()))
+          .map((id) => [id.toString(), PermissionBits.VIEW]),
+      );
+    },
     grantPermission: async (params) => {
       grants.push({
         principalId: String(params.principalId),
@@ -97,6 +123,7 @@ beforeEach(async () => {
   grants = [];
   auditActions = [];
   accessibleIds = [];
+  permissionBatchSizes = [];
 });
 
 describe('publish', () => {
@@ -164,6 +191,59 @@ describe('publish', () => {
   });
 });
 
+describe('automatic catalog sync', () => {
+  const syncBody = {
+    title: 'Revenue chart',
+    artifact: samplePublish.artifact,
+    source: {
+      conversationId: 'conversation-1',
+      messageId: 'message-1',
+      originalArtifactId: 'render-1',
+      sourceKey: 'identifier:revenue-chart:application/vnd.react',
+    },
+  };
+
+  test('creates once, then reuses the catalog record for identical content', async () => {
+    const first = makeRes();
+    await handlers.sync(makeReq({ body: syncBody }), first);
+    const second = makeRes();
+    await handlers.sync(
+      makeReq({
+        body: {
+          ...syncBody,
+          source: { ...syncBody.source, messageId: 'message-2', originalArtifactId: 'render-2' },
+        },
+      }),
+      second,
+    );
+
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(200);
+    expect(second.body as { created: boolean; versionCreated: boolean }).toMatchObject({
+      created: false,
+      versionCreated: false,
+    });
+    expect(grants).toHaveLength(2);
+  });
+
+  test('returns an owner-only source lookup for the share button', async () => {
+    await handlers.sync(makeReq({ body: syncBody }), makeRes());
+    const res = makeRes();
+    await handlers.getBySource(
+      makeReq({
+        query: {
+          conversationId: syncBody.source.conversationId,
+          sourceKey: syncBody.source.sourceKey,
+        },
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { app: { id: string } }).app.id).toMatch(/^[a-f0-9]{24}$/);
+  });
+});
+
 describe('get / list', () => {
   test('get returns app with its active version', async () => {
     const created = makeRes();
@@ -196,6 +276,90 @@ describe('get / list', () => {
     await handlers.list(makeReq({}), res);
     const body = res.body as { apps: unknown[] };
     expect(body.apps).toHaveLength(1);
+  });
+
+  test('list separates personal and shared artifacts while all returns both', async () => {
+    const personal = makeRes();
+    await handlers.publish(makeReq({ body: { ...samplePublish, title: 'Personal' } }), personal);
+    const shared = makeRes();
+    await handlers.publish(
+      makeReq({
+        user: makeUser({ id: 'user-2', name: 'User Two', email: 'user-two@example.com' }),
+        body: { ...samplePublish, title: 'Shared' },
+      }),
+      shared,
+    );
+
+    const personalApp = await methods.resolveArtifactAppId({
+      artifactAppId: (personal.body as { app: { artifactAppId: string } }).app.artifactAppId,
+    });
+    const sharedApp = await methods.resolveArtifactAppId({
+      artifactAppId: (shared.body as { app: { artifactAppId: string } }).app.artifactAppId,
+    });
+    accessibleIds = [personalApp!._id, sharedApp!._id];
+
+    const personalResult = makeRes();
+    await handlers.list(makeReq({ query: { scope: 'personal' } }), personalResult);
+    const sharedResult = makeRes();
+    await handlers.list(makeReq({ query: { scope: 'shared' } }), sharedResult);
+    const allResult = makeRes();
+    await handlers.list(makeReq({ query: { scope: 'all' } }), allResult);
+
+    expect((personalResult.body as { apps: Array<{ title: string }> }).apps).toHaveLength(1);
+    expect((personalResult.body as { apps: Array<{ title: string }> }).apps[0]?.title).toBe(
+      'Personal',
+    );
+    expect((sharedResult.body as { apps: Array<{ title: string }> }).apps).toHaveLength(1);
+    expect((sharedResult.body as { apps: Array<{ title: string }> }).apps[0]?.title).toBe('Shared');
+    expect((allResult.body as { apps: unknown[] }).apps).toHaveLength(2);
+  });
+
+  test('list returns stable cursor pages and bounds ACL permission batches', async () => {
+    const createdIds: Types.ObjectId[] = [];
+    for (let index = 0; index < 25; index++) {
+      const { app } = await methods.createArtifactAppWithVersion({
+        createdBy: 'user-1',
+        title: `Artifact ${index}`,
+        visibility: 'private',
+        version: {
+          artifactType: 'react',
+          sourceSnapshot: `${samplePublish.artifact.content}-${index}`,
+          createdBy: 'user-1',
+        },
+      });
+      createdIds.push(app._id);
+    }
+    accessibleIds = createdIds;
+
+    const first = makeRes();
+    await handlers.list(makeReq({ query: { scope: 'personal', limit: '10' } }), first);
+    const firstPage = first.body as {
+      apps: Array<{ id: string }>;
+      has_more: boolean;
+      after: string | null;
+    };
+    expect(firstPage.apps).toHaveLength(10);
+    expect(firstPage.has_more).toBe(true);
+    expect(firstPage.after).toEqual(expect.any(String));
+    if (!firstPage.after) {
+      throw new Error('Expected a cursor for the next artifact page');
+    }
+
+    const second = makeRes();
+    await handlers.list(
+      makeReq({ query: { scope: 'personal', limit: '10', cursor: firstPage.after } }),
+      second,
+    );
+    const secondPage = second.body as { apps: Array<{ id: string }> };
+    expect(secondPage.apps).toHaveLength(10);
+    expect(new Set([...firstPage.apps, ...secondPage.apps].map(({ id }) => id)).size).toBe(20);
+    expect(Math.max(...permissionBatchSizes)).toBeLessThanOrEqual(100);
+  });
+
+  test('list rejects malformed cursors', async () => {
+    const res = makeRes();
+    await handlers.list(makeReq({ query: { cursor: 'not-a-cursor' } }), res);
+    expect(res.statusCode).toBe(400);
   });
 
   test('get returns 404 for unknown id', async () => {

@@ -5,7 +5,7 @@ import { LayoutGrid, Shapes } from 'lucide-react';
 import { useQueries } from '@tanstack/react-query';
 import { Button, Skeleton } from '@librechat/client';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { QueryKeys, dataService } from 'librechat-data-provider';
+import { Permissions, PermissionTypes, QueryKeys, dataService } from 'librechat-data-provider';
 import type { Agent, TEndpointsConfig, TModelSpec } from 'librechat-data-provider';
 import type { LucideIcon } from 'lucide-react';
 import type { AgentQueryResult } from '~/common';
@@ -15,6 +15,7 @@ import {
   useLocalize,
   useShowMarketplace,
   useNewConvo,
+  useHasAccess,
 } from '~/hooks';
 import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import { useAssistantsMapContext, useAgentsMapContext } from '~/Providers';
@@ -160,6 +161,10 @@ export default function FavoritesList({
   const getConversation = useGetConversation(0);
   const { favorites, reorderFavorites, isLoading: isFavoritesLoading } = useFavorites();
   const showAgentMarketplace = useShowMarketplace();
+  const showArtifactCatalog = useHasAccess({
+    permissionType: PermissionTypes.ARTIFACTS,
+    permission: Permissions.USE,
+  });
 
   const { newConversation } = useNewConvo();
   const assistantsMap = useAssistantsMapContext();
@@ -400,7 +405,7 @@ export default function FavoritesList({
       <div className="mb-2 flex flex-col pb-2">
         <div className="mt-1 flex flex-col gap-1">
           {showAgentMarketplace && <MarketplaceSkeleton />}
-          {artifactAppsItem}
+          {showArtifactCatalog && artifactAppsItem}
           <FavoriteItemSkeleton />
         </div>
       </div>
@@ -415,7 +420,7 @@ export default function FavoritesList({
           <>
             {/* Marketplace skeleton */}
             {showAgentMarketplace && <MarketplaceSkeleton />}
-            {artifactAppsItem}
+            {showArtifactCatalog && artifactAppsItem}
             {/* Favorite items skeletons */}
             {safeFavorites.map((_, index) => (
               <FavoriteItemSkeleton key={`skeleton-${index}`} />
@@ -434,7 +439,7 @@ export default function FavoritesList({
                 testId="nav-agents-marketplace-button"
               />
             )}
-            {artifactAppsItem}
+            {showArtifactCatalog && artifactAppsItem}
             {safeFavorites.map((fav, index) => {
               if (fav.agentId) {
                 const agent = combinedAgentsMap?.[fav.agentId];

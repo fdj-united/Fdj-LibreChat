@@ -86,10 +86,11 @@ export const RESOURCE_CONFIGS: Record<ResourceType, ResourceConfig> = {
     defaultViewerRoleId: AccessRoleIds.ARTIFACT_APP_VIEWER,
     defaultEditorRoleId: AccessRoleIds.ARTIFACT_APP_EDITOR,
     defaultOwnerRoleId: AccessRoleIds.ARTIFACT_APP_OWNER,
-    getResourceName: (name?: string) => name || 'app',
-    getShareMessage: (name?: string) => name || 'app',
-    getManageMessage: (name?: string) => `Manage access for ${name || 'app'}`,
-    getCopyUrlMessage: () => 'App link copied',
+    getResourceUrl: (artifactId: string) => `${window.location.origin}/apps/${artifactId}`,
+    getResourceName: (name?: string) => name || 'artifact',
+    getShareMessage: (name?: string) => name || 'artifact',
+    getManageMessage: (name?: string) => `Manage access for ${name || 'artifact'}`,
+    getCopyUrlMessage: () => 'Artifact link copied',
   },
 };
 

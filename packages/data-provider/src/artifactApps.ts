@@ -19,8 +19,28 @@ export type ArtifactAppStatus = z.infer<typeof artifactAppStatusSchema>;
 export const artifactAppVisibilitySchema = z.enum(['private', 'restricted', 'tenant', 'public']);
 export type ArtifactAppVisibility = z.infer<typeof artifactAppVisibilitySchema>;
 
-export const artifactRuntimeTypeSchema = z.enum(['react', 'html', 'mermaid']);
+export const artifactRuntimeTypeSchema = z.enum([
+  'react',
+  'html',
+  'mermaid',
+  'markdown',
+  'text',
+  'code',
+  'document',
+  'spreadsheet',
+  'presentation',
+]);
 export type ArtifactRuntimeType = z.infer<typeof artifactRuntimeTypeSchema>;
+
+export const artifactAppListScopeSchema = z.enum(['personal', 'shared', 'all']);
+export type ArtifactAppListScope = z.infer<typeof artifactAppListScopeSchema>;
+
+export const artifactAppListRequestSchema = z.object({
+  scope: artifactAppListScopeSchema.default('personal'),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().min(1).optional(),
+});
+export type TArtifactAppListRequest = z.infer<typeof artifactAppListRequestSchema>;
 
 export const artifactVersionStateSchema = z.enum(['draft', 'released', 'withdrawn']);
 export type ArtifactVersionState = z.infer<typeof artifactVersionStateSchema>;
@@ -54,6 +74,7 @@ export const artifactSourceMetadataSchema = z.object({
   conversationId: z.string().optional(),
   messageId: z.string().optional(),
   originalArtifactId: z.string().optional(),
+  sourceKey: z.string().optional(),
 });
 export type ArtifactSourceMetadata = z.infer<typeof artifactSourceMetadataSchema>;
 
@@ -96,6 +117,17 @@ export const publishArtifactAppSchema = z.object({
 });
 export type TPublishArtifactAppRequest = z.infer<typeof publishArtifactAppSchema>;
 
+/** POST /api/artifact-apps/sync — idempotently register an artifact in the catalog. */
+export const syncArtifactAppSchema = z.object({
+  title: z.string().min(1).max(200),
+  artifact: artifactSnapshotInputSchema,
+  source: artifactSourceMetadataSchema.extend({
+    conversationId: z.string().min(1),
+    sourceKey: z.string().min(1).max(500),
+  }),
+});
+export type TSyncArtifactAppRequest = z.infer<typeof syncArtifactAppSchema>;
+
 /** PATCH /api/artifact-apps/:id */
 export const updateArtifactAppSchema = z
   .object({
@@ -125,6 +157,8 @@ export type TCreateArtifactVersionRequest = z.infer<typeof createArtifactVersion
 // ===== RESPONSE TYPES (client-facing; dates serialized as ISO strings) =====
 
 export interface TArtifactApp {
+  /** MongoDB resource id used by the generic ACL endpoints. */
+  id: string;
   artifactAppId: string;
   tenantId?: string;
   title: string;
@@ -184,8 +218,15 @@ export interface TArtifactAppWithVersion {
   version: TArtifactVersion | null;
 }
 
+export interface TSyncArtifactAppResponse extends TArtifactAppWithVersion {
+  created: boolean;
+  versionCreated: boolean;
+}
+
 export interface TArtifactAppList {
   apps: TArtifactApp[];
+  has_more: boolean;
+  after: string | null;
 }
 
 export interface TArtifactVersionList {

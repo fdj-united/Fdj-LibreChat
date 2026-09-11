@@ -46,6 +46,7 @@ type ShareMiddleware = (
 
 const resourceToPermissionType: Partial<Record<ResourceType, PermissionTypes>> = {
   [ResourceType.AGENT]: PermissionTypes.AGENTS,
+  [ResourceType.ARTIFACT_APP]: PermissionTypes.ARTIFACTS,
   [ResourceType.PROMPTGROUP]: PermissionTypes.PROMPTS,
   [ResourceType.MCPSERVER]: PermissionTypes.MCP_SERVERS,
   [ResourceType.REMOTE_AGENT]: PermissionTypes.REMOTE_AGENTS,

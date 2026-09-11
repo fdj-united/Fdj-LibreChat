@@ -1268,6 +1268,12 @@ export function updateAgentPermissions(
   return request.put(endpoints.updateAgentPermissions(variables.roleName), variables.updates);
 }
 
+export function updateArtifactPermissions(
+  variables: m.UpdateArtifactPermVars,
+): Promise<m.UpdatePermResponse> {
+  return request.put(endpoints.updateArtifactPermissions(variables.roleName), variables.updates);
+}
+
 export function updateMemoryPermissions(
   variables: m.UpdateMemoryPermVars,
 ): Promise<m.UpdatePermResponse> {
@@ -1515,8 +1521,30 @@ export function publishArtifactApp(
   return request.post(endpoints.artifactApps(), payload);
 }
 
-export function listArtifactApps(): Promise<aa.TArtifactAppList> {
-  return request.get(endpoints.artifactApps());
+export function syncArtifactApp(
+  payload: aa.TSyncArtifactAppRequest,
+): Promise<aa.TSyncArtifactAppResponse> {
+  return request.post(endpoints.syncArtifactApp(), payload);
+}
+
+export function listArtifactApps(
+  params: Partial<aa.TArtifactAppListRequest> = {},
+): Promise<aa.TArtifactAppList> {
+  const query = new URLSearchParams({
+    scope: params.scope ?? 'personal',
+    limit: String(params.limit ?? 20),
+  });
+  if (params.cursor) {
+    query.set('cursor', params.cursor);
+  }
+  return request.get(`${endpoints.artifactApps()}?${query.toString()}`);
+}
+
+export function getArtifactAppBySource(
+  conversationId: string,
+  sourceKey: string,
+): Promise<aa.TArtifactAppWithVersion> {
+  return request.get(endpoints.artifactAppBySource(conversationId, sourceKey));
 }
 
 export function getArtifactApp(artifactAppId: string): Promise<aa.TArtifactAppWithVersion> {

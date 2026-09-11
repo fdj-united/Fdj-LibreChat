@@ -2,7 +2,10 @@ import type { Connection } from 'mongoose';
 import logger from '~/config/winston';
 
 type IndexSpec = Record<string, 1 | -1>;
-type IndexOptions = { unique?: boolean };
+type IndexOptions = {
+  unique?: boolean;
+  partialFilterExpression?: Record<string, { $type: 'string' }>;
+};
 
 interface IndexDefinition {
   spec: IndexSpec;
@@ -22,7 +25,24 @@ const COLLECTION_INDEXES: Record<string, IndexDefinition[]> = {
     { spec: { tenantId: 1, status: 1, visibility: 1 }, options: {} },
     { spec: { tenantId: 1, 'marketplace.listed': 1, 'marketplace.featured': 1 }, options: {} },
     { spec: { tenantId: 1, createdBy: 1 }, options: {} },
+    { spec: { tenantId: 1, updatedAt: -1, _id: -1 }, options: {} },
+    { spec: { tenantId: 1, createdBy: 1, updatedAt: -1, _id: -1 }, options: {} },
     { spec: { tenantId: 1, activeVersionId: 1 }, options: {} },
+    {
+      spec: {
+        tenantId: 1,
+        createdBy: 1,
+        'sourceMetadata.conversationId': 1,
+        'sourceMetadata.sourceKey': 1,
+      },
+      options: {
+        unique: true,
+        partialFilterExpression: {
+          'sourceMetadata.conversationId': { $type: 'string' },
+          'sourceMetadata.sourceKey': { $type: 'string' },
+        },
+      },
+    },
   ],
   artifactversions: [
     { spec: { tenantId: 1, artifactAppId: 1, versionNumber: 1 }, options: { unique: true } },

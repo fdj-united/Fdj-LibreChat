@@ -44,6 +44,7 @@ beforeAll(async () => {
   ArtifactVersion = mongoose.models.ArtifactVersion as mongoose.Model<IArtifactVersion>;
   methods = createArtifactAppMethods(mongoose);
   await mongoose.connect(mongoServer.getUri());
+  await Promise.all([ArtifactApp.syncIndexes(), ArtifactVersion.syncIndexes()]);
 }, 30000);
 
 afterAll(async () => {
@@ -106,6 +107,178 @@ describe('createArtifactAppWithVersion', () => {
       versionNumber: 1,
     });
     expect(reread?.sourceSnapshot).toBe(originalSource);
+  });
+});
+
+describe('syncArtifactAppWithVersion', () => {
+  const sourceMetadata = {
+    conversationId: 'conversation-1',
+    messageId: 'message-1',
+    originalArtifactId: 'render-id-1',
+    sourceKey: 'identifier:revenue-chart:application/vnd.react',
+  };
+
+  test('is idempotent when the source snapshot has not changed', async () => {
+    const input = baseInput({ sourceMetadata });
+    const first = await methods.syncArtifactAppWithVersion(input);
+    const second = await methods.syncArtifactAppWithVersion({
+      ...input,
+      sourceMetadata: {
+        ...sourceMetadata,
+        messageId: 'message-2',
+        originalArtifactId: 'render-id-2',
+      },
+    });
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.versionCreated).toBe(false);
+    expect(second.app.artifactAppId).toBe(first.app.artifactAppId);
+    expect(await ArtifactVersion.countDocuments({ artifactAppId: first.app.artifactAppId })).toBe(
+      1,
+    );
+  });
+
+  test('creates and activates the next version when content changes', async () => {
+    const input = baseInput({ sourceMetadata });
+    const first = await methods.syncArtifactAppWithVersion(input);
+    const second = await methods.syncArtifactAppWithVersion({
+      ...input,
+      version: { ...input.version, sourceSnapshot: 'export default () => <div>v2</div>;' },
+    });
+
+    expect(second.versionCreated).toBe(true);
+    expect(second.version.versionNumber).toBe(2);
+    expect(second.app.latestVersionNumber).toBe(2);
+    expect(second.app.activeVersionId).toBe(second.version.artifactVersionId);
+    expect(await ArtifactVersion.countDocuments({ artifactAppId: first.app.artifactAppId })).toBe(
+      2,
+    );
+  });
+
+  test('concurrent first syncs resolve to one fully initialized app and version', async () => {
+    const input = baseInput({ sourceMetadata });
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => methods.syncArtifactAppWithVersion(input)),
+    );
+
+    expect(new Set(results.map(({ app }) => app.artifactAppId)).size).toBe(1);
+    expect(results.filter(({ created }) => created)).toHaveLength(1);
+    expect(await ArtifactApp.countDocuments({})).toBe(1);
+    expect(await ArtifactVersion.countDocuments({})).toBe(1);
+    expect(
+      results.every(({ app, version }) => app.activeVersionId === version.artifactVersionId),
+    ).toBe(true);
+  });
+
+  test('serializes concurrent standalone updates without duplicate versions', async () => {
+    const input = baseInput({ sourceMetadata });
+    const first = await methods.syncArtifactAppWithVersion(input);
+    const updates = Array.from({ length: 4 }, (_, index) =>
+      methods.syncArtifactAppWithVersion({
+        ...input,
+        version: {
+          ...input.version,
+          sourceSnapshot: `export default () => <div>update-${index}</div>;`,
+        },
+      }),
+    );
+    const results = await Promise.all(updates);
+    const versions = await ArtifactVersion.find({ artifactAppId: first.app.artifactAppId })
+      .sort({ versionNumber: 1 })
+      .lean();
+    const app = await ArtifactApp.findOne({ artifactAppId: first.app.artifactAppId }).lean();
+
+    expect(results.every(({ versionCreated }) => versionCreated)).toBe(true);
+    expect(versions.map(({ versionNumber }) => versionNumber)).toEqual([1, 2, 3, 4, 5]);
+    expect(app?.latestVersionNumber).toBe(5);
+    expect(
+      versions.some(({ artifactVersionId }) => artifactVersionId === app?.activeVersionId),
+    ).toBe(true);
+  });
+
+  test('deduplicates concurrent updates with identical content', async () => {
+    const input = baseInput({ sourceMetadata });
+    const first = await methods.syncArtifactAppWithVersion(input);
+    const update = {
+      ...input,
+      version: { ...input.version, sourceSnapshot: 'export default () => <div>shared-v2</div>;' },
+    };
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => methods.syncArtifactAppWithVersion(update)),
+    );
+
+    expect(results.filter(({ versionCreated }) => versionCreated)).toHaveLength(1);
+    expect(await ArtifactVersion.countDocuments({ artifactAppId: first.app.artifactAppId })).toBe(
+      2,
+    );
+  });
+
+  test('does not advance the current version when version creation fails', async () => {
+    const input = baseInput({ sourceMetadata });
+    const first = await methods.syncArtifactAppWithVersion(input);
+
+    await expect(
+      methods.syncArtifactAppWithVersion({
+        ...input,
+        version: {
+          ...input.version,
+          artifactType: 'invalid-runtime' as CreateArtifactAppInput['version']['artifactType'],
+          sourceSnapshot: 'invalid update',
+        },
+      }),
+    ).rejects.toThrow();
+
+    const unchangedApp = await ArtifactApp.findOne({
+      artifactAppId: first.app.artifactAppId,
+    }).lean();
+    expect(unchangedApp?.latestVersionNumber).toBe(1);
+    expect(unchangedApp?.activeVersionId).toBe(first.version.artifactVersionId);
+    expect(await ArtifactVersion.countDocuments({ artifactAppId: first.app.artifactAppId })).toBe(
+      1,
+    );
+
+    const retry = await methods.syncArtifactAppWithVersion({
+      ...input,
+      version: { ...input.version, sourceSnapshot: 'valid update' },
+    });
+    expect(retry.version.versionNumber).toBe(2);
+  });
+
+  test('recovers a version written before its app pointer was committed', async () => {
+    const input = baseInput({ sourceMetadata });
+    const first = await methods.syncArtifactAppWithVersion(input);
+    const orphanSnapshot = 'export default () => <div>recover me</div>;';
+    await ArtifactVersion.create({
+      artifactVersionId: 'ver_recoverable',
+      artifactAppId: first.app.artifactAppId,
+      versionNumber: 2,
+      artifactType: 'react',
+      sourceSnapshot: orphanSnapshot,
+      runtimeConfig: {},
+      integrity: {
+        sourceHash: computeSourceHash('react', orphanSnapshot),
+        schemaVersion: 1,
+      },
+      createdBy: 'user-1',
+      publication: { state: 'draft' },
+    });
+
+    const recovered = await methods.syncArtifactAppWithVersion({
+      ...input,
+      version: { ...input.version, sourceSnapshot: orphanSnapshot },
+    });
+    const persistedApp = await ArtifactApp.findOne({
+      artifactAppId: first.app.artifactAppId,
+    }).lean();
+
+    expect(recovered.versionCreated).toBe(true);
+    expect(recovered.version.artifactVersionId).toBe('ver_recoverable');
+    expect(persistedApp?.latestVersionNumber).toBe(2);
+    expect(persistedApp?.activeVersionId).toBe('ver_recoverable');
+    expect(await ArtifactVersion.countDocuments({ artifactAppId: first.app.artifactAppId })).toBe(
+      2,
+    );
   });
 });
 

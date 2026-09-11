@@ -13,8 +13,8 @@ import FilePreview from '~/components/Chat/Input/Files/FilePreview';
 import { isCodeOnlyArtifact } from '~/utils/artifacts';
 import { displayFilename } from './attachmentTypes';
 import { useAttachmentLink } from './LogLink';
-import { useLocalize } from '~/hooks';
 import { cn, getFileType } from '~/utils';
+import { useLocalize } from '~/hooks';
 import store from '~/store';
 
 interface ToolArtifactCardProps {
@@ -78,6 +78,7 @@ const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) 
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
   const currentArtifactId = useRecoilValue(store.currentArtifactId);
   const existingEntry = useRecoilValue(store.artifactByIdSelector(artifact.id));
+  const resetArtifactNavigationRequest = useResetRecoilState(store.artifactNavigationRequest);
   const [claim, setClaim] = useRecoilState(store.toolArtifactClaim(artifact.id));
   const isSelected = artifact.id === currentArtifactId;
   const isMyClaim = claim === claimKey;
@@ -200,6 +201,7 @@ const ToolArtifactCard = memo(({ attachment, artifact }: ToolArtifactCardProps) 
   });
 
   const handleOpen = () => {
+    resetArtifactNavigationRequest();
     if (isSelected) {
       resetCurrentArtifactId();
       setVisible(false);
