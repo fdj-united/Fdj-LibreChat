@@ -105,6 +105,7 @@ import {
   createArtifactAppMethods,
   computeSourceHash,
   ARTIFACT_SCHEMA_VERSION,
+  ArtifactAppDeletedError,
   type ArtifactAppMethods,
 } from './artifactApp';
 
@@ -127,7 +128,12 @@ export {
   inferSkillFileCategory,
 };
 export { AUDIT_SCHEMA_VERSION, MAX_AUDIT_EXPORT_ROWS, MAX_AUDIT_LOG_LIMIT, MAX_AUDIT_VERIFY_ROWS };
-export { createArtifactAppMethods, computeSourceHash, ARTIFACT_SCHEMA_VERSION };
+export {
+  createArtifactAppMethods,
+  computeSourceHash,
+  ARTIFACT_SCHEMA_VERSION,
+  ArtifactAppDeletedError,
+};
 
 export type AllMethods = UserMethods &
   SessionMethods &
