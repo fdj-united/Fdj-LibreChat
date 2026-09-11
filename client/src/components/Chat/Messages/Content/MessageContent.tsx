@@ -4,6 +4,7 @@ import { DelayedRender } from '@librechat/client';
 import type { TMessage } from 'librechat-data-provider';
 import type { TMessageContentProps, TDisplayProps } from '~/common';
 import Error from '~/components/Messages/Content/Error';
+import Collapsible from './Parts/Collapsible';
 import { useMessageContext } from '~/Providers';
 import MarkdownLite from './MarkdownLite';
 import EditMessage from './EditMessage';
@@ -24,6 +25,20 @@ const parseThinkingContent = (text: string) => {
     thinkingContent: thinkingMatch ? thinkingMatch[1].trim() : '',
     regularContent: thinkingMatch ? text.replace(/:::thinking[\s\S]*?:::/, '').trim() : text,
   };
+};
+
+const DETAILS_RE =
+  /<details>\s*\n<summary>(?:<b>)?\s*(.*?)\s*(?:<\/b>)?<\/summary>\s*\n\n([\s\S]*?)\n\n<\/details>/g;
+
+const parseDetailsBlocks = (text: string): { blocks: { title: string; body: string }[]; content: string } => {
+  const blocks: { title: string; body: string }[] = [];
+  let match: RegExpExecArray | null;
+  const re = new RegExp(DETAILS_RE.source, DETAILS_RE.flags);
+  while ((match = re.exec(text)) !== null) {
+    blocks.push({ title: match[1].trim(), body: match[2].trim() });
+  }
+  const content = text.replace(DETAILS_RE, '').trim();
+  return { blocks, content };
 };
 
 const LoadingFallback = () => (
@@ -146,7 +161,14 @@ const MessageContent = ({
   const { message } = props;
   const { messageId } = message;
 
-  const { thinkingContent, regularContent } = useMemo(() => parseThinkingContent(text), [text]);
+  const { thinkingContent, regularContent: afterThinking } = useMemo(
+    () => parseThinkingContent(text),
+    [text],
+  );
+  const { blocks: detailsBlocks, content: regularContent } = useMemo(
+    () => parseDetailsBlocks(afterThinking),
+    [afterThinking],
+  );
   const showRegularCursor = useMemo(() => isLast && isSubmitting, [isLast, isSubmitting]);
 
   const unfinishedMessage = useMemo(
@@ -174,6 +196,13 @@ const MessageContent = ({
       {thinkingContent.length > 0 && (
         <Thinking key={`thinking-${messageId}`}>{thinkingContent}</Thinking>
       )}
+      {detailsBlocks.map((block, idx) => (
+        <Collapsible
+          key={`details-${messageId}-${idx}`}
+          title={block.title}
+          content={block.body}
+        />
+      ))}
       <DisplayMessage
         key={`display-${messageId}`}
         showCursor={showRegularCursor}
