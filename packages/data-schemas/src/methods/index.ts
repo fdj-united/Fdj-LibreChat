@@ -198,6 +198,7 @@ import {
   createArtifactAppMethods,
   computeSourceHash,
   ARTIFACT_SCHEMA_VERSION,
+  ArtifactAppDeletedError,
   type ArtifactAppMethods,
 } from './artifactApp';
 
@@ -238,7 +239,12 @@ export {
   AgentQueuedTurnConflictError,
   AgentQueuedTurnLaneRetiredError,
 };
-export { createArtifactAppMethods, computeSourceHash, ARTIFACT_SCHEMA_VERSION };
+export {
+  createArtifactAppMethods,
+  computeSourceHash,
+  ARTIFACT_SCHEMA_VERSION,
+  ArtifactAppDeletedError,
+};
 
 export type AllMethods = UserMethods &
   SessionMethods &
