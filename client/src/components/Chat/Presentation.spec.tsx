@@ -81,7 +81,7 @@ describe('Presentation artifact catalog navigation', () => {
   it('mounts the artifact panel from a catalog navigation request after the query is stripped', () => {
     mockArtifactNavigationRequest = {
       conversationId: 'conversation-1',
-      sourceKey: 'identifier:artifact-1:text/html',
+      sourceKey: 'identifier:artifact-1',
     };
 
     render(
