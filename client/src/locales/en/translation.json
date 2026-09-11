@@ -2057,9 +2057,9 @@
   "com_agents_review_status_not_verified": "Not verified",
   "com_agents_filter_all": "All",
   "com_agents_filter_verified_only": "Verified",
-  "com_ui_artifact_apps": "Apps",
-  "com_ui_artifact_apps_description": "Artifact apps published from your conversations.",
-  "com_ui_artifact_apps_empty": "No apps yet",
-  "com_ui_artifact_apps_empty_hint": "Open an artifact in a conversation and click the Publish button to create your first app.",
-  "com_nav_artifact_apps": "Apps"
+  "com_ui_artifact_apps": "Artifacts",
+  "com_ui_artifact_apps_description": "Artifacts published from your conversations.",
+  "com_ui_artifact_apps_empty": "No artifacts yet",
+  "com_ui_artifact_apps_empty_hint": "Open an artifact in a conversation and click Publish to make it available here.",
+  "com_nav_artifact_apps": "Artifacts"
 }
