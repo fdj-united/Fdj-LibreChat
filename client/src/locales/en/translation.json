@@ -2061,5 +2061,11 @@
   "com_ui_artifact_apps_description": "Artifacts published from your conversations.",
   "com_ui_artifact_apps_empty": "No artifacts yet",
   "com_ui_artifact_apps_empty_hint": "Open an artifact in a conversation and click Publish to make it available here.",
+  "com_ui_artifact_apps_search_placeholder": "Search artifacts",
+  "com_ui_artifact_apps_search_aria": "Search artifacts",
+  "com_ui_artifact_apps_clear_search": "Clear artifact search",
+  "com_ui_artifact_apps_no_results": "No artifacts found",
+  "com_ui_artifact_apps_no_results_hint": "Try a different name, description, category, or tag.",
+  "com_ui_artifact_apps_admin_settings_placeholder": "Artifact administration options will be added here.",
   "com_nav_artifact_apps": "Artifacts"
 }
