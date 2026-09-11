@@ -18,11 +18,7 @@ const { findRoleByIdentifier } = require('~/models');
  */
 async function checkMigrations() {
   await ensureBalanceIndexes(mongoose);
-  try {
-    await ensureArtifactAppIndexes(mongoose.connection);
-  } catch (error) {
-    logger.error('Failed to ensure artifact catalog indexes:', error);
-  }
+  await ensureArtifactAppIndexes(mongoose.connection);
   try {
     const agentMigrationResult = await checkAgentPermissionsMigration({
       mongoose,
