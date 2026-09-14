@@ -401,7 +401,7 @@ export default function GenericGrantAccessDialog({
                     if (isCopying) return;
                     copyResourceUrl(setIsCopying);
                     showToast({
-                      message: localize('com_ui_agent_url_copied'),
+                      message: localize(config.copyUrlMessageKey),
                       status: 'success',
                     });
                   }}
@@ -410,7 +410,7 @@ export default function GenericGrantAccessDialog({
                   aria-label={localize('com_ui_copy_url_to_clipboard')}
                   title={
                     isCopying
-                      ? config?.getCopyUrlMessage()
+                      ? localize(config.copyUrlMessageKey)
                       : localize('com_ui_copy_url_to_clipboard')
                   }
                 >
