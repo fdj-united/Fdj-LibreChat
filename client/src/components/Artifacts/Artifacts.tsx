@@ -431,7 +431,7 @@ export default function Artifacts({ readOnly = false }: { readOnly?: boolean }) 
               )}
               <CopyButton isCopied={isCopied} iconOnly onClick={handleCopyArtifact} />
               <DownloadArtifact artifact={currentArtifact} />
-              {isSyncing && (
+              {!isSharedView && isSyncing && (
                 <span
                   className="flex h-9 w-9 items-center justify-center text-text-secondary"
                   aria-label={localize('com_ui_artifact_syncing')}
