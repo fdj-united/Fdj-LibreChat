@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ZodError } from 'zod';
 import type { TEndpointsConfig, TModelsConfig, TConfig } from './types';
+import type { ArtifactAppsConfig } from './artifactApps';
 import {
   EModelEndpoint,
   eModelEndpointSchema,
@@ -10,6 +11,7 @@ import {
 } from './schemas';
 import { ComponentTypes, SettingTypes, OptionTypes } from './generate';
 import { specsConfigSchema, TSpecsConfig } from './models';
+import { artifactAppsConfigSchema } from './artifactApps';
 import { REFILL_INTERVAL_UNITS } from './balance';
 import { fileConfigSchema } from './file-config';
 import { apiBaseUrl } from './api-endpoints';
@@ -1206,6 +1208,17 @@ export const interfaceSchema = z
         }),
       ])
       .optional(),
+    artifacts: z
+      .union([
+        z.boolean(),
+        z.object({
+          use: z.boolean().optional(),
+          create: z.boolean().optional(),
+          share: z.boolean().optional(),
+          public: z.boolean().optional(),
+        }),
+      ])
+      .optional(),
     temporaryChat: z.boolean().optional(),
     temporaryChatRetention: z.number().min(1).max(8760).optional(),
     autoSubmitFromUrl: z.boolean().optional(),
@@ -1289,6 +1302,12 @@ export const interfaceSchema = z
       use: true,
       create: true,
       share: false,
+      public: false,
+    },
+    artifacts: {
+      use: true,
+      create: true,
+      share: true,
       public: false,
     },
     temporaryChat: true,
@@ -1383,6 +1402,7 @@ export type TStartupConfig = {
   SAS_STORAGE_ACCOUNT?: string;
   SAS_TABLE_NAME?: string;
   SAS_CONTAINER_NAME?: string;
+  artifactApps?: ArtifactAppsConfig;
   socialLogins?: string[];
   interface?: TInterfaceConfig;
   turnstile?: TTurnstileConfig;
@@ -1765,6 +1785,7 @@ export type TFileRetentionConfig = z.infer<typeof fileRetentionSchema>;
 export const configSchema = z.object({
   version: z.string(),
   cache: z.boolean().default(true),
+  artifactApps: artifactAppsConfigSchema,
   ocr: ocrSchema.optional(),
   webSearch: webSearchSchema.optional(),
   memory: memorySchema.optional(),

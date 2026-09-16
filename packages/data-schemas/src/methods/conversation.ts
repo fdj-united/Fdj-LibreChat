@@ -1,7 +1,7 @@
 import { RetentionMode } from 'librechat-data-provider';
 import type { FilterQuery, Model, SortOrder } from 'mongoose';
 import type { DeleteResult } from 'mongoose';
-import type { AppConfig, IChatProjectDocument, IConversation } from '~/types';
+import type { AppConfig, IArtifactApp, IChatProjectDocument, IConversation } from '~/types';
 import type { MessageMethods } from './message';
 import {
   refreshChatProjectStatsForUser,
@@ -9,6 +9,7 @@ import {
 } from './chatProject';
 import { buildRetentionVisibilityFilter, createFallbackRetentionDate } from '~/utils/retention';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
+import { recordArtifactSourceTombstones } from './artifactApp';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { isValidObjectIdString } from '~/utils/objectId';
 import { decrementTagCounts } from './conversationTag';
@@ -779,6 +780,32 @@ export function createConversationMethods(
 
       const deleteConvoResult = await Conversation.deleteMany(userFilter);
       const deleted = deleteConvoResult.deletedCount > 0;
+
+      if (deleted && conversationIds.length > 0) {
+        /**
+         * Artifact Apps are durable snapshots. Preserve the app, versions, and ACLs,
+         * but detach the navigation link to the deleted source conversation. The
+         * tombstone prevents a delayed client sync from recreating that link.
+         */
+        await recordArtifactSourceTombstones(mongoose, user, conversationIds);
+        const ArtifactApp = mongoose.models.ArtifactApp as Model<IArtifactApp> | undefined;
+        if (ArtifactApp) {
+          await ArtifactApp.updateMany(
+            {
+              createdBy: user,
+              'sourceMetadata.conversationId': { $in: conversationIds },
+            },
+            [
+              {
+                $set: {
+                  'sourceMetadata.detachedConversationId': '$sourceMetadata.conversationId',
+                },
+              },
+              { $unset: 'sourceMetadata.conversationId' },
+            ],
+          ).exec();
+        }
+      }
 
       /**
        * Reconcile bookmark counts from the deletion before message cleanup: if

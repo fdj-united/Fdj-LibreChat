@@ -6,6 +6,7 @@ const {
   ResourceType,
   PermissionBits,
 } = require('librechat-data-provider');
+const { createArtifactAppSharingPolicy } = require('@librechat/api');
 const {
   getUserEffectivePermissions,
   getAllEffectivePermissions,
@@ -20,9 +21,13 @@ const {
 } = require('~/server/middleware/checkSharePublicAccess');
 const { requireJwtAuth, checkBan, uaParser, canAccessResource } = require('~/server/middleware');
 const { checkPeoplePickerAccess } = require('~/server/middleware/checkPeoplePickerAccess');
-const { findMCPServerByObjectId, getSkillById } = require('~/models');
+const db = require('~/models');
+const { findMCPServerByObjectId, getSkillById } = db;
 
 const router = express.Router();
+const enforceArtifactAppSharingPolicy = createArtifactAppSharingPolicy({
+  getArtifactAppsByIds: db.getArtifactAppsByIds,
+});
 
 // Apply common middleware
 router.use(requireJwtAuth);
@@ -91,6 +96,12 @@ const checkResourcePermissionAccess = (requiredPermission) => (req, res, next) =
   } else if (resourceType === ResourceType.SHARED_LINK) {
     middleware = canAccessResource({
       resourceType: ResourceType.SHARED_LINK,
+      requiredPermission,
+      resourceIdParam: 'resourceId',
+    });
+  } else if (resourceType === ResourceType.ARTIFACT_APP) {
+    middleware = canAccessResource({
+      resourceType: ResourceType.ARTIFACT_APP,
       requiredPermission,
       resourceIdParam: 'resourceId',
     });
@@ -178,6 +189,7 @@ router.put(
   checkResourcePermissionAccess(PermissionBits.SHARE),
   checkShareAccess,
   checkSharePublicAccess,
+  enforceArtifactAppSharingPolicy,
   rejectSharedLinkOwnerPermissionChanges,
   updateResourcePermissions,
 );

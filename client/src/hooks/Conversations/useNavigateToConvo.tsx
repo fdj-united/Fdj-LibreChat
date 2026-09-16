@@ -26,6 +26,28 @@ import { useApplyModelSpecEffects } from '~/hooks/Agents';
 import { startupConfigKey } from '~/data-provider';
 import store from '~/store';
 
+function getConversationPath(conversationId: string): string {
+  const path = `/c/${conversationId}`;
+  if (!window.location.pathname.endsWith(path)) {
+    return path;
+  }
+  const currentParams = new URLSearchParams(window.location.search);
+  const artifact = currentParams.get('artifact');
+  if (!artifact) {
+    return path;
+  }
+  const artifactParams = new URLSearchParams({ artifact });
+  const artifactId = currentParams.get('artifactId');
+  const artifactMessageId = currentParams.get('artifactMessageId');
+  if (artifactId) {
+    artifactParams.set('artifactId', artifactId);
+  }
+  if (artifactMessageId) {
+    artifactParams.set('artifactMessageId', artifactMessageId);
+  }
+  return `${path}?${artifactParams.toString()}`;
+}
+
 const useNavigateToConvo = (index = 0) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -65,12 +87,14 @@ const useNavigateToConvo = (index = 0) => {
       const convoData = { ...data };
       clearModelForNonEphemeralAgent(convoData);
       setConversation(convoData);
-      navigate(`/c/${conversationId ?? Constants.NEW_CONVO}`, { state: { focusChat: true } });
+      navigate(getConversationPath(conversationId ?? Constants.NEW_CONVO), {
+        state: { focusChat: true },
+      });
     } catch (error) {
       console.error('Error fetching conversation data on navigation', error);
       if (conversation) {
         setConversation(conversation as TConversation);
-        navigate(`/c/${conversationId}`, { state: { focusChat: true } });
+        navigate(getConversationPath(conversationId), { state: { focusChat: true } });
       }
     }
   };
