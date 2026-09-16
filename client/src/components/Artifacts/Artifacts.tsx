@@ -2,20 +2,22 @@ import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import copy from 'copy-to-clipboard';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useSetRecoilState, useResetRecoilState } from 'recoil';
+import { DEFAULT_ARTIFACT_APPS_CONFIG } from 'librechat-data-provider';
 import { Button, Spinner, useMediaQuery, Radio } from '@librechat/client';
 import { Code, Maximize2, Minimize2, Play, RefreshCw, X } from 'lucide-react';
-import { Permissions, PermissionTypes, ResourceType } from 'librechat-data-provider';
 import type { SandpackPreviewRef } from '@codesandbox/sandpack-react';
 import type { ProcessedMermaidSvg } from '~/utils/diagram/export';
 import useClearArtifactNavigationRequest from '~/hooks/Artifacts/useClearArtifactNavigationRequest';
 import { TOOL_ARTIFACT_TYPES, isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
+import { captureArtifactPreview, toArtifactPreview } from '~/utils/artifactPreviewCapture';
 import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
 import useArtifactCatalogSync from '~/hooks/Artifacts/useArtifactCatalogSync';
+import ArtifactAppShareDialog from '~/components/ArtifactApps/Share';
 import CopyButton from '~/components/Messages/Content/CopyButton';
-import { useFocusTrap, useHasAccess, useLocalize } from '~/hooks';
-import { GenericGrantAccessDialog } from '~/components/Sharing';
 import { useShareContext, useMutationState } from '~/Providers';
 import useArtifacts from '~/hooks/Artifacts/useArtifacts';
+import { useGetStartupConfig } from '~/data-provider';
+import { useFocusTrap, useLocalize } from '~/hooks';
 import DownloadArtifact from './DownloadArtifact';
 import ArtifactVersion from './ArtifactVersion';
 import MermaidExport from './Mermaid/Export';
@@ -37,6 +39,7 @@ export default function Artifacts() {
   const fullscreenPortalRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const previewSurfaceRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -54,7 +57,15 @@ export default function Artifacts() {
   const dragStartHeight = useRef(90);
   const setArtifactsVisible = useSetRecoilState(store.artifactsVisibility);
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
+  const setArtifacts = useSetRecoilState(store.artifactsState);
   const clearArtifactNavigationRequest = useClearArtifactNavigationRequest();
+  const { data: startupConfig } = useGetStartupConfig();
+  const previewCaptureTimeoutMs =
+    startupConfig?.artifactApps?.clientPreviewCaptureTimeoutMs ??
+    DEFAULT_ARTIFACT_APPS_CONFIG.clientPreviewCaptureTimeoutMs;
+  const previewSettleDelayMs =
+    startupConfig?.artifactApps?.clientSyncSettleDelayMs ??
+    DEFAULT_ARTIFACT_APPS_CONFIG.clientSyncSettleDelayMs;
 
   const allTabOptions = useMemo(
     () => [
@@ -123,13 +134,10 @@ export default function Artifacts() {
     orderedArtifactIds,
     setCurrentArtifactId,
   } = useArtifacts();
+  const isMermaidArtifact = currentArtifact?.type === TOOL_ARTIFACT_TYPES.MERMAID;
   const { artifactEntry, isSyncing } = useArtifactCatalogSync(
     isSharedConvo ? null : currentArtifact,
   );
-  const canShareArtifacts = useHasAccess({
-    permissionType: PermissionTypes.ARTIFACTS,
-    permission: Permissions.SHARE,
-  });
 
   const restoreArtifactTriggerFocus = useCallback(() => {
     const opener = openerRef.current;
@@ -161,7 +169,6 @@ export default function Artifacts() {
     mermaidExportState != null && mermaidExportState.artifactId === currentArtifact?.id
       ? mermaidExportState.data
       : null;
-  const isMermaidArtifact = currentArtifact?.type === TOOL_ARTIFACT_TYPES.MERMAID;
 
   const closeArtifacts = useCallback(() => {
     clearArtifactNavigationRequest();
@@ -238,6 +245,53 @@ export default function Artifacts() {
       setActiveTab('preview');
     }
   }, [activeTab, constrainedTab, currentArtifact?.id, setActiveTab]);
+
+  useEffect(() => {
+    const artifact = currentArtifact;
+    if (!artifact || artifact.preview || displayedTab !== 'preview') {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const surface = previewSurfaceRef.current;
+      if (!surface) {
+        return;
+      }
+      void captureArtifactPreview(
+        surface,
+        isMermaidArtifact ? 'element' : 'frame',
+        previewCaptureTimeoutMs,
+        controller.signal,
+      ).then((imageUrl) => {
+        if (!imageUrl || controller.signal.aborted) {
+          return;
+        }
+        const preview = toArtifactPreview(imageUrl, artifact.title?.slice(0, 500));
+        if (!preview) {
+          return;
+        }
+        setArtifacts((previous) => {
+          const latest = previous?.[artifact.id];
+          if (!latest || latest.lastUpdateTime !== artifact.lastUpdateTime || latest.preview) {
+            return previous;
+          }
+          return { ...previous, [artifact.id]: { ...latest, preview } };
+        });
+      });
+    }, previewSettleDelayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    currentArtifact,
+    displayedTab,
+    isMermaidArtifact,
+    previewCaptureTimeoutMs,
+    previewSettleDelayMs,
+    setArtifacts,
+  ]);
 
   const handleCopyArtifact = useCallback(() => {
     const content = currentArtifact?.content ?? '';
@@ -527,12 +581,9 @@ export default function Artifacts() {
                   <Spinner size={16} />
                 </span>
               )}
-              {!isSharedConvo && canShareArtifacts && artifactEntry && (
-                <GenericGrantAccessDialog
-                  resourceDbId={artifactEntry.id}
-                  resourceId={artifactEntry.artifactAppId}
-                  resourceName={artifactEntry.title}
-                  resourceType={ResourceType.ARTIFACT_APP}
+              {!isSharedConvo && artifactEntry && (
+                <ArtifactAppShareDialog
+                  app={artifactEntry}
                   buttonClassName="border-0 bg-transparent hover:bg-surface-hover"
                 />
               )}
@@ -549,7 +600,7 @@ export default function Artifacts() {
           </div>
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-primary">
-            <div className="absolute inset-0 flex flex-col">
+            <div ref={previewSurfaceRef} className="absolute inset-0 flex flex-col">
               <ArtifactTabs
                 artifact={currentArtifact}
                 previewRef={previewRef as React.MutableRefObject<SandpackPreviewRef>}

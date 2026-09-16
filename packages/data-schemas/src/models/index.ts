@@ -1,4 +1,5 @@
 import { createAgentQueuedTurnModel, createAgentQueuedTurnSequenceModel } from './queuedTurn';
+import { createArtifactSourceTombstoneModel } from './artifactSourceTombstone';
 import { createAgentTriggerLaneSequenceModel } from './triggerLaneSequence';
 import { createScheduleModel, createScheduleRunModel } from './schedule';
 import { getTenantIndexMigrationHint } from '~/migrations/tenantIndexes';
@@ -104,6 +105,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
   RefreshTokenBridge: ReturnType<typeof createRefreshTokenBridgeModel>;
   OpenIDRefreshFlight: ReturnType<typeof createOpenIDRefreshFlightModel>;
   ArtifactApp: ReturnType<typeof createArtifactAppModel>;
+  ArtifactSourceTombstone: ReturnType<typeof createArtifactSourceTombstoneModel>;
   ArtifactVersion: ReturnType<typeof createArtifactVersionModel>;
 } {
   const models = {
@@ -157,6 +159,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
     RefreshTokenBridge: createRefreshTokenBridgeModel(mongoose),
     OpenIDRefreshFlight: createOpenIDRefreshFlightModel(mongoose),
     ArtifactApp: createArtifactAppModel(mongoose),
+    ArtifactSourceTombstone: createArtifactSourceTombstoneModel(mongoose),
     ArtifactVersion: createArtifactVersionModel(mongoose),
   };
   /**
