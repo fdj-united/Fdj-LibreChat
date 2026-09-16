@@ -297,6 +297,10 @@ export default function Artifacts() {
           />
         )}
         <div
+          id="artifact-viewer"
+          role={isMobile ? 'dialog' : 'region'}
+          aria-modal={isMobile || undefined}
+          aria-label={currentArtifact.title ?? localize('com_ui_artifacts')}
           className={cn(
             'flex w-full flex-col bg-surface-primary text-xl text-text-primary',
             isMobile
@@ -361,7 +365,7 @@ export default function Artifacts() {
                 isVisible && !isClosing ? 'translate-x-0 opacity-100' : 'translate-x-2 opacity-0',
               )}
             >
-              {displayedTab === 'preview' && (
+              {displayedTab === 'preview' && !isMermaidArtifact && (
                 <Button
                   size="icon"
                   variant="ghost"
