@@ -152,7 +152,7 @@ function ShareArtifactsPanel({ contextValue }: ShareArtifactsPanelProps) {
     <ArtifactsProvider value={contextValue}>
       <EditorProvider>
         <div className="flex h-full w-full border-l border-border-light bg-surface-primary shadow-2xl">
-          <Artifacts />
+          <Artifacts readOnly />
         </div>
       </EditorProvider>
     </ArtifactsProvider>
