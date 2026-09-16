@@ -32,4 +32,5 @@ export { default as systemGrantSchema } from './systemGrant';
 export { default as auditLogSchema } from './auditLog';
 export { default as configSchema } from './config';
 export { default as artifactAppSchema } from './artifactApp';
+export { default as artifactSourceTombstoneSchema } from './artifactSourceTombstone';
 export { default as artifactVersionSchema } from './artifactVersion';

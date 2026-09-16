@@ -3,21 +3,23 @@ import copy from 'copy-to-clipboard';
 import * as Tabs from '@radix-ui/react-tabs';
 import { Code, Play, RefreshCw, X } from 'lucide-react';
 import { useSetRecoilState, useResetRecoilState } from 'recoil';
+import { DEFAULT_ARTIFACT_APPS_CONFIG } from 'librechat-data-provider';
 import { Button, Spinner, useMediaQuery, Radio } from '@librechat/client';
-import { Permissions, PermissionTypes, ResourceType } from 'librechat-data-provider';
 import type { SandpackPreviewRef } from '@codesandbox/sandpack-react';
 import useClearArtifactNavigationRequest from '~/hooks/Artifacts/useClearArtifactNavigationRequest';
+import { TOOL_ARTIFACT_TYPES, isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
+import { captureArtifactPreview, toArtifactPreview } from '~/utils/artifactPreviewCapture';
 import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
-import { isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
 import useArtifactCatalogSync from '~/hooks/Artifacts/useArtifactCatalogSync';
+import ArtifactAppShareDialog from '~/components/ArtifactApps/Share';
 import CopyButton from '~/components/Messages/Content/CopyButton';
-import { GenericGrantAccessDialog } from '~/components/Sharing';
 import { useShareContext, useMutationState } from '~/Providers';
 import useArtifacts from '~/hooks/Artifacts/useArtifacts';
-import { useHasAccess, useLocalize } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import DownloadArtifact from './DownloadArtifact';
 import ArtifactVersion from './ArtifactVersion';
 import ArtifactTabs from './ArtifactTabs';
+import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import store from '~/store';
 
@@ -30,6 +32,7 @@ export default function Artifacts() {
   const { isSharedConvo } = useShareContext();
   const isMobile = useMediaQuery('(max-width: 868px)');
   const previewRef = useRef<SandpackPreviewRef>();
+  const previewSurfaceRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -42,7 +45,15 @@ export default function Artifacts() {
   const dragStartHeight = useRef(90);
   const setArtifactsVisible = useSetRecoilState(store.artifactsVisibility);
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
+  const setArtifacts = useSetRecoilState(store.artifactsState);
   const clearArtifactNavigationRequest = useClearArtifactNavigationRequest();
+  const { data: startupConfig } = useGetStartupConfig();
+  const previewCaptureTimeoutMs =
+    startupConfig?.artifactApps?.clientPreviewCaptureTimeoutMs ??
+    DEFAULT_ARTIFACT_APPS_CONFIG.clientPreviewCaptureTimeoutMs;
+  const previewSettleDelayMs =
+    startupConfig?.artifactApps?.clientSyncSettleDelayMs ??
+    DEFAULT_ARTIFACT_APPS_CONFIG.clientSyncSettleDelayMs;
 
   const allTabOptions = useMemo(
     () => [
@@ -97,13 +108,10 @@ export default function Artifacts() {
     orderedArtifactIds,
     setCurrentArtifactId,
   } = useArtifacts();
+  const isMermaidArtifact = currentArtifact?.type === TOOL_ARTIFACT_TYPES.MERMAID;
   const { artifactEntry, isSyncing } = useArtifactCatalogSync(
     isSharedConvo ? null : currentArtifact,
   );
-  const canShareArtifacts = useHasAccess({
-    permissionType: PermissionTypes.ARTIFACTS,
-    permission: Permissions.SHARE,
-  });
 
   /* Office artifacts have no source view, and source-code artifacts have
    * no useful rendered preview. Filter each down to the only meaningful
@@ -134,6 +142,53 @@ export default function Artifacts() {
       setActiveTab(constrainedTab);
     }
   }, [constrainedTab, activeTab, setActiveTab]);
+
+  useEffect(() => {
+    const artifact = currentArtifact;
+    if (!artifact || artifact.preview || displayedTab !== 'preview') {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const surface = previewSurfaceRef.current;
+      if (!surface) {
+        return;
+      }
+      void captureArtifactPreview(
+        surface,
+        isMermaidArtifact ? 'element' : 'frame',
+        previewCaptureTimeoutMs,
+        controller.signal,
+      ).then((imageUrl) => {
+        if (!imageUrl || controller.signal.aborted) {
+          return;
+        }
+        const preview = toArtifactPreview(imageUrl, artifact.title?.slice(0, 500));
+        if (!preview) {
+          return;
+        }
+        setArtifacts((previous) => {
+          const latest = previous?.[artifact.id];
+          if (!latest || latest.lastUpdateTime !== artifact.lastUpdateTime || latest.preview) {
+            return previous;
+          }
+          return { ...previous, [artifact.id]: { ...latest, preview } };
+        });
+      });
+    }, previewSettleDelayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    currentArtifact,
+    displayedTab,
+    isMermaidArtifact,
+    previewCaptureTimeoutMs,
+    previewSettleDelayMs,
+    setArtifacts,
+  ]);
 
   const handleCopyArtifact = useCallback(() => {
     const content = currentArtifact?.content ?? '';
@@ -351,12 +406,9 @@ export default function Artifacts() {
                   <Spinner size={16} />
                 </span>
               )}
-              {!isSharedConvo && canShareArtifacts && artifactEntry && (
-                <GenericGrantAccessDialog
-                  resourceDbId={artifactEntry.id}
-                  resourceId={artifactEntry.artifactAppId}
-                  resourceName={artifactEntry.title}
-                  resourceType={ResourceType.ARTIFACT_APP}
+              {!isSharedConvo && artifactEntry && (
+                <ArtifactAppShareDialog
+                  app={artifactEntry}
                   buttonClassName="border-0 bg-transparent hover:bg-surface-hover"
                 />
               )}
@@ -373,7 +425,7 @@ export default function Artifacts() {
           </div>
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-primary">
-            <div className="absolute inset-0 flex flex-col">
+            <div ref={previewSurfaceRef} className="absolute inset-0 flex flex-col">
               <ArtifactTabs
                 artifact={currentArtifact}
                 previewRef={previewRef as React.MutableRefObject<SandpackPreviewRef>}

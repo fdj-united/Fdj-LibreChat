@@ -1,5 +1,5 @@
 import type { Connection } from 'mongoose';
-import { buildIndexWithRetry } from '~/utils/retry';
+import { retryWithBackoff } from '~/utils/retry';
 import logger from '~/config/winston';
 
 type IndexSpec = Record<string, 1 | -1>;
@@ -44,10 +44,27 @@ const COLLECTION_INDEXES: Record<string, IndexDefinition[]> = {
         },
       },
     },
+    {
+      spec: {
+        tenantId: 1,
+        createdBy: 1,
+        'sourceMetadata.detachedConversationId': 1,
+        'sourceMetadata.sourceKey': 1,
+      },
+      options: {
+        partialFilterExpression: {
+          'sourceMetadata.detachedConversationId': { $type: 'string' },
+          'sourceMetadata.sourceKey': { $type: 'string' },
+        },
+      },
+    },
   ],
   artifactversions: [
     { spec: { tenantId: 1, artifactAppId: 1, versionNumber: 1 }, options: { unique: true } },
     { spec: { tenantId: 1, artifactVersionId: 1 }, options: { unique: true } },
+  ],
+  artifactsourcetombstones: [
+    { spec: { tenantId: 1, createdBy: 1, conversationId: 1 }, options: { unique: true } },
   ],
 };
 
@@ -60,10 +77,13 @@ export async function ensureArtifactAppIndexes(
     const collection = connection.db!.collection(collectionName);
     for (const { spec, options } of indexes) {
       try {
-        const name = await buildIndexWithRetry(
+        const name = await retryWithBackoff(
           () => collection.createIndex(spec, options),
           `${collectionName}.${JSON.stringify(spec)}`,
         );
+        if (!name) {
+          throw new Error('Index creation returned no name');
+        }
         result.created.push(`${collectionName}.${name}`);
       } catch (err) {
         const msg = `${collectionName}.${JSON.stringify(spec)}: ${(err as Error).message}`;

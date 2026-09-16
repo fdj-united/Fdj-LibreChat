@@ -1,8 +1,21 @@
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { EModelEndpoint, RetentionMode } from 'librechat-data-provider';
-import type { IChatProject, IConversation } from '../types';
+import {
+  EModelEndpoint,
+  PrincipalModel,
+  PrincipalType,
+  ResourceType,
+  RetentionMode,
+} from 'librechat-data-provider';
+import type {
+  IAclEntry,
+  IArtifactApp,
+  IArtifactSourceTombstone,
+  IArtifactVersion,
+  IChatProject,
+  IConversation,
+} from '../types';
 import { ConversationMethods, createConversationMethods } from './conversation';
 import { tenantStorage, runAsSystem } from '~/config/tenantContext';
 import { createModels } from '../models';
@@ -16,6 +29,10 @@ jest.mock('~/config/winston', () => ({
 
 let mongoServer: InstanceType<typeof MongoMemoryServer>;
 let Conversation: mongoose.Model<IConversation>;
+let ArtifactApp: mongoose.Model<IArtifactApp>;
+let ArtifactVersion: mongoose.Model<IArtifactVersion>;
+let ArtifactSourceTombstone: mongoose.Model<IArtifactSourceTombstone>;
+let AclEntry: mongoose.Model<IAclEntry>;
 let ChatProject: mongoose.Model<IChatProject>;
 let ConversationTag: mongoose.Model<{
   user: string;
@@ -39,6 +56,11 @@ beforeAll(async () => {
   modelsToCleanup = Object.keys(models);
   Object.assign(mongoose.models, models);
   Conversation = mongoose.models.Conversation as mongoose.Model<IConversation>;
+  ArtifactApp = mongoose.models.ArtifactApp as mongoose.Model<IArtifactApp>;
+  ArtifactVersion = mongoose.models.ArtifactVersion as mongoose.Model<IArtifactVersion>;
+  ArtifactSourceTombstone = mongoose.models
+    .ArtifactSourceTombstone as mongoose.Model<IArtifactSourceTombstone>;
+  AclEntry = mongoose.models.AclEntry as mongoose.Model<IAclEntry>;
   ChatProject = mongoose.models.ChatProject as mongoose.Model<IChatProject>;
   ConversationTag = mongoose.models.ConversationTag as mongoose.Model<{
     user: string;
@@ -105,6 +127,10 @@ describe('Conversation Operations', () => {
   beforeEach(async () => {
     // Clear database
     await Conversation.deleteMany({});
+    await ArtifactApp.deleteMany({});
+    await ArtifactVersion.deleteMany({});
+    await ArtifactSourceTombstone.deleteMany({});
+    await AclEntry.deleteMany({});
     await ChatProject.deleteMany({});
     await ConversationTag.deleteMany({});
 
@@ -977,6 +1003,94 @@ describe('Conversation Operations', () => {
         conversationId: mockConversationData.conversationId,
       });
       expect(deletedConvo).toBeNull();
+    });
+
+    it('preserves source artifact apps and detaches their deleted conversation link', async () => {
+      const conversationId = mockConversationData.conversationId;
+      await Conversation.create({
+        conversationId,
+        user: 'user123',
+        title: 'Conversation with Artifact',
+        endpoint: EModelEndpoint.openAI,
+      });
+      const [app] = await ArtifactApp.create([
+        {
+          artifactAppId: 'app_conversation_delete',
+          title: 'Conversation Artifact',
+          createdBy: 'user123',
+          activeVersionId: 'ver_conversation_delete',
+          latestVersionNumber: 1,
+          status: 'draft',
+          visibility: 'private',
+          allowEmbed: false,
+          allowFork: false,
+          allowAnonymousView: false,
+          toolPolicy: {
+            enabled: false,
+            allowedServers: [],
+            allowedTools: [],
+            requireConfirmationForWrites: true,
+          },
+          marketplace: {
+            listed: true,
+            featured: false,
+            riskClass: 'none',
+            costClass: 'free',
+          },
+          sourceMetadata: {
+            conversationId,
+            sourceKey: 'artifact:v1:identifier:conversation-delete',
+          },
+        },
+      ]);
+      await ArtifactVersion.create({
+        artifactAppId: 'app_conversation_delete',
+        artifactVersionId: 'ver_conversation_delete',
+        versionNumber: 1,
+        artifactType: 'react',
+        sourceSnapshot: 'export default () => <div>deleted</div>;',
+        runtimeConfig: {},
+        integrity: { sourceHash: 'hash', schemaVersion: 1 },
+        createdBy: 'user123',
+        publication: { state: 'draft' },
+      });
+      await AclEntry.create({
+        principalType: PrincipalType.USER,
+        principalModel: PrincipalModel.USER,
+        principalId: new mongoose.Types.ObjectId(),
+        resourceType: ResourceType.ARTIFACT_APP,
+        resourceId: app._id,
+        permBits: 1,
+      });
+
+      await deleteConvos('user123', { conversationId });
+
+      const preserved = await ArtifactApp.findOne({
+        artifactAppId: 'app_conversation_delete',
+      });
+      expect(preserved).toMatchObject({
+        status: 'draft',
+        activeVersionId: 'ver_conversation_delete',
+        marketplace: { listed: true },
+        sourceMetadata: { sourceKey: 'artifact:v1:identifier:conversation-delete' },
+      });
+      expect(preserved?.sourceMetadata?.conversationId).toBeUndefined();
+      expect(preserved?.sourceMetadata?.detachedConversationId).toBe(conversationId);
+      expect(
+        await ArtifactSourceTombstone.findOne({
+          createdBy: 'user123',
+          conversationId,
+        }),
+      ).toMatchObject({ createdBy: 'user123', conversationId });
+      expect(
+        await ArtifactVersion.countDocuments({ artifactAppId: 'app_conversation_delete' }),
+      ).toBe(1);
+      expect(
+        await AclEntry.countDocuments({
+          resourceType: ResourceType.ARTIFACT_APP,
+          resourceId: app._id,
+        }),
+      ).toBe(1);
     });
 
     it('should throw error if no conversations found', async () => {
