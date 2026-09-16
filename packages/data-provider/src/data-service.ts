@@ -1527,6 +1527,12 @@ export function syncArtifactApp(
   return request.post(endpoints.syncArtifactApp(), payload);
 }
 
+export function restoreArtifactApp(
+  payload: aa.TSyncArtifactAppRequest,
+): Promise<aa.TSyncArtifactAppResponse> {
+  return request.post(endpoints.restoreArtifactApp(), payload);
+}
+
 export function listArtifactApps(
   params: Partial<aa.TArtifactAppListRequest> = {},
 ): Promise<aa.TArtifactAppList> {

@@ -29,6 +29,7 @@ export {
   computeSourceHash,
   ARTIFACT_SCHEMA_VERSION,
   ArtifactAppDeletedError,
+  ArtifactAppRestoreNotFoundError,
   recordArtifactSourceTombstones,
   hasArtifactSourceTombstone,
   AUDIT_SCHEMA_VERSION,
