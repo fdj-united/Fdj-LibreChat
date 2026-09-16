@@ -199,6 +199,7 @@ import {
   computeSourceHash,
   ARTIFACT_SCHEMA_VERSION,
   ArtifactAppDeletedError,
+  ArtifactAppRestoreNotFoundError,
   recordArtifactSourceTombstones,
   hasArtifactSourceTombstone,
   type ArtifactAppMethods,
@@ -246,6 +247,7 @@ export {
   computeSourceHash,
   ARTIFACT_SCHEMA_VERSION,
   ArtifactAppDeletedError,
+  ArtifactAppRestoreNotFoundError,
   recordArtifactSourceTombstones,
   hasArtifactSourceTombstone,
 };
