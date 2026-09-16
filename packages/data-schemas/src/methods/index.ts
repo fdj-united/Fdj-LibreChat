@@ -106,6 +106,8 @@ import {
   computeSourceHash,
   ARTIFACT_SCHEMA_VERSION,
   ArtifactAppDeletedError,
+  recordArtifactSourceTombstones,
+  hasArtifactSourceTombstone,
   type ArtifactAppMethods,
 } from './artifactApp';
 
@@ -133,6 +135,8 @@ export {
   computeSourceHash,
   ARTIFACT_SCHEMA_VERSION,
   ArtifactAppDeletedError,
+  recordArtifactSourceTombstones,
+  hasArtifactSourceTombstone,
 };
 
 export type AllMethods = UserMethods &

@@ -1,3 +1,4 @@
+import { createArtifactSourceTombstoneModel } from './artifactSourceTombstone';
 import { createSkillSyncCredentialModel } from './skillSyncCredential';
 import { createSkillSyncStatusModel } from './skillSyncStatus';
 import { createConversationTagModel } from './conversationTag';
@@ -80,6 +81,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
   Group: ReturnType<typeof createGroupModel>;
   Config: ReturnType<typeof createConfigModel>;
   ArtifactApp: ReturnType<typeof createArtifactAppModel>;
+  ArtifactSourceTombstone: ReturnType<typeof createArtifactSourceTombstoneModel>;
   ArtifactVersion: ReturnType<typeof createArtifactVersionModel>;
 } {
   return {
@@ -121,6 +123,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
     Group: createGroupModel(mongoose),
     Config: createConfigModel(mongoose),
     ArtifactApp: createArtifactAppModel(mongoose),
+    ArtifactSourceTombstone: createArtifactSourceTombstoneModel(mongoose),
     ArtifactVersion: createArtifactVersionModel(mongoose),
   };
 }

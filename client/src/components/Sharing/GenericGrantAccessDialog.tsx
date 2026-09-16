@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { AccessRoleIds, ResourceType } from 'librechat-data-provider';
+import React, { useState, useEffect, useMemo } from 'react';
+import { AccessRoleIds, PrincipalType, ResourceType } from 'librechat-data-provider';
 import { Share2Icon, Users, Link, CopyCheck, UserX, UserCheck, AlertCircle } from 'lucide-react';
 import {
   Label,
@@ -28,6 +28,46 @@ import PublicSharingToggle from './PublicSharingToggle';
 import { SelectedPrincipalsList } from './PeoplePicker';
 import { cn } from '~/utils';
 
+type PeoplePickerPrincipalType = PrincipalType.USER | PrincipalType.GROUP | PrincipalType.ROLE;
+
+const ARTIFACT_APP_SHARE_PRINCIPAL_TYPES: PeoplePickerPrincipalType[] = [
+  PrincipalType.USER,
+  PrincipalType.GROUP,
+];
+
+const principalKey = (principal: TPrincipal) =>
+  `${principal.type}-${principal.idOnTheSource ?? principal.id}`;
+
+function peoplePickerTypesForResource(
+  resourceType: ResourceType,
+  typeFilter: Array<PeoplePickerPrincipalType> | null,
+): Array<PeoplePickerPrincipalType> | null {
+  if (resourceType !== ResourceType.ARTIFACT_APP) {
+    return typeFilter;
+  }
+  if (!Array.isArray(typeFilter)) {
+    return [...ARTIFACT_APP_SHARE_PRINCIPAL_TYPES];
+  }
+  return typeFilter.filter((type) => type === PrincipalType.USER || type === PrincipalType.GROUP);
+}
+
+function canManagePrincipalsForResource(
+  resourceType: ResourceType,
+  hasPeoplePickerAccess: boolean,
+  typeFilter: Array<PeoplePickerPrincipalType> | null,
+): boolean {
+  if (!hasPeoplePickerAccess) {
+    return false;
+  }
+  if (resourceType !== ResourceType.ARTIFACT_APP) {
+    return true;
+  }
+  if (!Array.isArray(typeFilter)) {
+    return true;
+  }
+  return typeFilter.some((type) => type === PrincipalType.USER || type === PrincipalType.GROUP);
+}
+
 export default function GenericGrantAccessDialog({
   resourceName,
   resourceDbId,
@@ -37,6 +77,8 @@ export default function GenericGrantAccessDialog({
   disabled = false,
   buttonClassName,
   children,
+  defaultOpen = false,
+  onOpenChange,
 }: {
   resourceDbId?: string | null;
   resourceId?: string | null;
@@ -46,16 +88,27 @@ export default function GenericGrantAccessDialog({
   disabled?: boolean;
   buttonClassName?: string;
   children?: React.ReactNode;
+  defaultOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const localize = useLocalize();
   const { showToast } = useToastContext();
   const [isCopying, setIsCopying] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(defaultOpen);
   const canSharePublic = useCanSharePublic(resourceType);
   const { hasPeoplePickerAccess, peoplePickerTypeFilter } = usePeoplePickerPermissions();
+  const peoplePickerTypes = useMemo(
+    () => peoplePickerTypesForResource(resourceType, peoplePickerTypeFilter),
+    [resourceType, peoplePickerTypeFilter],
+  );
+  const canManagePrincipals = canManagePrincipalsForResource(
+    resourceType,
+    hasPeoplePickerAccess,
+    peoplePickerTypeFilter,
+  );
 
-  /** User can use the share dialog if they have people picker access OR can share publicly */
-  const canUseShareDialog = hasPeoplePickerAccess || canSharePublic;
+  /** User can use the share dialog if they can manage principals or share publicly. */
+  const canUseShareDialog = canManagePrincipals || canSharePublic;
 
   const {
     config,
@@ -107,11 +160,13 @@ export default function GenericGrantAccessDialog({
     return null;
   }
 
+  const allowRoleSelection = config.allowRoleSelection !== false;
+
   // Handler for adding users from search (immediate add to unified list)
   const handleAddFromSearch = (newShares: TPrincipal[]) => {
     const sharesToAdd = newShares.filter(
       (newShare) =>
-        !allShares.some((existing) => existing.idOnTheSource === newShare.idOnTheSource),
+        !allShares.some((existing) => principalKey(existing) === principalKey(newShare)),
     );
 
     const sharesWithDefaults = sharesToAdd.map((share) => ({
@@ -125,16 +180,18 @@ export default function GenericGrantAccessDialog({
   };
 
   // Handler for removing individual shares
-  const handleRemoveShare = (idOnTheSource: string) => {
-    setAllShares(allShares.filter((s) => s.idOnTheSource !== idOnTheSource));
+  const handleRemoveShare = (shareKey: string) => {
+    setAllShares(allShares.filter((share) => principalKey(share) !== shareKey));
     setHasChanges(true);
   };
 
   // Handler for changing individual share permissions
-  const handleRoleChange = (idOnTheSource: string, newRole: string) => {
+  const handleRoleChange = (shareKey: string, newRole: string) => {
     setAllShares(
-      allShares.map((s) =>
-        s.idOnTheSource === idOnTheSource ? { ...s, accessRoleId: newRole as AccessRoleIds } : s,
+      allShares.map((share) =>
+        principalKey(share) === shareKey
+          ? { ...share, accessRoleId: newRole as AccessRoleIds }
+          : share,
       ),
     );
     setHasChanges(true);
@@ -163,23 +220,19 @@ export default function GenericGrantAccessDialog({
 
     try {
       // Calculate changes for unified list
-      const originalSharesMap = new Map(
-        currentShares.map((share) => [`${share.type}-${share.idOnTheSource}`, share]),
-      );
-      const allSharesMap = new Map(
-        allShares.map((share) => [`${share.type}-${share.idOnTheSource}`, share]),
-      );
+      const originalSharesMap = new Map(currentShares.map((share) => [principalKey(share), share]));
+      const allSharesMap = new Map(allShares.map((share) => [principalKey(share), share]));
 
       // Find newly added and updated shares
       const updated = allShares.filter((share) => {
-        const key = `${share.type}-${share.idOnTheSource}`;
+        const key = principalKey(share);
         const original = originalSharesMap.get(key);
         return !original || original.accessRoleId !== share.accessRoleId;
       });
 
       // Find removed shares
       const removed = currentShares.filter((share) => {
-        const key = `${share.type}-${share.idOnTheSource}`;
+        const key = principalKey(share);
         return !allSharesMap.has(key);
       });
 
@@ -226,10 +279,28 @@ export default function GenericGrantAccessDialog({
     setPublicRole(currentPublicRole || config?.defaultViewerRoleId || '');
     setHasChanges(false);
     setIsModalOpen(false);
+    onOpenChange?.(false);
+  };
+
+  const handleModalOpenChange = (open: boolean) => {
+    if (!open) {
+      const shares = permissionsData?.principals || [];
+      setAllShares(shares.map((share) => ({ ...share, isExisting: true })));
+      setDefaultPermissionId(config?.defaultViewerRoleId);
+      setIsPublic(currentIsPublic);
+      setPublicRole(currentPublicRole || config?.defaultViewerRoleId || '');
+      setHasChanges(false);
+    }
+    setIsModalOpen(open);
+    onOpenChange?.(open);
   };
 
   // Validation and calculated values
-  const totalCurrentShares = currentShares.length + (currentIsPublic ? 1 : 0);
+  const totalCurrentShares =
+    resourceType === ResourceType.ARTIFACT_APP
+      ? currentShares.filter((share) => share.accessRoleId !== config.defaultOwnerRoleId).length +
+        (currentIsPublic ? 1 : 0)
+      : currentShares.length + (currentIsPublic ? 1 : 0);
 
   // Check if there's at least one owner (user, group, or public with owner role)
   const hasAtLeastOneOwner =
@@ -298,7 +369,7 @@ export default function GenericGrantAccessDialog({
   );
 
   return (
-    <OGDialog open={isModalOpen} onOpenChange={setIsModalOpen} modal>
+    <OGDialog open={isModalOpen} onOpenChange={handleModalOpenChange} modal>
       <OGDialogTrigger asChild>{TriggerComponent}</OGDialogTrigger>
       <OGDialogContent className="max-h-[90vh] w-11/12 overflow-y-auto md:max-w-3xl">
         <OGDialogTitle>
@@ -314,7 +385,7 @@ export default function GenericGrantAccessDialog({
           {/* Unified Search and Management Section */}
           <div className="space-y-4">
             {/* Search Bar with Default Permission Setting */}
-            {hasPeoplePickerAccess && (
+            {canManagePrincipals && (
               <div className="space-y-2">
                 <h4 className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
                   <UserCheck className="h-4 w-4" aria-hidden="true" />
@@ -324,7 +395,7 @@ export default function GenericGrantAccessDialog({
                 <UnifiedPeopleSearch
                   onAddPeople={handleAddFromSearch}
                   placeholder={localize('com_ui_search_people_placeholder')}
-                  typeFilter={peoplePickerTypeFilter}
+                  typeFilter={peoplePickerTypes}
                   excludeIds={allShares.map((s) => s.idOnTheSource)}
                 />
 
@@ -367,6 +438,7 @@ export default function GenericGrantAccessDialog({
                         principles={allShares}
                         onRemoveHandler={handleRemoveShare}
                         resourceType={resourceType}
+                        allowRoleSelection={allowRoleSelection}
                         onRoleChange={(id, newRole) => handleRoleChange(id, newRole)}
                       />
                     </div>
@@ -387,6 +459,7 @@ export default function GenericGrantAccessDialog({
                 onPublicToggle={handlePublicToggle}
                 onPublicRoleChange={handlePublicRoleChange}
                 resourceType={resourceType}
+                allowRoleSelection={allowRoleSelection}
               />
             </>
           )}

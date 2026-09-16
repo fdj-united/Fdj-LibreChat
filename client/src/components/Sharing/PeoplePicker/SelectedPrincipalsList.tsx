@@ -1,7 +1,7 @@
 import React from 'react';
-import { Button, useMediaQuery } from '@librechat/client';
 import { Users, X, ExternalLink } from 'lucide-react';
 import { ResourceType } from 'librechat-data-provider';
+import { Button, useMediaQuery } from '@librechat/client';
 import type { TPrincipal, AccessRoleIds } from 'librechat-data-provider';
 import AccessRolesPicker from '~/components/Sharing/AccessRolesPicker';
 import PrincipalAvatar from '~/components/Sharing/PrincipalAvatar';
@@ -10,8 +10,9 @@ import { useLocalize } from '~/hooks';
 
 interface SelectedPrincipalsListProps {
   principles: TPrincipal[];
-  onRemoveHandler: (idOnTheSource: string) => void;
-  onRoleChange?: (idOnTheSource: string, newRoleId: AccessRoleIds) => void;
+  onRemoveHandler: (principalKey: string) => void;
+  onRoleChange?: (principalKey: string, newRoleId: AccessRoleIds) => void;
+  allowRoleSelection?: boolean;
   resourceType?: ResourceType;
   className?: string;
 }
@@ -21,6 +22,7 @@ export default function SelectedPrincipalsList({
   onRemoveHandler,
   className = '',
   onRoleChange,
+  allowRoleSelection = true,
   resourceType = ResourceType.AGENT,
 }: SelectedPrincipalsListProps) {
   const localize = useLocalize();
@@ -53,8 +55,11 @@ export default function SelectedPrincipalsList({
           const { displayName, subtitle } = getPrincipalDisplayInfo(share);
           const ownerRoleId = RESOURCE_CONFIGS[resourceType]?.defaultOwnerRoleId;
           const isOwner = share.accessRoleId === ownerRoleId;
-          const isSharedLink = resourceType === ResourceType.SHARED_LINK;
-          const lockOwner = isSharedLink && isOwner;
+          const lockOwner =
+            isOwner &&
+            (resourceType === ResourceType.SHARED_LINK ||
+              resourceType === ResourceType.ARTIFACT_APP);
+          const shareKey = `${share.type}-${share.idOnTheSource ?? share.id}`;
           return (
             <div
               key={share.idOnTheSource + '-principalList'}
@@ -83,13 +88,14 @@ export default function SelectedPrincipalsList({
                     {localize('com_ui_role_owner')}
                   </span>
                 ) : (
+                  allowRoleSelection &&
                   !!share.accessRoleId &&
                   !!onRoleChange && (
                     <AccessRolesPicker
                       resourceType={resourceType}
                       selectedRoleId={share.accessRoleId}
                       onRoleChange={(newRole) => {
-                        onRoleChange?.(share.idOnTheSource!, newRole);
+                        onRoleChange?.(shareKey, newRole);
                       }}
                       className="min-w-0"
                     />
@@ -98,7 +104,7 @@ export default function SelectedPrincipalsList({
                 {!lockOwner && (
                   <Button
                     variant="outline"
-                    onClick={() => onRemoveHandler(share.idOnTheSource!)}
+                    onClick={() => onRemoveHandler(shareKey)}
                     className="h-9 w-9 p-0 hover:border-destructive/10 hover:bg-destructive/10 hover:text-destructive"
                     aria-label={localize('com_ui_remove_user', { 0: displayName })}
                   >

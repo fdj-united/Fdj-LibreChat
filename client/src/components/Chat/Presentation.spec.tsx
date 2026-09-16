@@ -1,9 +1,11 @@
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
+import { artifactNavigationRequestAtom } from '~/components/ArtifactApps/navigation';
 import Presentation from './Presentation';
 
 const mockUseRecoilValue = jest.fn();
+const mockUseAtomValue = jest.fn((_atom?: unknown): unknown => null);
 let mockArtifactNavigationRequest: {
   conversationId: string;
   sourceKey: string;
@@ -14,13 +16,16 @@ jest.mock('recoil', () => ({
   useResetRecoilState: () => jest.fn(),
 }));
 
+jest.mock('jotai', () => ({
+  ...jest.requireActual('jotai'),
+  useAtomValue: (atom: unknown) => mockUseAtomValue(atom),
+}));
 jest.mock('~/store', () => ({
   __esModule: true,
   default: {
     artifactsState: { key: 'artifactsState' },
     artifactsVisibility: { key: 'artifactsVisibility' },
     currentArtifactId: { key: 'currentArtifactId' },
-    artifactNavigationRequest: { key: 'artifactNavigationRequest' },
   },
 }));
 
@@ -70,7 +75,10 @@ describe('Presentation artifact catalog navigation', () => {
       if (key === 'artifactsVisibility') {
         return true;
       }
-      if (key === 'artifactNavigationRequest') {
+      return null;
+    });
+    mockUseAtomValue.mockImplementation((atom) => {
+      if (atom === artifactNavigationRequestAtom) {
         return mockArtifactNavigationRequest;
       }
       return null;

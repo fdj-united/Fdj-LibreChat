@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { useAtomValue } from 'jotai';
 import { useLocation } from 'react-router-dom';
 import { useRecoilValue, useResetRecoilState } from 'recoil';
 import { FileSources, LocalStorageKeys } from 'librechat-data-provider';
 import type { ExtendedFile } from '~/common';
 import useResetArtifactsOnConversationChange from '~/hooks/Artifacts/useResetArtifactsOnConversationChange';
 import ArtifactCatalogRegistrar from '~/components/ArtifactApps/ArtifactCatalogRegistrar';
+import { artifactNavigationRequestAtom } from '~/components/ArtifactApps/navigation';
 import DragDropWrapper from '~/components/Chat/Input/Files/DragDropWrapper';
 import { EditorProvider, ArtifactsProvider } from '~/Providers';
 import { useDeleteFilesMutation } from '~/data-provider';
@@ -21,7 +23,7 @@ export default function Presentation({ children }: { children: React.ReactNode }
   // deep link temporarily bypasses that gate so `useArtifacts` can resolve
   // the requested source and focus it after the conversation has rendered.
   const currentArtifactId = useRecoilValue(store.currentArtifactId);
-  const artifactNavigationRequest = useRecoilValue(store.artifactNavigationRequest);
+  const artifactNavigationRequest = useAtomValue(artifactNavigationRequestAtom);
   const resetArtifacts = useResetRecoilState(store.artifactsState);
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
   const handledArtifactRequestRef = useRef<string | null>(null);
