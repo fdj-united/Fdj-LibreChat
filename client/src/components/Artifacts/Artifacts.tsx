@@ -33,11 +33,12 @@ import store from '~/store';
 const MAX_BLUR_AMOUNT = 32;
 const MAX_BACKDROP_OPACITY = 0.3;
 
-export default function Artifacts() {
+export default function Artifacts({ readOnly = false }: { readOnly?: boolean }) {
   const localize = useLocalize();
   const { showToast } = useToastContext();
   const { isMutating } = useMutationState();
-  const { isSharedConvo } = useShareContext();
+  const { isSharedConvo, shareId } = useShareContext();
+  const isSharedView = readOnly || isSharedConvo === true || Boolean(shareId);
   const isMobile = useMediaQuery('(max-width: 868px)');
   const previewRef = useRef<SandpackPreviewRef>();
   const previewSurfaceRef = useRef<HTMLDivElement>(null);
@@ -118,7 +119,7 @@ export default function Artifacts() {
   } = useArtifacts();
   const isMermaidArtifact = currentArtifact?.type === TOOL_ARTIFACT_TYPES.MERMAID;
   const { artifactEntry, isDeleted, restoreArtifact, isSyncing } = useArtifactCatalogSync(
-    isSharedConvo ? null : currentArtifact,
+    isSharedView ? null : currentArtifact,
   );
 
   /* Office artifacts have no source view, and source-code artifacts have
@@ -430,7 +431,7 @@ export default function Artifacts() {
               )}
               <CopyButton isCopied={isCopied} iconOnly onClick={handleCopyArtifact} />
               <DownloadArtifact artifact={currentArtifact} />
-              {isSyncing && (
+              {!isSharedView && isSyncing && (
                 <span
                   className="flex h-9 w-9 items-center justify-center text-text-secondary"
                   aria-label={localize('com_ui_artifact_syncing')}
@@ -438,13 +439,13 @@ export default function Artifacts() {
                   <Spinner size={16} />
                 </span>
               )}
-              {!isSharedConvo && artifactEntry && (
+              {!isSharedView && artifactEntry && (
                 <ArtifactAppShareDialog
                   app={artifactEntry}
                   buttonClassName="border-0 bg-transparent hover:bg-surface-hover"
                 />
               )}
-              {!isSharedConvo && isDeleted && restoreArtifact && (
+              {!isSharedView && isDeleted && restoreArtifact && (
                 <TooltipAnchor
                   description={localize('com_ui_artifact_restore')}
                   render={
@@ -482,7 +483,7 @@ export default function Artifacts() {
               <ArtifactTabs
                 artifact={currentArtifact}
                 previewRef={previewRef as React.MutableRefObject<SandpackPreviewRef>}
-                isSharedConvo={isSharedConvo}
+                isSharedConvo={isSharedView}
               />
             </div>
 
