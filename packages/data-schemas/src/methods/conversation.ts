@@ -18,6 +18,7 @@ import type {
   IAgentEventBindingRecord,
   IAgentTriggerDeliveryDocument,
   AppConfig,
+  IArtifactApp,
   IChatProjectDocument,
   IActiveSubagentThreadLease,
   IConversation,
@@ -46,6 +47,7 @@ import { createChatExpirationDate, createTempChatExpirationDate } from '~/utils/
 import { isAgentFadingTier, isAgentFadingTierEntries } from '~/utils/fading';
 import { isCompactionSemanticIndexProjection } from '~/types/compaction';
 import { withoutMeiliIndexing } from '~/models/plugins/mongoMeili';
+import { recordArtifactSourceTombstones } from './artifactApp';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { isValidObjectIdString } from '~/utils/objectId';
 import { decrementTagCounts } from './conversationTag';
@@ -3403,6 +3405,30 @@ export function createConversationMethods(
         ...recoveryConversationIds,
         ...deletedConversations.map((conversation) => conversation.conversationId),
       ];
+
+      if (conversationIds.length > 0) {
+        /** Preserve durable Artifact Apps while preventing delayed sync from
+         * restoring a link to a deleted source conversation. This is idempotent
+         * so a partial deletion can safely resume through `allowEmpty`. */
+        await recordArtifactSourceTombstones(mongoose, user, conversationIds);
+        const ArtifactApp = mongoose.models.ArtifactApp as Model<IArtifactApp> | undefined;
+        if (ArtifactApp) {
+          await ArtifactApp.updateMany(
+            {
+              createdBy: user,
+              'sourceMetadata.conversationId': { $in: conversationIds },
+            },
+            [
+              {
+                $set: {
+                  'sourceMetadata.detachedConversationId': '$sourceMetadata.conversationId',
+                },
+              },
+              { $unset: 'sourceMetadata.conversationId' },
+            ],
+          ).exec();
+        }
+      }
 
       if (recoveryConversationIds.length > 0) {
         await deps?.deleteAgentQueuedTurns?.(

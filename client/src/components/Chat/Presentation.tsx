@@ -7,6 +7,7 @@ import type { ExtendedFile } from '~/common';
 import useResetArtifactsOnConversationChange from '~/hooks/Artifacts/useResetArtifactsOnConversationChange';
 import { ParentSubagentsProvider } from '~/components/Chat/Subagents/ParentSubagentsProvider';
 import ArtifactCatalogRegistrar from '~/components/ArtifactApps/ArtifactCatalogRegistrar';
+import { artifactNavigationRequestAtom } from '~/components/ArtifactApps/navigation';
 import DragDropWrapper from '~/components/Chat/Input/Files/DragDropWrapper';
 import { activeSubagentPanel } from '~/components/Chat/Subagents/state';
 import { EditorProvider, ArtifactsProvider } from '~/Providers';
@@ -32,7 +33,7 @@ export default function Presentation({ children }: { children: React.ReactNode }
   // arriving via SSE auto-focus through `ToolArtifactCard`'s mount effect
   // (gated on `isSubmitting`), restoring the legacy streaming UX.
   const currentArtifactId = useRecoilValue(store.currentArtifactId);
-  const artifactNavigationRequest = useRecoilValue(store.artifactNavigationRequest);
+  const artifactNavigationRequest = useAtomValue(artifactNavigationRequestAtom);
   const resetArtifacts = useResetRecoilState(store.artifactsState);
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
   const handledArtifactRequestRef = useRef<string | null>(null);

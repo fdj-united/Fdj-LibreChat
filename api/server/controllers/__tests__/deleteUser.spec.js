@@ -34,6 +34,7 @@ const mockCancelAndDrainSubagentThreads = jest.fn();
 const mockQuiesceUserSchedules = jest.fn();
 const mockDeleteSchedulesByUser = jest.fn();
 const mockRevokeUserCodeEnvironmentWorkers = jest.fn();
+const mockDeleteUserArtifactApps = jest.fn();
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn(), info: jest.fn() },
@@ -100,6 +101,7 @@ jest.mock('~/models', () => ({
   deleteUserPrompts: (...args) => mockDeleteUserPrompts(...args),
   deleteUserSkills: (...args) => mockDeleteUserSkills(...args),
   deleteUserCodeEnvironments: (...args) => mockDeleteUserCodeEnvironments(...args),
+  deleteUserArtifactApps: (...args) => mockDeleteUserArtifactApps(...args),
   deleteTransactions: jest.fn(),
   deleteBalances: jest.fn(),
   deleteAllAgentApiKeys: jest.fn(),
