@@ -2654,6 +2654,11 @@ export enum Constants {
   BASH_PROGRAMMATIC_TOOL_CALLING = 'run_tools_with_bash',
   /** Subagent spawn tool name (must match `@librechat/agents` `Constants.SUBAGENT`). */
   SUBAGENT = 'subagent',
+  /**
+   * `finish_reason` used when a turn reaches its tool-call graph step limit.
+   * This is a completed pause rather than an aborted generation.
+   */
+  TOOL_CALL_LIMIT_FINISH_REASON = 'tool_call_limit',
 }
 
 /** Maximum explicit subagent hops allowed from any root agent at runtime. */
