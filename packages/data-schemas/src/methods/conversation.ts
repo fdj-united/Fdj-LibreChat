@@ -795,14 +795,11 @@ export function createConversationMethods(
               createdBy: user,
               'sourceMetadata.conversationId': { $in: conversationIds },
             },
-            [
-              {
-                $set: {
-                  'sourceMetadata.detachedConversationId': '$sourceMetadata.conversationId',
-                },
+            {
+              $rename: {
+                'sourceMetadata.conversationId': 'sourceMetadata.detachedConversationId',
               },
-              { $unset: 'sourceMetadata.conversationId' },
-            ],
+            },
           ).exec();
         }
       }
