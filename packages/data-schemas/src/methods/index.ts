@@ -108,6 +108,7 @@ import {
   ARTIFACT_SCHEMA_VERSION,
   ArtifactAppDeletedError,
   ArtifactAppRestoreNotFoundError,
+  ArtifactSyncConflictError,
   recordArtifactSourceTombstones,
   hasArtifactSourceTombstone,
   type ArtifactAppMethods,
@@ -138,6 +139,7 @@ export {
   ARTIFACT_SCHEMA_VERSION,
   ArtifactAppDeletedError,
   ArtifactAppRestoreNotFoundError,
+  ArtifactSyncConflictError,
   recordArtifactSourceTombstones,
   hasArtifactSourceTombstone,
 };
