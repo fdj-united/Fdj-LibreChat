@@ -3,6 +3,7 @@ import { useSetAtom } from 'jotai';
 import * as Ariakit from '@ariakit/react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { SystemRoles, PermissionBits, hasPermissions } from 'librechat-data-provider';
 import {
   Shapes,
   Lock,
@@ -26,19 +27,14 @@ import {
   useMediaQuery,
   useToastContext,
 } from '@librechat/client';
-import {
-  SystemRoles,
-  PermissionBits,
-  hasPermissions,
-  type TArtifactApp,
-  type ArtifactAppListScope,
-} from 'librechat-data-provider';
+import type { TArtifactApp, TConversation, ArtifactAppListScope } from 'librechat-data-provider';
 import type { MenuItemProps } from '~/common';
 import {
   useDeleteArtifactAppMutation,
   useListArtifactAppsQuery,
   useWithdrawArtifactVersionMutation,
 } from '~/data-provider';
+import useNavigateToConvo from '~/hooks/Conversations/useNavigateToConvo';
 import ArtifactAppShareDialog, { useCanShareArtifactApp } from './Share';
 import ArtifactAppsAdminSettings from './ArtifactAppsAdminSettings';
 import { useAuthContext, useDebounce, useLocalize } from '~/hooks';
@@ -456,6 +452,7 @@ export default function ArtifactAppsList() {
   const localize = useLocalize();
   const { i18n } = useTranslation();
   const navigate = useNavigate();
+  const { navigateToConvo } = useNavigateToConvo();
   const { user } = useAuthContext();
   const { showToast } = useToastContext();
   const setArtifactNavigationRequest = useSetAtom(artifactNavigationRequestAtom);
@@ -567,7 +564,6 @@ export default function ArtifactAppsList() {
       if (source.sourceKey && source.messageId) {
         params.set('artifactMessageId', source.messageId);
       }
-      const query = params.size > 0 ? `?${params.toString()}` : '';
       setArtifactNavigationRequest(
         artifactKey
           ? {
@@ -578,7 +574,9 @@ export default function ArtifactAppsList() {
             }
           : null,
       );
-      navigate(`/c/${source.conversationId}${query}`);
+      navigateToConvo({ conversationId: source.conversationId } as TConversation, {
+        searchParams: params,
+      });
       return;
     }
     navigate(`/apps/${app.artifactAppId}`);
@@ -663,6 +661,7 @@ export default function ArtifactAppsList() {
                     )}
                   >
                     <button
+                      type="button"
                       className="flex h-full flex-1 flex-col text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => openArtifact(app)}
                     >
@@ -720,6 +719,7 @@ export default function ArtifactAppsList() {
                   )}
                 >
                   <button
+                    type="button"
                     className="flex min-w-0 flex-1 items-start gap-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={() => openArtifact(app)}
                   >

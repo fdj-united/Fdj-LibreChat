@@ -26,12 +26,15 @@ import { useApplyModelSpecEffects } from '~/hooks/Agents';
 import { startupConfigKey } from '~/data-provider';
 import store from '~/store';
 
-function getConversationPath(conversationId: string): string {
+function getConversationPath(
+  conversationId: string,
+  requestedSearchParams?: URLSearchParams,
+): string {
   const path = `/c/${conversationId}`;
-  if (!window.location.pathname.endsWith(path)) {
+  if (!requestedSearchParams && !window.location.pathname.endsWith(path)) {
     return path;
   }
-  const currentParams = new URLSearchParams(window.location.search);
+  const currentParams = requestedSearchParams ?? new URLSearchParams(window.location.search);
   const artifact = currentParams.get('artifact');
   if (!artifact) {
     return path;
@@ -73,7 +76,10 @@ const useNavigateToConvo = (index = 0) => {
     [setConvo, queryClient, applyModelSpecEffects],
   );
 
-  const fetchFreshData = async (conversation?: Partial<TConversation>) => {
+  const fetchFreshData = async (
+    conversation?: Partial<TConversation>,
+    searchParams?: URLSearchParams,
+  ) => {
     const conversationId = conversation?.conversationId;
     if (!conversationId) {
       return;
@@ -87,14 +93,16 @@ const useNavigateToConvo = (index = 0) => {
       const convoData = { ...data };
       clearModelForNonEphemeralAgent(convoData);
       setConversation(convoData);
-      navigate(getConversationPath(conversationId ?? Constants.NEW_CONVO), {
+      navigate(getConversationPath(conversationId ?? Constants.NEW_CONVO, searchParams), {
         state: { focusChat: true },
       });
     } catch (error) {
       console.error('Error fetching conversation data on navigation', error);
       if (conversation) {
         setConversation(conversation as TConversation);
-        navigate(getConversationPath(conversationId), { state: { focusChat: true } });
+        navigate(getConversationPath(conversationId, searchParams), {
+          state: { focusChat: true },
+        });
       }
     }
   };
@@ -103,13 +111,14 @@ const useNavigateToConvo = (index = 0) => {
     conversation?: TConversation | null,
     options?: {
       currentConvoId?: string;
+      searchParams?: URLSearchParams;
     },
   ) => {
     if (!conversation) {
       logger.warn('conversation', 'Conversation not provided to `navigateToConvo`');
       return;
     }
-    const { currentConvoId } = options || {};
+    const { currentConvoId, searchParams } = options || {};
     logger.log('conversation', 'Navigating to conversation', conversation);
     hasSetConversation.current = true;
     setSubmission(null);
@@ -152,10 +161,12 @@ const useNavigateToConvo = (index = 0) => {
        */
       queryClient.removeQueries([QueryKeys.messages, convo.conversationId]);
       queryClient.invalidateQueries([QueryKeys.conversation, convo.conversationId]);
-      fetchFreshData(convo);
+      fetchFreshData(convo, searchParams);
     } else {
       setConversation(convo);
-      navigate(`/c/${convo.conversationId ?? Constants.NEW_CONVO}`, { state: { focusChat: true } });
+      navigate(getConversationPath(convo.conversationId ?? Constants.NEW_CONVO, searchParams), {
+        state: { focusChat: true },
+      });
     }
   };
 
