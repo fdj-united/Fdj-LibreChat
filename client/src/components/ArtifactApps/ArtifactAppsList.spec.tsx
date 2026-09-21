@@ -14,6 +14,7 @@ import {
 import ArtifactAppsList from './ArtifactAppsList';
 
 const mockShowToast = jest.fn();
+const mockNavigateToConvo = jest.fn();
 const mockUseAuthContext = jest.fn(() => ({
   user: { id: 'user-1', role: 'USER', tenantId: undefined as string | undefined },
 }));
@@ -32,6 +33,11 @@ jest.mock('~/data-provider', () => ({
 jest.mock('jotai', () => ({
   ...jest.requireActual('jotai'),
   useSetAtom: jest.fn(),
+}));
+
+jest.mock('~/hooks/Conversations/useNavigateToConvo', () => ({
+  __esModule: true,
+  default: () => ({ navigateToConvo: mockNavigateToConvo }),
 }));
 
 jest.mock('~/hooks', () => ({
@@ -258,6 +264,7 @@ describe('ArtifactAppsList', () => {
     window.history.replaceState({}, '', '/apps');
     window.localStorage.clear();
     mockShowToast.mockClear();
+    mockNavigateToConvo.mockReset();
     mockUseAuthContext.mockReturnValue({
       user: { id: 'user-1', role: 'USER', tenantId: undefined },
     });
@@ -706,6 +713,7 @@ describe('ArtifactAppsList', () => {
 
     const reportButton = screen.getByText('Quarterly Report').closest('button');
     expect(reportButton).not.toBeNull();
+    expect(reportButton).toHaveAttribute('type', 'button');
 
     fireEvent.click(reportButton as HTMLButtonElement);
 
@@ -713,13 +721,16 @@ describe('ArtifactAppsList', () => {
       window.localStorage.getItem(getViewedStorageKey('user-1')) ?? '{}',
     ) as Record<string, string>;
     expect(viewed['quarterly-report']).toBe('2026-08-20T12:00:00.000Z');
-    expect(window.location.pathname).toBe('/c/conversation-1');
-    expect(new URLSearchParams(window.location.search).get('artifact')).toBe(
-      'identifier:quarterly-report',
-    );
-    expect(new URLSearchParams(window.location.search).get('artifactId')).toBe(
-      'artifact-revision-2',
-    );
+    expect(mockNavigateToConvo).toHaveBeenCalledTimes(1);
+    const [conversation, options] = mockNavigateToConvo.mock.calls[0] as [
+      { conversationId: string },
+      { searchParams: URLSearchParams },
+    ];
+    expect(conversation).toEqual({ conversationId: 'conversation-1' });
+    expect(options.searchParams.get('artifact')).toBe('identifier:quarterly-report');
+    expect(options.searchParams.get('artifactId')).toBe('artifact-revision-2');
+    expect(options.searchParams.get('artifactMessageId')).toBe('message-2');
+    expect(window.location.pathname).toBe('/apps');
     expect(mockSetArtifactNavigationRequest).toHaveBeenCalledWith({
       conversationId: 'conversation-1',
       sourceKey: 'identifier:quarterly-report',
