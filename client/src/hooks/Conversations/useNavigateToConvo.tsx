@@ -54,12 +54,15 @@ import store from '~/store';
  */
 const currentRoute = () => window.location.pathname + window.location.search;
 
-function getConversationPath(conversationId: string): string {
+function getConversationPath(
+  conversationId: string,
+  requestedSearchParams?: URLSearchParams,
+): string {
   const path = `/c/${conversationId}`;
-  if (!window.location.pathname.endsWith(path)) {
+  if (!requestedSearchParams && !window.location.pathname.endsWith(path)) {
     return path;
   }
-  const currentParams = new URLSearchParams(window.location.search);
+  const currentParams = requestedSearchParams ?? new URLSearchParams(window.location.search);
   const artifact = currentParams.get('artifact');
   if (!artifact) {
     return path;
@@ -210,7 +213,11 @@ const useNavigateToConvo = (index = 0) => {
    * once the real record is in hand. Every later switch to this conversation
    * takes the instant path above.
    */
-  const navigateWithRecord = async (conversation: TConversation, generation: number) => {
+  const navigateWithRecord = async (
+    conversation: TConversation,
+    generation: number,
+    searchParams?: URLSearchParams,
+  ) => {
     const conversationId = conversation.conversationId;
     if (!conversationId) {
       return;
@@ -238,20 +245,21 @@ const useNavigateToConvo = (index = 0) => {
       return;
     }
     applyConversation(record);
-    navigate(getConversationPath(conversationId));
+    navigate(getConversationPath(conversationId, searchParams));
   };
 
   const navigateToConvo = (
     conversation?: TConversation | null,
     options?: {
       currentConvoId?: string;
+      searchParams?: URLSearchParams;
     },
   ) => {
     if (!conversation) {
       logger.warn('conversation', 'Conversation not provided to `navigateToConvo`');
       return;
     }
-    const { currentConvoId } = options || {};
+    const { currentConvoId, searchParams } = options || {};
     logger.log('conversation', 'Navigating to conversation', conversation);
     hasSetConversation.current = true;
     /** Claim this click's place in the order before any await, so a request
@@ -317,7 +325,7 @@ const useNavigateToConvo = (index = 0) => {
       ]);
       queryClient.invalidateQueries([QueryKeys.conversation, convo.conversationId]);
       if (!cachedConvo) {
-        navigateWithRecord(convo, generation);
+        navigateWithRecord(convo, generation, searchParams);
         return;
       }
       /** Route and conversation state change together, in the click's own
@@ -328,12 +336,12 @@ const useNavigateToConvo = (index = 0) => {
        * write this navigation makes — what the user sees now is what a send
        * will carry until they change it themselves. */
       applyConversation({ ...cachedConvo, ...convo });
-      navigate(getConversationPath(convo.conversationId));
+      navigate(getConversationPath(convo.conversationId, searchParams));
       refreshConversationRecord(convo.conversationId);
     } else {
       setConversation(convo);
       requestChatFocus();
-      navigate(getConversationPath(convo.conversationId ?? Constants.NEW_CONVO));
+      navigate(getConversationPath(convo.conversationId ?? Constants.NEW_CONVO, searchParams));
     }
   };
 
