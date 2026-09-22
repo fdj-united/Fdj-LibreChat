@@ -3,7 +3,7 @@ const { SystemCapabilities } = require('@librechat/data-schemas');
 const { enforceJsonBodySizeLimit } = require('@librechat/api');
 const { requireCapability } = require('~/server/middleware/roles/capabilities');
 const { requireJwtAuth } = require('~/server/middleware');
-const { createBroadcastNotification } = require('~/models');
+const { createBroadcastNotification, deleteBroadcastNotification } = require('~/models');
 
 const router = express.Router();
 
@@ -53,5 +53,27 @@ router.post(
     }
   },
 );
+
+/**
+ * DELETE /admin/notifications/broadcast/:id
+ * Deletes all fan-out copies of the announcement identified by one notification id.
+ */
+router.delete('/broadcast/:id', async (req, res) => {
+  const { id } = req.params;
+
+  if (typeof id !== 'string' || id.trim() === '') {
+    return res.status(400).json({ error: 'Notification id is required.' });
+  }
+
+  try {
+    const { deleted, deletedCount } = await deleteBroadcastNotification(id.trim());
+    if (!deleted) {
+      return res.status(404).json({ error: 'Announcement not found.' });
+    }
+    res.status(200).json({ deleted: true, deletedCount });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 module.exports = router;
