@@ -370,7 +370,9 @@ describe('Notification methods', () => {
     const seedInbox = await listNotificationsForUser(users[0]._id.toString(), { limit: 10 });
     expect(seedInbox.notifications).toHaveLength(1);
 
-    const { deleted, deletedCount } = await deleteBroadcastNotification(seedInbox.notifications[0].id);
+    const { deleted, deletedCount } = await deleteBroadcastNotification(
+      seedInbox.notifications[0].id,
+    );
     expect(deleted).toBe(true);
     expect(deletedCount).toBe(2);
 
