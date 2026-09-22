@@ -1,9 +1,15 @@
-import { EModelEndpoint } from './types';
+import { EModelEndpoint, BedrockProviders } from './types';
 import { applyModelAwareDefaults, paramSettings } from './parameterSettings';
 import type { SettingDefinition } from './generate';
 
 const googleParams = paramSettings[EModelEndpoint.google] as SettingDefinition[];
+const anthropicParams = paramSettings[EModelEndpoint.anthropic] as SettingDefinition[];
+const bedrockAnthropicParams = paramSettings[
+  `${EModelEndpoint.bedrock}-${BedrockProviders.Anthropic}`
+] as SettingDefinition[];
 const maxOut = (params: SettingDefinition[]) => params.find((p) => p.key === 'maxOutputTokens');
+const hasSetting = (params: SettingDefinition[], key: string) =>
+  params.some((setting) => setting.key === key);
 
 describe('applyModelAwareDefaults', () => {
   it('resolves the Google maxOutputTokens default for current Gemini models', () => {
@@ -32,6 +38,42 @@ describe('applyModelAwareDefaults', () => {
       'gemini-2.5-pro',
     );
     expect(result).toBe(googleParams);
+  });
+
+  it('hides unsupported thinking and sampling controls for Opus 5.5', () => {
+    const result = applyModelAwareDefaults(
+      anthropicParams,
+      EModelEndpoint.anthropic,
+      'claude-opus-5-5',
+    );
+
+    expect(hasSetting(result, 'thinking')).toBe(false);
+    expect(hasSetting(result, 'thinkingBudget')).toBe(false);
+    expect(hasSetting(result, 'temperature')).toBe(false);
+    expect(hasSetting(result, 'topP')).toBe(false);
+    expect(hasSetting(result, 'topK')).toBe(false);
+    expect(hasSetting(result, 'effort')).toBe(true);
+  });
+
+  it('applies the Opus 5.5 filter to Bedrock model ids', () => {
+    const result = applyModelAwareDefaults(
+      bedrockAnthropicParams,
+      EModelEndpoint.bedrock,
+      'eu.anthropic.claude-opus-5-5',
+    );
+
+    expect(hasSetting(result, 'thinking')).toBe(false);
+    expect(hasSetting(result, 'temperature')).toBe(false);
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it('keeps thinking and sampling controls for Opus 5', () => {
+    const result = applyModelAwareDefaults(
+      anthropicParams,
+      EModelEndpoint.anthropic,
+      'claude-opus-5',
+    );
+    expect(result).toBe(anthropicParams);
   });
 
   it('returns settings unchanged when no model is provided', () => {

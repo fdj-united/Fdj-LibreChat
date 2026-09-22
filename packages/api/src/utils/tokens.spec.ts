@@ -47,3 +47,16 @@ describe('gpt-5.6 tiers', () => {
     expect(getModelMaxTokens('gpt-5', EModelEndpoint.openAI)).toBe(400000);
   });
 });
+
+describe('Opus 5.5 token limits', () => {
+  it.each([
+    'claude-opus-5-5',
+    'claude-opus-5.5',
+    'anthropic/claude-opus-5-5',
+    'global.anthropic.claude-opus-5-5',
+    'eu.anthropic.claude-opus-5-5',
+  ])('resolves %s to the existing modern Claude profile', (model) => {
+    expect(getModelMaxTokens(model)).toBe(1000000);
+    expect(getModelMaxOutputTokens(model)).toBe(128000);
+  });
+});
