@@ -7,7 +7,9 @@ import logger from '~/config/winston';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
-export const BROADCAST_USER_BATCH_SIZE = 500;
+export const BROADCAST_USER_BATCH_SIZE: number = 500;
+/** Window used to correlate fan-out copies of the same broadcast (batched inserts). */
+export const BROADCAST_DELETE_WINDOW_MS: number = 10 * 60 * 1000;
 
 export type NotificationListItem = {
   id: string;
@@ -107,6 +109,10 @@ export function createNotificationMethods(mongoose: typeof import('mongoose')): 
   markAllNotificationsRead: (userId: string) => Promise<{ count: number }>;
   deleteNotification: (userId: string, notificationId: string) => Promise<boolean>;
   deleteAllUserNotifications: (userId: string) => Promise<number>;
+  deleteBroadcastNotification: (notificationId: string) => Promise<{
+    deleted: boolean;
+    deletedCount: number;
+  }>;
 } {
   async function createNotification({
     userId,
@@ -348,6 +354,46 @@ export function createNotificationMethods(mongoose: typeof import('mongoose')): 
     return result.deletedCount ?? 0;
   }
 
+  /**
+   * Deletes all fan-out copies of a broadcast announcement, using one inbox
+   * notification id as the seed. Matches type/title/message/link and a
+   * createdAt window so batched inserts of the same send are removed together.
+   */
+  async function deleteBroadcastNotification(
+    notificationId: string,
+  ): Promise<{ deleted: boolean; deletedCount: number }> {
+    if (!Types.ObjectId.isValid(notificationId)) {
+      return { deleted: false, deletedCount: 0 };
+    }
+
+    const Notification = mongoose.models.Notification as Model<INotification>;
+    const seed = await Notification.findById(notificationId).lean<INotification | null>();
+    if (!seed || seed.type !== 'announcement') {
+      return { deleted: false, deletedCount: 0 };
+    }
+
+    const createdAt = seed.createdAt instanceof Date ? seed.createdAt : new Date(seed.createdAt);
+    const windowStart = new Date(createdAt.getTime() - BROADCAST_DELETE_WINDOW_MS);
+    const windowEnd = new Date(createdAt.getTime() + BROADCAST_DELETE_WINDOW_MS);
+
+    const filter: FilterQuery<INotification> = {
+      type: 'announcement',
+      title: seed.title,
+      message: seed.message,
+      createdAt: { $gte: windowStart, $lte: windowEnd },
+    };
+
+    if (typeof seed.link === 'string' && seed.link.length > 0) {
+      filter.link = seed.link;
+    } else {
+      filter.$or = [{ link: { $exists: false } }, { link: null }, { link: '' }];
+    }
+
+    const result = await Notification.deleteMany(filter);
+    const deletedCount = result.deletedCount ?? 0;
+    return { deleted: deletedCount > 0, deletedCount };
+  }
+
   return {
     createNotification,
     createNotificationsForUsers,
@@ -357,6 +403,7 @@ export function createNotificationMethods(mongoose: typeof import('mongoose')): 
     markAllNotificationsRead,
     deleteNotification,
     deleteAllUserNotifications,
+    deleteBroadcastNotification,
   };
 }
 
