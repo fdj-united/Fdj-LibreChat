@@ -4,6 +4,7 @@ const request = require('supertest');
 jest.mock('@librechat/api', () => jest.requireActual('../../../../packages/api/dist'));
 
 const mockCreateBroadcastNotification = jest.fn();
+const mockDeleteBroadcastNotification = jest.fn();
 
 jest.mock('@librechat/data-schemas', () => ({
   SystemCapabilities: {
@@ -13,6 +14,7 @@ jest.mock('@librechat/data-schemas', () => ({
 
 jest.mock('~/models', () => ({
   createBroadcastNotification: (...args) => mockCreateBroadcastNotification(...args),
+  deleteBroadcastNotification: (...args) => mockDeleteBroadcastNotification(...args),
 }));
 
 jest.mock('~/server/middleware', () => ({
@@ -53,6 +55,7 @@ function createApp(user, { withGlobalParser = false } = {}) {
 describe('Admin notifications route', () => {
   beforeEach(() => {
     mockCreateBroadcastNotification.mockReset();
+    mockDeleteBroadcastNotification.mockReset();
   });
 
   it('forbids non-admin callers', async () => {
@@ -123,5 +126,39 @@ describe('Admin notifications route', () => {
 
     expect(response.body.error).toContain('type "announcement"');
     expect(mockCreateBroadcastNotification).not.toHaveBeenCalled();
+  });
+
+  it('deletes announcement broadcasts for admin and returns deletedCount', async () => {
+    mockDeleteBroadcastNotification.mockResolvedValue({ deleted: true, deletedCount: 42 });
+    const app = createApp({ id: 'admin-1', role: 'ADMIN' });
+
+    const response = await request(app)
+      .delete('/api/admin/notifications/broadcast/507f1f77bcf86cd799439011')
+      .expect(200);
+
+    expect(mockDeleteBroadcastNotification).toHaveBeenCalledWith('507f1f77bcf86cd799439011');
+    expect(response.body).toEqual({ deleted: true, deletedCount: 42 });
+  });
+
+  it('returns 404 when announcement broadcast is not found', async () => {
+    mockDeleteBroadcastNotification.mockResolvedValue({ deleted: false, deletedCount: 0 });
+    const app = createApp({ id: 'admin-1', role: 'ADMIN' });
+
+    const response = await request(app)
+      .delete('/api/admin/notifications/broadcast/507f1f77bcf86cd799439011')
+      .expect(404);
+
+    expect(response.body.error).toBe('Announcement not found.');
+  });
+
+  it('forbids non-admin callers from deleting broadcasts', async () => {
+    const app = createApp({ id: 'u1', role: 'USER' });
+
+    const response = await request(app)
+      .delete('/api/admin/notifications/broadcast/507f1f77bcf86cd799439011')
+      .expect(403);
+
+    expect(response.body.error).toBe('Forbidden');
+    expect(mockDeleteBroadcastNotification).not.toHaveBeenCalled();
   });
 });
