@@ -33,6 +33,9 @@ let deleteNotification: ReturnType<typeof createNotificationMethods>['deleteNoti
 let deleteAllUserNotifications: ReturnType<
   typeof createNotificationMethods
 >['deleteAllUserNotifications'];
+let deleteBroadcastNotification: ReturnType<
+  typeof createNotificationMethods
+>['deleteBroadcastNotification'];
 
 beforeAll(async () => {
   mongoServer = await MongoMemoryServer.create();
@@ -48,6 +51,7 @@ beforeAll(async () => {
   markAllNotificationsRead = methods.markAllNotificationsRead;
   deleteNotification = methods.deleteNotification;
   deleteAllUserNotifications = methods.deleteAllUserNotifications;
+  deleteBroadcastNotification = methods.deleteBroadcastNotification;
 });
 
 afterAll(async () => {
@@ -337,5 +341,95 @@ describe('Notification methods', () => {
     expect(userBPage.notifications).toHaveLength(1);
     expect(userAPage.notifications[0].type).toBe('agent_verification');
     expect(userAPage.notifications[0].link).toBe('/agents/all');
+  });
+
+  it('deletes all fan-out copies of a broadcast announcement', async () => {
+    await mongoose.models.User.create([
+      {
+        email: 'delete-broadcast-a@example.com',
+        emailVerified: true,
+        provider: 'local',
+      },
+      {
+        email: 'delete-broadcast-b@example.com',
+        emailVerified: true,
+        provider: 'local',
+      },
+    ]);
+
+    await createBroadcastNotification({
+      type: 'announcement',
+      title: 'Delete me',
+      message: 'This announcement should be removed',
+      link: '/c/new',
+    });
+
+    const users = await mongoose.models.User.find({}, { _id: 1 }).lean<
+      Array<{ _id: Types.ObjectId }>
+    >();
+    const seedInbox = await listNotificationsForUser(users[0]._id.toString(), { limit: 10 });
+    expect(seedInbox.notifications).toHaveLength(1);
+
+    const { deleted, deletedCount } = await deleteBroadcastNotification(seedInbox.notifications[0].id);
+    expect(deleted).toBe(true);
+    expect(deletedCount).toBe(2);
+
+    for (const user of users) {
+      const inbox = await listNotificationsForUser(user._id.toString(), { limit: 10 });
+      expect(inbox.notifications).toHaveLength(0);
+    }
+  });
+
+  it('does not delete an older identical announcement outside the window', async () => {
+    await mongoose.models.User.create({
+      email: 'delete-window@example.com',
+      emailVerified: true,
+      provider: 'local',
+    });
+    const user = await mongoose.models.User.findOne({}).lean<{ _id: Types.ObjectId }>();
+    const userId = user!._id.toString();
+
+    const oldCreatedAt = new Date(Date.now() - 60 * 60 * 1000);
+    await mongoose.models.Notification.create({
+      user: userId,
+      type: 'announcement',
+      title: 'Same title',
+      message: 'Same message',
+      read: false,
+      createdAt: oldCreatedAt,
+      updatedAt: oldCreatedAt,
+    });
+
+    await createBroadcastNotification({
+      type: 'announcement',
+      title: 'Same title',
+      message: 'Same message',
+    });
+
+    const inbox = await listNotificationsForUser(userId, { limit: 10 });
+    expect(inbox.notifications).toHaveLength(2);
+
+    const newest = inbox.notifications[0];
+    const { deletedCount } = await deleteBroadcastNotification(newest.id);
+    expect(deletedCount).toBe(1);
+
+    const remaining = await listNotificationsForUser(userId, { limit: 10 });
+    expect(remaining.notifications).toHaveLength(1);
+    expect(remaining.notifications[0].id).not.toBe(newest.id);
+  });
+
+  it('returns deleted false for non-announcement notifications', async () => {
+    const n = await createNotification({
+      userId: 'user-a',
+      type: 'generic',
+      title: 'Not a broadcast',
+      message: 'Leave me alone',
+    });
+
+    const result = await deleteBroadcastNotification(n.id);
+    expect(result).toEqual({ deleted: false, deletedCount: 0 });
+
+    const page = await listNotificationsForUser('user-a', { limit: 10 });
+    expect(page.notifications).toHaveLength(1);
   });
 });
