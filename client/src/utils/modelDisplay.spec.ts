@@ -42,6 +42,9 @@ describe('getModelDisplayName', () => {
     expect(getModelDisplayName('gpt-4o')).toBe('GPT-4o');
     expect(getModelDisplayName('chatgpt-4o-latest')).toBe('GPT-4o');
     expect(getModelDisplayName('gpt-5.4')).toBe('GPT-5.4');
+    expect(getModelDisplayName('gpt-5.6-luna')).toBe('GPT-5.6 Luna');
+    expect(getModelDisplayName('gpt-5.6-terra')).toBe('GPT-5.6 Terra');
+    expect(getModelDisplayName('gpt-5.6-sol')).toBe('GPT-5.6 Sol');
     expect(getModelDisplayName('gpt-5-nano')).toBe('GPT-5 nano');
     expect(getModelDisplayName('qwen.qwen3-32b-v1:0')).toBe('Qwen 3.32B');
   });

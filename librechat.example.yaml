@@ -343,6 +343,22 @@ actions:
 #     - 'ollama:11434'
 #     - '10.0.0.5:8080'
 
+# Artifact catalog operational limits (all values below are the defaults)
+# artifactApps:
+#   catalogPageSize: 20
+#   versionPageSize: 20
+#   scanBatchSize: 100
+#   aclBatchSize: 100
+#   maxScanBatches: 10
+#   syncLockLeaseMs: 5000
+#   syncLockRetryDelayMs: 50
+#   syncLockRetryAttempts: 100
+#   syncWriteRetryAttempts: 3
+#   clientSyncSettleDelayMs: 500
+#   clientPreviewCaptureTimeoutMs: 5000
+#   clientSyncRetryBaseDelayMs: 1000
+#   clientSyncRetryMaxDelayMs: 30000
+
 # MCP Server domain restrictions for remote transports (SSE, WebSocket, HTTP)
 # SECURITY: If not configured, SSRF targets are blocked (localhost, private IPs, .internal/.local TLDs).
 # Prefer `allowedAddresses` for permitting internal targets — adding a private host to
@@ -477,6 +493,9 @@ endpoints:
   #     # Vertex AI region (optional, defaults to 'us-east5')
   #     # Available regions: us-east5, us-central1, europe-west1, europe-west4, asia-southeast1
   #     # Multi-region endpoints: us, eu, global
+  #     # IMPORTANT: specific regional endpoints only serve Claude Sonnet 4.6 and earlier. Newer
+  #     # models (Opus 4.7+, Opus 5, Sonnet 5, Fable 5) require "global" or a multi-region value
+  #     # ("us"/"eu") and will 404 on a specific region. "global" also avoids the 10% regional premium.
   #     region: "us-east5"
   #     # Path to Google service account key file (optional)
   #     # If not specified, uses GOOGLE_SERVICE_KEY_FILE env var or default path (api/data/auth.json)
@@ -495,6 +514,7 @@ endpoints:
   #     # Use this if you want the technical model IDs to show in the UI
   #     # models:
   #     #   - "claude-fable-5"
+  #     #   - "claude-opus-5"
   #     #   - "claude-opus-4-8"
   #     #   - "claude-sonnet-4-6"
   #     #   - "claude-3-7-sonnet-20250219"
@@ -508,6 +528,8 @@ endpoints:
   #     models:
   #       claude-fable-5:
   #         deploymentName: claude-fable-5
+  #       claude-opus-5:
+  #         deploymentName: claude-opus-5
   #       claude-opus-4.8:
   #         deploymentName: claude-opus-4-8
   #       claude-opus-4.5:

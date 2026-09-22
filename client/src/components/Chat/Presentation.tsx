@@ -1,8 +1,12 @@
-import { useEffect, useMemo } from 'react';
-import { useRecoilValue } from 'recoil';
+import { useEffect, useMemo, useRef } from 'react';
+import { useAtomValue } from 'jotai';
+import { useLocation } from 'react-router-dom';
+import { useRecoilValue, useResetRecoilState } from 'recoil';
 import { FileSources, LocalStorageKeys } from 'librechat-data-provider';
 import type { ExtendedFile } from '~/common';
 import useResetArtifactsOnConversationChange from '~/hooks/Artifacts/useResetArtifactsOnConversationChange';
+import ArtifactCatalogRegistrar from '~/components/ArtifactApps/ArtifactCatalogRegistrar';
+import { artifactNavigationRequestAtom } from '~/components/ArtifactApps/navigation';
 import DragDropWrapper from '~/components/Chat/Input/Files/DragDropWrapper';
 import { EditorProvider, ArtifactsProvider } from '~/Providers';
 import { useDeleteFilesMutation } from '~/data-provider';
@@ -12,18 +16,47 @@ import { useSetFilesToDelete } from '~/hooks';
 import store from '~/store';
 
 export default function Presentation({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
   const artifacts = useRecoilValue(store.artifactsState);
   const artifactsVisibility = useRecoilValue(store.artifactsVisibility);
-  // Render-gating the panel on `currentArtifactId != null` (in addition
-  // to visibility + non-empty artifacts) means the side panel only opens
-  // when *something* is actively focused. Conversation navigation
-  // resets `currentArtifactId` to null, so the panel stays closed when
-  // a user revisits an old conversation full of artifacts. New artifacts
-  // arriving via SSE auto-focus through `ToolArtifactCard`'s mount effect
-  // (gated on `isSubmitting`), restoring the legacy streaming UX.
+  // Idle history stays closed unless an artifact is focused. A catalog
+  // deep link temporarily bypasses that gate so `useArtifacts` can resolve
+  // the requested source and focus it after the conversation has rendered.
   const currentArtifactId = useRecoilValue(store.currentArtifactId);
+  const artifactNavigationRequest = useAtomValue(artifactNavigationRequestAtom);
+  const resetArtifacts = useResetRecoilState(store.artifactsState);
+  const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
+  const handledArtifactRequestRef = useRef<string | null>(null);
+  const hasStateArtifactRequest =
+    artifactNavigationRequest != null &&
+    location.pathname.endsWith(`/c/${artifactNavigationRequest.conversationId}`);
+  const hasArtifactRequest = useMemo(
+    () => new URLSearchParams(location.search).has('artifact') || hasStateArtifactRequest,
+    [hasStateArtifactRequest, location.search],
+  );
 
   useResetArtifactsOnConversationChange();
+
+  useEffect(() => {
+    if (!hasArtifactRequest) {
+      handledArtifactRequestRef.current = null;
+      return;
+    }
+    const requestKey = `${location.key}:${location.search}:${artifactNavigationRequest?.sourceKey ?? ''}`;
+    if (handledArtifactRequestRef.current === requestKey) {
+      return;
+    }
+    handledArtifactRequestRef.current = requestKey;
+    resetArtifacts();
+    resetCurrentArtifactId();
+  }, [
+    hasArtifactRequest,
+    location.key,
+    location.search,
+    resetArtifacts,
+    resetCurrentArtifactId,
+    artifactNavigationRequest?.sourceKey,
+  ]);
 
   const setFilesToDelete = useSetFilesToDelete();
 
@@ -60,28 +93,29 @@ export default function Presentation({ children }: { children: React.ReactNode }
 
   const artifactsElement = useMemo(() => {
     if (
-      artifactsVisibility === true &&
-      currentArtifactId != null &&
+      (artifactsVisibility === true || hasArtifactRequest) &&
+      (currentArtifactId != null || hasArtifactRequest) &&
       Object.keys(artifacts ?? {}).length > 0
     ) {
       return (
-        <ArtifactsProvider>
-          <EditorProvider>
-            <Artifacts />
-          </EditorProvider>
-        </ArtifactsProvider>
+        <EditorProvider>
+          <Artifacts />
+        </EditorProvider>
       );
     }
     return null;
-  }, [artifactsVisibility, artifacts, currentArtifactId]);
+  }, [artifactsVisibility, artifacts, currentArtifactId, hasArtifactRequest]);
 
   return (
-    <DragDropWrapper className="relative flex w-full grow overflow-hidden bg-presentation">
-      <SidePanelGroup artifacts={artifactsElement}>
-        <main className="flex h-full flex-col overflow-y-auto" role="main">
-          {children}
-        </main>
-      </SidePanelGroup>
-    </DragDropWrapper>
+    <ArtifactsProvider>
+      <ArtifactCatalogRegistrar />
+      <DragDropWrapper className="relative flex w-full grow overflow-hidden bg-presentation">
+        <SidePanelGroup artifacts={artifactsElement}>
+          <main className="flex h-full flex-col overflow-y-auto" role="main">
+            {children}
+          </main>
+        </SidePanelGroup>
+      </DragDropWrapper>
+    </ArtifactsProvider>
   );
 }

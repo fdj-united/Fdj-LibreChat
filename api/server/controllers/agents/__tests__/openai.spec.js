@@ -88,6 +88,12 @@ jest.mock('@librechat/api', () => ({
   resolveAgentScopedSkillIds: jest
     .fn()
     .mockImplementation(({ accessibleSkillIds }) => accessibleSkillIds),
+  resolveAgentSkillScope: jest.fn().mockResolvedValue({
+    requiredSkillIds: [],
+    optionalSkillIds: [],
+    effectiveSkillIds: [],
+    requiredSkillIdSet: new Set(),
+  }),
   loadSkillStates: jest.fn().mockResolvedValue({ skillStates: {}, defaultActiveOnShare: false }),
   sendFinalChunk: jest.fn(),
   createSafeUser: jest.fn().mockReturnValue({ id: 'user-123' }),
@@ -154,6 +160,7 @@ jest.mock('~/server/services/Endpoints/agents/skillDeps', () => ({
   getSkillToolDeps: mockGetSkillToolDeps,
   getSkillDbMethods: jest.fn(() => ({})),
   canAuthorSkillFiles: mockCanAuthorSkillFiles,
+  canUseSkills: jest.fn().mockResolvedValue(true),
   withDeploymentSkillIds: jest.fn((ids = []) => ids),
   enrichWithSkillConfigurable: mockEnrichWithSkillConfigurable,
   buildSkillPrimedIdsByName: mockBuildSkillPrimedIdsByName,
@@ -219,6 +226,7 @@ jest.mock('~/models', () => ({
   getCacheMultiplier: mockGetCacheMultiplier,
   getConvoFiles: jest.fn().mockResolvedValue([]),
   getConvo: jest.fn().mockResolvedValue(null),
+  findExistingSkillIdsForTenant: jest.fn().mockResolvedValue([]),
 }));
 
 describe('OpenAIChatCompletionController', () => {

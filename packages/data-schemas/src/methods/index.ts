@@ -100,6 +100,18 @@ import type {
 import { createAgentMethods, type AgentMethods, type AgentDeps } from './agent';
 /* Config */
 import { createConfigMethods, type ConfigMethods } from './config';
+/* Artifact Apps */
+import {
+  createArtifactAppMethods,
+  computeSourceHash,
+  ARTIFACT_SCHEMA_VERSION,
+  ArtifactAppDeletedError,
+  ArtifactAppRestoreNotFoundError,
+  ArtifactSyncConflictError,
+  recordArtifactSourceTombstones,
+  hasArtifactSourceTombstone,
+  type ArtifactAppMethods,
+} from './artifactApp';
 
 export {
   RoleConflictError,
@@ -120,6 +132,16 @@ export {
   inferSkillFileCategory,
 };
 export { AUDIT_SCHEMA_VERSION, MAX_AUDIT_EXPORT_ROWS, MAX_AUDIT_LOG_LIMIT, MAX_AUDIT_VERIFY_ROWS };
+export {
+  createArtifactAppMethods,
+  computeSourceHash,
+  ARTIFACT_SCHEMA_VERSION,
+  ArtifactAppDeletedError,
+  ArtifactAppRestoreNotFoundError,
+  ArtifactSyncConflictError,
+  recordArtifactSourceTombstones,
+  hasArtifactSourceTombstone,
+};
 
 export type AllMethods = UserMethods &
   SessionMethods &
@@ -156,7 +178,8 @@ export type AllMethods = UserMethods &
   SkillMethods &
   SkillSyncMethods &
   AgentMethods &
-  ConfigMethods;
+  ConfigMethods &
+  ArtifactAppMethods;
 
 /** Dependencies injected from the api layer into createMethods */
 export interface CreateMethodsDeps {
@@ -290,6 +313,8 @@ export function createMethods(
     ...agentMethods,
     /* Config */
     ...createConfigMethods(mongoose),
+    /* Artifact Apps */
+    ...createArtifactAppMethods(mongoose),
   };
 }
 
@@ -343,4 +368,5 @@ export type {
   SkillSyncMethods,
   AgentMethods,
   ConfigMethods,
+  ArtifactAppMethods,
 };

@@ -1,7 +1,18 @@
+import type { ArtifactPreview } from 'librechat-data-provider';
+
 export interface CodeBlock {
   id: string;
   language: string;
   content: string;
+}
+
+export const MERMAID_ARTIFACT_TYPE = 'application/vnd.mermaid' as const;
+
+export interface ArtifactDownload {
+  filepath?: string;
+  file_id?: string;
+  source?: string;
+  user?: string;
 }
 
 export interface Artifact {
@@ -14,6 +25,8 @@ export interface Artifact {
   content?: string;
   title?: string;
   type?: string;
+  preview?: ArtifactPreview;
+  download?: ArtifactDownload;
 }
 
 export type ArtifactFiles =

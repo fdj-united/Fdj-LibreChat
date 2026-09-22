@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ZodError } from 'zod';
 import type { TEndpointsConfig, TModelsConfig, TConfig } from './types';
+import type { ArtifactAppsConfig } from './artifactApps';
 import {
   EModelEndpoint,
   eModelEndpointSchema,
@@ -10,6 +11,7 @@ import {
 } from './schemas';
 import { ComponentTypes, SettingTypes, OptionTypes } from './generate';
 import { specsConfigSchema, TSpecsConfig } from './models';
+import { artifactAppsConfigSchema } from './artifactApps';
 import { REFILL_INTERVAL_UNITS } from './balance';
 import { fileConfigSchema } from './file-config';
 import { apiBaseUrl } from './api-endpoints';
@@ -1206,6 +1208,17 @@ export const interfaceSchema = z
         }),
       ])
       .optional(),
+    artifacts: z
+      .union([
+        z.boolean(),
+        z.object({
+          use: z.boolean().optional(),
+          create: z.boolean().optional(),
+          share: z.boolean().optional(),
+          public: z.boolean().optional(),
+        }),
+      ])
+      .optional(),
     temporaryChat: z.boolean().optional(),
     temporaryChatRetention: z.number().min(1).max(8760).optional(),
     autoSubmitFromUrl: z.boolean().optional(),
@@ -1289,6 +1302,12 @@ export const interfaceSchema = z
       use: true,
       create: true,
       share: false,
+      public: false,
+    },
+    artifacts: {
+      use: true,
+      create: true,
+      share: true,
       public: false,
     },
     temporaryChat: true,
@@ -1383,6 +1402,7 @@ export type TStartupConfig = {
   SAS_STORAGE_ACCOUNT?: string;
   SAS_TABLE_NAME?: string;
   SAS_CONTAINER_NAME?: string;
+  artifactApps?: ArtifactAppsConfig;
   socialLogins?: string[];
   interface?: TInterfaceConfig;
   turnstile?: TTurnstileConfig;
@@ -1765,6 +1785,7 @@ export type TFileRetentionConfig = z.infer<typeof fileRetentionSchema>;
 export const configSchema = z.object({
   version: z.string(),
   cache: z.boolean().default(true),
+  artifactApps: artifactAppsConfigSchema,
   ocr: ocrSchema.optional(),
   webSearch: webSearchSchema.optional(),
   memory: memorySchema.optional(),
@@ -1920,6 +1941,9 @@ export const alternateName = {
 };
 
 const sharedOpenAIModels = [
+  'gpt-5.6',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
   'gpt-5.5',
   'gpt-5.5-pro',
   'chat-latest',
@@ -1945,6 +1969,7 @@ const sharedOpenAIModels = [
 
 const sharedAnthropicModels = [
   'claude-fable-5',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-sonnet-5',
@@ -1969,19 +1994,25 @@ const sharedAnthropicModels = [
   'claude-3-5-sonnet-latest',
 ];
 
+/**
+ * Claude 4+ models are not invocable on-demand by their bare foundation-model
+ * ID on the Converse path — Bedrock rejects those with "Invocation of model ID
+ * ... with on-demand throughput isn't supported. Retry your request with the ID
+ * or ARN of an inference profile that contains this model." Default to the
+ * `global.` cross-region profile (no regional pricing premium, widest
+ * availability); Opus 4.1 has no global profile, so it uses `us.`.
+ */
 export const bedrockModels = [
-  'anthropic.claude-fable-5',
-  'anthropic.claude-opus-4-8',
-  'anthropic.claude-opus-4-7',
-  'anthropic.claude-sonnet-5',
-  'anthropic.claude-sonnet-4-6',
-  'anthropic.claude-opus-4-6-v1',
-  'anthropic.claude-sonnet-4-5-20250929-v1:0',
-  'anthropic.claude-haiku-4-5-20251001-v1:0',
-  'anthropic.claude-opus-4-1-20250805-v1:0',
-  'anthropic.claude-3-5-sonnet-20241022-v2:0',
-  'anthropic.claude-3-5-sonnet-20240620-v1:0',
-  'anthropic.claude-3-5-haiku-20241022-v1:0',
+  'global.anthropic.claude-fable-5',
+  'global.anthropic.claude-opus-5',
+  'global.anthropic.claude-opus-4-8',
+  'global.anthropic.claude-opus-4-7',
+  'global.anthropic.claude-sonnet-5',
+  'global.anthropic.claude-sonnet-4-6',
+  'global.anthropic.claude-opus-4-6-v1',
+  'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+  'us.anthropic.claude-opus-4-1-20250805-v1:0',
   // 'cohere.command-text-v14', // no conversation history
   // 'cohere.command-light-text-v14', // no conversation history
   'cohere.command-r-v1:0',
@@ -2623,6 +2654,11 @@ export enum Constants {
   BASH_PROGRAMMATIC_TOOL_CALLING = 'run_tools_with_bash',
   /** Subagent spawn tool name (must match `@librechat/agents` `Constants.SUBAGENT`). */
   SUBAGENT = 'subagent',
+  /**
+   * `finish_reason` used when a turn reaches its tool-call graph step limit.
+   * This is a completed pause rather than an aborted generation.
+   */
+  TOOL_CALL_LIMIT_FINISH_REASON = 'tool_call_limit',
 }
 
 /** Maximum explicit subagent hops allowed from any root agent at runtime. */

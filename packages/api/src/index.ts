@@ -52,6 +52,8 @@ export * from './prompts';
 export * from './projects';
 /* Skills */
 export * from './skills';
+/* Artifact Apps */
+export * from './artifactApps';
 /* Endpoints */
 export * from './endpoints';
 /* Files */

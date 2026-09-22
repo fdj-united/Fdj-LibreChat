@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useRecoilValue } from 'recoil';
+import { Constants } from 'librechat-data-provider';
 import {
   useMediaQuery,
   ResizablePanel,
@@ -74,6 +75,10 @@ export function ShareArtifactsContainer({
       isSubmitting: false,
       latestMessageId: latestMessage.messageId ?? null,
       latestMessageText,
+      latestMessageError:
+        latestMessage.error === true ||
+        (latestMessage.unfinished === true &&
+          latestMessage.finish_reason !== Constants.TOOL_CALL_LIMIT_FINISH_REASON),
       conversationId: conversationId ?? null,
     };
   }, [messages, conversationId]);
@@ -152,7 +157,7 @@ function ShareArtifactsPanel({ contextValue }: ShareArtifactsPanelProps) {
     <ArtifactsProvider value={contextValue}>
       <EditorProvider>
         <div className="flex h-full w-full border-l border-border-light bg-surface-primary shadow-2xl">
-          <Artifacts />
+          <Artifacts readOnly />
         </div>
       </EditorProvider>
     </ArtifactsProvider>

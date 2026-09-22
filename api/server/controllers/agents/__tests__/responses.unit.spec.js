@@ -96,6 +96,12 @@ jest.mock('@librechat/api', () => ({
   resolveAgentScopedSkillIds: jest
     .fn()
     .mockImplementation(({ accessibleSkillIds }) => accessibleSkillIds),
+  resolveAgentSkillScope: jest.fn().mockResolvedValue({
+    requiredSkillIds: [],
+    optionalSkillIds: [],
+    effectiveSkillIds: [],
+    requiredSkillIdSet: new Set(),
+  }),
   loadSkillStates: jest.fn().mockResolvedValue({ skillStates: {}, defaultActiveOnShare: false }),
   createSafeUser: jest.fn().mockReturnValue({ id: 'user-123' }),
   initializeAgent: jest.fn().mockResolvedValue({
@@ -228,6 +234,7 @@ jest.mock('~/server/services/Endpoints/agents/skillDeps', () => ({
   getSkillToolDeps: mockGetSkillToolDeps,
   getSkillDbMethods: jest.fn(() => ({})),
   canAuthorSkillFiles: mockCanAuthorSkillFiles,
+  canUseSkills: jest.fn().mockResolvedValue(true),
   withDeploymentSkillIds: jest.fn((ids = []) => ids),
   enrichWithSkillConfigurable: mockEnrichWithSkillConfigurable,
   buildSkillPrimedIdsByName: mockBuildSkillPrimedIdsByName,
@@ -275,6 +282,7 @@ jest.mock('~/models', () => ({
   getConvoFiles: jest.fn().mockResolvedValue([]),
   saveConvo: jest.fn().mockResolvedValue({}),
   getConvo: jest.fn().mockResolvedValue(null),
+  findExistingSkillIdsForTenant: jest.fn().mockResolvedValue([]),
 }));
 
 let mockGlobalDiscoveredAgentConfigs = null;

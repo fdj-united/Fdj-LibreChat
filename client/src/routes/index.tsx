@@ -9,14 +9,16 @@ import {
   RequestPasswordReset,
 } from '~/components/Auth';
 import { MarketplaceProvider } from '~/components/Agents/MarketplaceContext';
+import StandaloneAppView from '~/components/ArtifactApps/StandaloneAppView';
+import ArtifactAppsList from '~/components/ArtifactApps/ArtifactAppsList';
 import AgentMarketplace from '~/components/Agents/Marketplace';
 import { OAuthSuccess, OAuthError } from '~/components/OAuth';
 import { AuthContextProvider } from '~/hooks/AuthContext';
-import WithRum from '~/lib/rum/WithRum';
 import RouteErrorBoundary from './RouteErrorBoundary';
 import StartupLayout from './Layouts/Startup';
 import LoginLayout from './Layouts/Login';
 import dashboardRoutes from './Dashboard';
+import WithRum from '~/lib/rum/WithRum';
 import ShareRoute from './ShareRoute';
 import ChatRoute from './ChatRoute';
 import Search from './Search';
@@ -177,6 +179,18 @@ export const router = createBrowserRouter(
                   <AgentMarketplace />
                 </MarketplaceProvider>
               ),
+            },
+            {
+              path: 'apps',
+              element: <ArtifactAppsList />,
+            },
+            {
+              path: 'apps/:artifactAppId',
+              element: <StandaloneAppView />,
+            },
+            {
+              path: 'apps/:artifactAppId/version/:versionId',
+              element: <StandaloneAppView />,
             },
             {
               path: 'agents/:category',
