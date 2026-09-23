@@ -451,7 +451,6 @@ export default function AgentPanel() {
     () => new Set(agentsConfig?.allowedProviders),
     [agentsConfig?.allowedProviders],
   );
-  const isAdmin = user?.role === SystemRoles.ADMIN;
 
   const providers = useMemo(
     () =>
