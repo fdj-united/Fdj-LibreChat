@@ -1,34 +1,35 @@
 ---
 name: update-librechat
-description: Pull upstream danny-avila/LibreChat changes into the fdj-united fork using a two-phase workflow — sync main to a chosen upstream tag (or branch tip), then cut a NEW release branch (release/v<new>, e.g. release/v0.8.5) and replay the fork's patches onto it. The starting release branch is never modified — no force-push, ever. Triages conflicts per block, validates with Turborepo build. Per-merge fdj iterations are tracked as tags by /merge-feature; release branches are stable (Workflow Y).
+description: Upgrade the fdj-united fork from upstream LibreChat using a guarded two-phase workflow. Always asks first whether to update dev (`release/vX.Y.Z-fdjN`), prod (`prod/vX.Y.Z-fdjN`), or both; syncs main once, creates new environment-specific branches, replays each environment's fork patches independently, validates, and publishes only after explicit approval. Starting deployment branches are never modified or force-pushed.
 ---
 
 # About
 
-This fork (`fdj-united/Fdj-LibreChat`) treats release branches as **immutable per-upstream-version artifacts**: `release/v0.8.4` (or the legacy `release/v0.8.4-fdj11` if you're upgrading from an older naming convention) stays frozen at upstream v0.8.4. Upgrading to a newer upstream version means:
+This fork (`fdj-united/Fdj-LibreChat`) treats dev and prod deployment branches as immutable source artifacts. Dev uses `release/v<X.Y.Z>-fdj<N>` (existing unsuffixed `release/v<X.Y.Z>` branches are accepted as sources); prod uses `prod/v<X.Y.Z>-fdj<N>`. Upgrading means:
 
-1. Sync `main` to the new upstream tag (or `upstream/main` tip).
-2. Cut a NEW release branch (e.g. `release/v0.8.5`) from the synced `main`.
-3. Cherry-pick the fdj-specific commits from the old release branch onto the new one.
+1. Ask whether the upgrade targets **dev**, **prod**, or **both**. This is always the first question.
+2. Sync `main` once to the new upstream tag (or `upstream/main` tip).
+3. For each selected environment, choose its existing source branch and an exact new destination branch name.
+4. Create each destination from synced `main` and replay that environment's fdj-specific commits independently.
 
-The new branch name is just `release/v<new-version>` — no `-fdj<N>` suffix. The fdj counter lives in **tags** that `/merge-feature` creates per-merge (`v0.8.5-fdj1`, `v0.8.5-fdj2`, ...). Branch stable, tags accumulate (Workflow Y).
+Canonical destination names are `release/v<new-version>-fdj<N>` for dev and `prod/v<new-version>-fdj<N>` for prod. Do not invent `<N>`: ask the user for the exact destination name and validate its prefix, version, suffix, and non-existence locally and remotely. `/merge-feature` continues to create global annotated `v<version>-fdj<N>` tags.
 
-The old release branch is never touched. No force-pushes. The skill automates this two-phase flow.
+Source deployment branches are never touched. No force-pushes. When **both** is selected, each branch is replayed and validated separately after the single `main` sync; do not copy one environment's resulting branch into the other.
 
 Run `/update-librechat` in Claude Code.
 
 ## How it works
 
-**Preflight**: requires a clean working tree (`git status --porcelain`). The `upstream` remote should already point at `https://github.com/danny-avila/LibreChat.git`; if missing, asks for the URL and adds it. Fetches branches and tags.
+**Environment selection**: before any repository inspection, asks **dev**, **prod**, or **both**. This choice controls source discovery, destination naming, replay, validation, publish, rollback, and summary.
+
+**Preflight**: after environment selection, requires a clean working tree (`git status --porcelain`). The `upstream` remote should already point at `https://github.com/danny-avila/LibreChat.git`; if missing, asks for the URL and adds it. Fetches branches and tags.
 
 **Upstream reference selection**: asks whether to sync to a specific upstream release tag (recommended) or the tip of `upstream/main`. If tag, shows the most recent ~15 release tags so you can pick. The chosen ref (e.g. `v0.8.5` or `upstream/main`) is used for both phases.
 
-**Workflow planning**: detects the starting branch.
-- On `main` → **Phase 1 only** (just sync main).
-- On `release/v<X.Y.Z>` or `release/v<X.Y.Z>-fdj<N>` (legacy) → **two-phase**: derives the previous upstream version from the branch name, proposes a new branch name `release/v<new>` (no fdj suffix), lists the fdj commits that will be replayed. You can override the new branch name.
-- On any other branch → asks how to handle it.
+**Workflow planning**: for each selected environment, lists matching local and remote source branches and asks which one to upgrade. Dev sources come from `release/`; prod sources come from `prod/`. The current branch may be recommended only when it belongs to that environment. The skill then asks for each exact destination branch name and validates it. With **both**, dev and prod keep separate source branches, commit lists, conflict decisions, validation results, and destination branches.
 
 **Phase 1 — Sync `main` (local only)**
+
 1. Checkout `main`, ff-pull from `origin/main` (stop if main has diverged from its remote).
 2. Dry-run merge to preview conflicts.
 3. Merge the chosen upstream ref into `main`.
@@ -36,15 +37,16 @@ Run `/update-librechat` in Claude Code.
 5. Offer `npm install` if any manifest changed; run `npm run build:data-provider` + `npm run build`.
 6. **Nothing is pushed yet** — all changes stay local until the final publish gate.
 
-**Phase 2 — Cut new release branch + replay fdj patches (local only)** (skipped if started on `main`)
-1. Compute the list of fdj commits to replay: `git log --no-merges --reverse $PREV_UPSTREAM_VERSION..$START_BRANCH`. Show the list and let you select all or a subset.
-2. Create the new branch from the synced `main`: `git checkout -b release/v<new> main` (e.g. `release/v0.8.5`).
-3. Cherry-pick the selected fdj commits one by one.
-4. Triage conflicts per commit (see triage protocol).
-5. Validate again (the patches themselves may change deps/types).
+**Phase 2 — Cut selected environment branches + replay fdj patches (local only)**
+
+1. For each selected environment, compute its own replay list from its source branch and show it for confirmation.
+2. Create that environment's new destination branch from synced `main`.
+3. Cherry-pick only that source environment's selected commits, one at a time.
+4. Triage conflicts per commit and validate the completed branch.
+5. Return to `main`, then repeat for the next environment when **both** was selected.
 6. **Nothing is pushed yet** — see the publish gate below.
 
-**Publish gate (final step before summary)**: shows everything that's about to be pushed (main old→new HEAD, new release branch + commit count), asks which branches to publish. Pushes `main` first, then the new release branch. If either push fails, surfaces the error and stops — no auto-rebase, no force-push. You can re-run this step or push manually after reconciling.
+**Publish gate (final step before summary)**: shows everything about to be pushed: `main` and every selected environment branch with its replay count and validation result. The user chooses exactly which refs to publish. Pushes `main` first, then each approved dev/prod branch. If a push fails, surfaces the error and stops — no auto-rebase and no force-push.
 
 **Conflict resolution** (triage protocol, used in both phases): for every conflict block, classifies it as **trivial** (whitespace, import reorder, version bump, comment-only) or **non-trivial** (backend logic, MCP code, config, type/control-flow changes). Trivial blocks auto-resolve with a one-line note. Non-trivial blocks pause for you: shows the marker block with surrounding context + the proposed resolution + reasoning, and asks you to **Apply / Keep fork only / Keep upstream only / Skip (resolve manually)**. Lockfile conflicts regenerate via `npm install`, never hand-edit. Default to asking when classification confidence is below ~95%.
 
@@ -52,13 +54,13 @@ Run `/update-librechat` in Claude Code.
 
 **Breaking-change scan**: greps Conventional Commits markers (`feat!:`, `fix!:`, `BREAKING CHANGE:`) in the merged commit log, plus any `CHANGELOG.md` changes, and surfaces hits before you push.
 
-**Summary**: shows new HEAD of main, new release branch name + replayed commit count, backup tag for main rollback, conflicts resolved, MCP hotspot files touched, and pre-push smoke-test recommendations.
+**Summary**: shows the environment choice, new HEAD of `main`, every selected source→destination mapping and replay count, validation/push status per environment, backup tag for main rollback, conflicts resolved, MCP hotspot files touched, and smoke-test recommendations.
 
 ## Rollback
 
 - **Main**: backup tag `pre-update-main-<hash>-<timestamp>` is printed at the end. To roll back: `git reset --hard <backup-tag>` while on `main`.
-- **New release branch**: just delete it — it was never on the original. `git branch -D release/v<new>`. If you already pushed it, also `git push origin --delete release/v<new>`.
-- **Starting release branch**: **never modified by this skill**. No rollback needed.
+- **New deployment branch**: delete only the exact destination created for that environment. If pushed, delete its remote ref separately after explicit confirmation.
+- **Starting deployment branches**: **never modified by this skill**. No rollback is needed for them.
 
 ## Token usage
 
@@ -67,35 +69,65 @@ Only opens files with actual conflicts. Uses `git log`, `git diff`, and `git sta
 ---
 
 # Goal
-Bring upstream `danny-avila/LibreChat` changes into the fork by keeping `main` as a clean upstream mirror and cutting new immutable release branches per upstream version. The starting release branch is never modified.
+
+Bring upstream `danny-avila/LibreChat` changes into the fork by selecting dev, prod, or both first; keeping `main` as a clean upstream mirror; and cutting new immutable environment branches while leaving all source branches untouched.
 
 # Operating principles
+
+- The first interaction must ask **dev, prod, or both**. Do not run git commands, inspect the current branch, or infer the choice before the user answers.
 - Never proceed with a dirty working tree.
 - Always create rollback points before modifying `main`.
-- Never modify the starting release branch. Phase 2 creates a NEW branch.
+- Never modify a selected source branch. Phase 2 creates a NEW branch for each selected environment.
+- In **both** mode, never derive prod from the new dev branch or dev from the new prod branch. Replay each environment's own source commits independently onto the same synced `main` base.
 - Prefer git-native operations (fetch, merge, cherry-pick). Do not manually rewrite files except conflict markers.
 - Never force-push, never rewrite shared history, never `--no-verify` without explicit user say-so.
 - Ask before any `git push`. `main` is shared.
 - Keep token usage low: rely on `git status`, `git log`, `git diff`, and open only conflicted files.
 
+# Step -1: Choose deployment environments
+
+This must be the first interaction in every invocation. Before running any git command or inspecting the current branch, use AskUserQuestion:
+
+- **Dev** — upgrade only the development line under `release/`.
+- **Prod** — upgrade only the production line under `prod/`.
+- **Both** (Recommended when both lines must move together) — upgrade dev and prod independently from their own source branches after one shared `main` sync.
+
+Do not infer this choice from the checked-out branch, branch availability, or prior conversation. Wait for the answer, then set `TARGET_ENVS` to `dev`, `prod`, or `dev prod`. Use these definitions throughout:
+
+| Environment | Source branches                                                                  | New destination branch  |
+| ----------- | -------------------------------------------------------------------------------- | ----------------------- |
+| dev         | `release/v<X.Y.Z>-fdj<N>`; accept existing `release/v<X.Y.Z>` as a legacy source | `release/v<new>-fdj<N>` |
+| prod        | `prod/v<X.Y.Z>-fdj<N>`                                                           | `prod/v<new>-fdj<N>`    |
+
+The environment selection governs every later source, destination, replay, validation, publish, rollback, and summary action. Never touch an unselected environment.
+
 # Step 0: Preflight (stop early if unsafe)
+
 Run:
+
 - `git status --porcelain`
 
 If output is non-empty:
+
 - Tell the user to commit or stash first, then stop.
 
-Capture the starting branch immediately (before any checkout in later steps):
-- `START_BRANCH=$(git rev-parse --abbrev-ref HEAD)`
+Capture the invoking branch for context only:
+
+- `INVOKING_BRANCH=$(git rev-parse --abbrev-ref HEAD)`
+
+Do not treat `$INVOKING_BRANCH` as the source automatically. Source selection is explicit in Step 1, especially when **both** is selected.
 
 Confirm remotes:
+
 - `git remote -v`
 
 If `upstream` is missing:
+
 - Ask the user for the upstream repo URL (default: `https://github.com/danny-avila/LibreChat.git`).
 - Add it: `git remote add upstream <user-provided-url>`
 
 Determine the upstream branch name:
+
 - `git branch -r | grep upstream/`
 - If `upstream/main` exists, use `main`.
 - If only `upstream/master` exists, use `master`.
@@ -103,13 +135,15 @@ Determine the upstream branch name:
 - Store as `UPSTREAM_BRANCH`.
 
 Fetch branches and tags from both remotes (we'll need `origin/main` later too):
+
 - `git fetch upstream --prune --tags`
 - `git fetch origin --prune`
 
 ## Step 0.5: Pick the upstream reference (tag vs branch tip)
 
 Use AskUserQuestion:
-- Option A (Recommended): **Sync to a specific upstream release tag** — controlled, matches the `release/v<version>` naming convention.
+
+- Option A (Recommended): **Sync to a specific upstream release tag** — controlled and supplies the version component for every selected destination branch.
 - Option B: **Sync to `upstream/$UPSTREAM_BRANCH` tip** — latest unreleased upstream; useful for unreleased fixes.
 - Option C: **Abort** — stop here.
 
@@ -118,6 +152,7 @@ If Option B: set `UPSTREAM_REF="upstream/$UPSTREAM_BRANCH"`. Also set `UPSTREAM_
 If Option C: stop. (No backup created since nothing changed.)
 
 If Option A:
+
 - List recent upstream release tags with date and subject:
   ```
   for t in $(git tag --list --sort=-v:refname 'v*' | head -15); do
@@ -125,60 +160,59 @@ If Option A:
   done
   ```
   If `v*` returns nothing, drop the prefix filter.
-- If `START_BRANCH` matches `^release/v[0-9]+\.[0-9]+\.[0-9]+(-fdj[0-9]+)?$`, parse out the version (e.g. `v0.8.4`) and label it "currently on" in the list.
+- If `$INVOKING_BRANCH` matches a selected environment's branch shape, parse its version (e.g. `v0.8.4`) and label it "currently checked out" for context only. Do not use that as implicit source selection.
 - Ask the user to type the tag they want. Validate: `git rev-parse --verify "refs/tags/$TAG"`. If invalid, re-show the list and re-prompt.
-- If chosen tag is older than the parsed current version, warn and require explicit confirmation.
 - Set `UPSTREAM_REF=$TAG` and `UPSTREAM_VERSION=$TAG` (e.g. `v0.8.5`).
 
 For the rest of the skill, all git operations use `$UPSTREAM_REF` (either a tag like `v0.8.5` or a branch ref like `upstream/main`).
 
 # Step 1: Plan the workflow
 
-Classify the starting branch and pick a workflow.
+Plan one independent replay for every value in `$TARGET_ENVS`. Use per-environment variables (for example, `SOURCE_BRANCH_DEV`, `NEW_BRANCH_DEV`, and `REPLAY_COUNT_DEV`) rather than overwriting one environment's state with another's.
 
-**If `START_BRANCH == main`** (or `master`):
-- Set `WORKFLOW=phase1-only`.
-- Inform the user: "You're on `main`. I'll sync it to `$UPSTREAM_REF`. No release branch will be cut — Phase 2 is skipped. If you want a new release branch afterwards, re-run the skill from one of your release branches."
-- Proceed to Step 2.
+For each selected environment:
 
-**If `START_BRANCH` matches `^release/v[0-9]+\.[0-9]+\.[0-9]+(-fdj[0-9]+)?$`** (accepts both the new naming `release/v0.8.4` and the legacy `release/v0.8.4-fdj11`):
-- Set `WORKFLOW=two-phase`.
-- Parse the previous upstream version: regex capture `v[0-9]+\.[0-9]+\.[0-9]+` from `$START_BRANCH`. Store as `PREV_UPSTREAM_VERSION` (e.g. `v0.8.4`).
-- Validate it exists as a tag: `git rev-parse --verify "refs/tags/$PREV_UPSTREAM_VERSION"`. If missing, ask the user which tag the starting branch was based on and use their answer.
-- Compute the proposed new branch name (Workflow Y: no `-fdj<N>` suffix — that lives in tags created by `/merge-feature`):
-  - If `$UPSTREAM_VERSION` is set (tag was chosen in Step 0.5): `NEW_BRANCH="release/$UPSTREAM_VERSION"` (e.g. `release/v0.8.5`).
-  - If `$UPSTREAM_VERSION` is empty (branch-tip mode): ask the user for the new branch name. Suggest `release/main-<date>` as a fallback default.
-- Check the proposed branch name doesn't collide, locally OR on origin (we never force-push, so an existing remote ref would block the publish step):
-  - `git rev-parse --verify "refs/heads/$NEW_BRANCH" 2>/dev/null` — local check
-  - `git ls-remote --exit-code --heads origin "$NEW_BRANCH"` — remote check
-  - If either hits, ask the user to pick a different name (e.g. `release/v0.8.5-rc`, `release/v0.8.5-2`).
-- Count the fdj commits to be replayed:
-  ```
-  REPLAY_COUNT=$(git log --no-merges --oneline $PREV_UPSTREAM_VERSION..$START_BRANCH | wc -l)
-  ```
-- Show the plan to the user:
-  ```
-  Starting branch:    $START_BRANCH (based on $PREV_UPSTREAM_VERSION)
-  Sync target:        $UPSTREAM_REF
-  Phase 1:            main → merge $UPSTREAM_REF
-  Phase 2:            cut $NEW_BRANCH from synced main,
-                      replay $REPLAY_COUNT fdj commits onto it
-  Original branch:    $START_BRANCH stays untouched (no force-push)
-  ```
-- Use AskUserQuestion: **Proceed** (Recommended) / **Override new branch name** / **Abort**.
-- If override: re-prompt for branch name, re-check collision.
+1. Set its branch rules:
+   - dev: root `release`; source regex `^release/v[0-9]+\.[0-9]+\.[0-9]+(-fdj[0-9]+)?$`; destination regex `^release/v[0-9]+\.[0-9]+\.[0-9]+-fdj[0-9]+$`.
+   - prod: root `prod`; source and destination regex `^prod/v[0-9]+\.[0-9]+\.[0-9]+-fdj[0-9]+$`.
+2. Enumerate matching branches from local refs and `origin`, newest first. Do not show or accept branches from the other environment.
+3. Ask the user to select the exact source branch. Even if only one candidate exists, confirm it; never infer it from `$INVOKING_BRANCH`. Resolve it to an immutable `$SOURCE_REF_<ENV>`: use the local branch when present, otherwise fetch and use `origin/<branch>`. Record the display name separately as `$SOURCE_BRANCH_<ENV>`.
+4. Parse `PREV_UPSTREAM_VERSION_<ENV>` from the source name and verify the corresponding tag exists. If it does not, ask which upstream tag that source branch was based on and validate the answer.
+   - If `$UPSTREAM_VERSION` is set and is older than this environment's previous upstream version, warn that this is a downgrade and require explicit confirmation for that environment.
+5. Ask for the exact new destination branch name. Do not invent the fdj number.
+   - If an upstream tag was selected, require the destination's `v<X.Y.Z>` component to equal `$UPSTREAM_VERSION`.
+   - If branch-tip mode was selected, ask for the intended `v<X.Y.Z>` label before validating the destination.
+   - Require the destination to match that environment's destination regex.
+6. Verify the destination does not exist locally or on origin:
+   ```bash
+   git rev-parse --verify "refs/heads/$NEW_BRANCH" 2>/dev/null
+   git ls-remote --exit-code --heads origin "$NEW_BRANCH"
+   ```
+   If either command finds it, ask for another name. Never overwrite or reuse an existing destination.
+7. Count and record the commits to replay:
+   ```bash
+   REPLAY_COUNT=$(git log --no-merges --oneline "$PREV_UPSTREAM_VERSION..$SOURCE_REF" | wc -l)
+   ```
 
-**Otherwise** (unrecognized branch — e.g. a feature branch):
-- Use AskUserQuestion:
-  - **Sync main only** — treat this as a Phase-1-only run; you'll handle replays yourself afterwards.
-  - **Treat as release branch** — ask the user which upstream version this branch was based on, then continue as two-phase.
-  - **Abort.**
+Show one consolidated plan:
+
+```text
+Environments:       $TARGET_ENVS
+Sync target:        $UPSTREAM_REF
+Phase 1:            main → merge $UPSTREAM_REF (once)
+Dev, if selected:   $SOURCE_BRANCH_DEV → $NEW_BRANCH_DEV ($REPLAY_COUNT_DEV commits)
+Prod, if selected:  $SOURCE_BRANCH_PROD → $NEW_BRANCH_PROD ($REPLAY_COUNT_PROD commits)
+Source branches:    untouched
+```
+
+Use AskUserQuestion: **Proceed** (Recommended) / **Change branch selections or names** / **Abort**. Revalidate every changed value before continuing.
 
 # Step 2: Safety net for `main`
 
 We only modify `main` in Phase 1 — that's the only branch needing a backup.
 
 Capture main's pre-update state:
+
 - `git fetch origin main` (already done in Step 0, idempotent)
 - `MAIN_HASH=$(git rev-parse --short refs/heads/main 2>/dev/null || git rev-parse --short origin/main)`
 - `TIMESTAMP=$(date +%Y%m%d-%H%M%S)`
@@ -186,22 +220,26 @@ Capture main's pre-update state:
 - `MAIN_BACKUP_BRANCH=backup/$MAIN_BACKUP_TAG`
 
 Create the backup ref pointing at main's current tip (without checking out):
+
 - `git tag $MAIN_BACKUP_TAG refs/heads/main 2>/dev/null || git tag $MAIN_BACKUP_TAG origin/main`
 - `git branch $MAIN_BACKUP_BRANCH refs/heads/main 2>/dev/null || git branch $MAIN_BACKUP_BRANCH origin/main`
 
 Save `$MAIN_BACKUP_TAG` and `$MAIN_BACKUP_BRANCH` for the summary.
 
-The starting release branch is never modified, so no backup is needed for it.
+Selected source branches are never modified, so no backup is needed for them.
 
 # Step 3: Preview upstream changes (no edits yet)
 
 Compute the common base between current `main` and the chosen ref:
+
 - `BASE=$(git merge-base refs/heads/main $UPSTREAM_REF 2>/dev/null || git merge-base origin/main $UPSTREAM_REF)`
 
 Show upstream commits since BASE:
+
 - `git log --oneline $BASE..$UPSTREAM_REF`
 
 Show file-level impact:
+
 - `git diff --name-only $BASE..$UPSTREAM_REF`
 
 Bucket the upstream changed files for the user, in this order:
@@ -235,18 +273,19 @@ Bucket the upstream changed files for the user, in this order:
 6. Run **Step 6 (dependency sync)** and **Step 7 (validation)** on `main`.
 7. **Do not push yet.** Phase 1's changes stay local until the publish gate in Step 9.
 
-If `WORKFLOW=phase1-only`: skip Step 5; go to Step 8.
-
 # Conflict triage protocol (used by Step 4 and Step 5)
 
-Whenever `git merge` or `git cherry-pick` produces a conflict, follow this protocol per conflicted file. **Default to non-trivial when in doubt** — over-asking is cheap; silently landing a wrong resolution on `main` or a release branch is not.
+Whenever `git merge` or `git cherry-pick` produces a conflict, follow this protocol per conflicted file. **Default to non-trivial when in doubt** — over-asking is cheap; silently landing a wrong resolution on `main` or a deployment branch is not.
 
 ## A. Enumerate conflicts
+
 - `git status --short` to list conflicted files (marked `UU`, `AA`, `DD`, `AU`, `UA`, etc.)
 - For each file, count blocks: `grep -c '^<<<<<<<' <file>` — this is how many marker pairs need a decision.
 
 ## B. Special case — lockfile conflicts
+
 If `package-lock.json` is conflicted, **do not edit markers**. Instead:
+
 - Resolve any conflicts in `package.json` files first (per protocol below), stage them.
 - `rm package-lock.json && npm install` to regenerate from the merged manifests.
 - `git add package-lock.json`
@@ -254,6 +293,7 @@ If `package-lock.json` is conflicted, **do not edit markers**. Instead:
 ## C. Classify each conflict block
 
 **Trivial — auto-resolve, log a one-line note, do not interrupt the user:**
+
 - Whitespace-only differences (tabs, trailing spaces, blank lines)
 - Import statement reordering (no new imports added, none removed)
 - Version string bumps in `package.json` (e.g. `"0.8.4"` → `"0.8.5"`)
@@ -263,6 +303,7 @@ If `package-lock.json` is conflicted, **do not edit markers**. Instead:
 For each trivial block: apply the resolution, log a one-liner like `[trivial] api/package.json:3 — version 0.8.4 → 0.8.5, kept upstream`.
 
 **Non-trivial — propose, approve, then stage (see step D):**
+
 - ANY conflict under `api/`, `packages/api/`, `packages/data-schemas/`
 - ANY conflict under `client/src/components/MCP/`, `client/src/hooks/MCP/`, or matching `*MCPConfirmation*`
 - ANY conflict in `librechat.yaml`, `.env.example`, `config/`
@@ -277,7 +318,7 @@ For each non-trivial block:
 
 1. Show the marker block exactly as it appears in the file, with ~5 lines of surrounding context above and below.
 2. Show the proposed resolution side-by-side — usually a merge of both sides — and annotate which lines come from fork (HEAD / cherry-pick target), which come from upstream / the picked commit, and which are new.
-3. State briefly what intent is being preserved and what change is being incorporated. Example: *"Keeping fork's `audit(req.user, ...)` call (FDJ logging requirement). Adopting upstream's `await loadTools({ cache: true })` for the cache fix in v0.8.5."*
+3. State briefly what intent is being preserved and what change is being incorporated. Example: _"Keeping fork's `audit(req.user, ...)` call (FDJ logging requirement). Adopting upstream's `await loadTools({ cache: true })` for the cache fix in v0.8.5."_
 4. Use AskUserQuestion:
    - **Apply proposed resolution** (Recommended)
    - **Keep fork side only** (HEAD before merge / target before pick)
@@ -289,6 +330,7 @@ For each non-trivial block:
 If a single file has many non-trivial blocks (>5), offer one bulk option up front: "Show me all blocks first, then ask per-block" vs "Open the file in my IDE, I'll resolve it whole."
 
 ## E. Stage and continue
+
 - After every block in a file is resolved (no markers remain), `git add <file>`.
 - After every file is processed: `git diff --check` should show no remaining conflict markers anywhere.
 - If any files were skipped, **pause the skill** and wait — explicitly print the list of paths needing manual resolution.
@@ -296,44 +338,47 @@ If a single file has many non-trivial blocks (>5), offer one bulk option up fron
   - merge: `git commit --no-edit` (if not auto-committed)
   - cherry-pick: `git cherry-pick --continue`
 
-# Step 5: Phase 2 — Cut new release branch and replay fdj patches
+# Step 5: Phase 2 — Create and validate each selected deployment branch
 
-Only runs if `WORKFLOW=two-phase`.
+Process `$TARGET_ENVS` one at a time. For **both**, finish dev through validation, return to `main`, then process prod. Keep separate logs of chosen commits, conflicts, fixes, warnings, and validation results.
 
-1. Compute the ordered list of fdj commits to replay:
+For the current environment:
+
+1. Bind its recorded values to `$SOURCE_BRANCH`, `$SOURCE_REF`, `$PREV_UPSTREAM_VERSION`, `$NEW_BRANCH`, and `$REPLAY_COUNT`.
+2. Compute and show the ordered replay list:
+   ```bash
+   git log --no-merges --reverse --format='%h %s' "$PREV_UPSTREAM_VERSION..$SOURCE_REF"
    ```
-   git log --no-merges --reverse --format='%h %s' $PREV_UPSTREAM_VERSION..$START_BRANCH
-   ```
-   Show the list to the user. Ask via AskUserQuestion:
-   - **Replay all $REPLAY_COUNT commits** (Recommended)
-   - **Select a subset** — user types commit hashes or ranges
-   - **Abort Phase 2** — leave main synced (already pushed if user approved in Phase 1), do nothing further
+   Ask via AskUserQuestion:
+   - **Replay all `$REPLAY_COUNT` commits** (Recommended)
+   - **Select a subset** — user supplies commit hashes or ranges
+   - **Skip this environment** — do not create its destination branch
+   - **Abort the upgrade** — stop; leave completed local work and report it
+3. Return to validated synced `main`, then create the destination:
+   - `git checkout main`
+   - `git checkout -b "$NEW_BRANCH" main`
+4. Cherry-pick the selected commits one at a time in order.
+   - On conflicts, follow the conflict triage protocol, then `git cherry-pick --continue`.
+   - For an empty cherry-pick whose effect is already upstream, use `git cherry-pick --skip` and record it.
+   - If the user aborts mid-sequence, run `git cherry-pick --abort`, then ask whether to keep or delete only this new local destination branch.
+5. Run Step 6 and Step 7 for this destination. Record success or failure before processing another environment.
+6. If another environment remains, `git checkout main` and repeat from item 1. Never use the completed dev destination as prod's base or vice versa.
 
-2. Create the new branch from synced `main`:
-   - `git checkout -b $NEW_BRANCH main`
-
-3. Cherry-pick the commits, one at a time, in order:
-   - For each commit hash in the replay list:
-     - `git cherry-pick <hash>`
-     - If conflicts: follow the **Conflict triage protocol** above, then `git cherry-pick --continue`.
-     - If the user aborts mid-sequence: `git cherry-pick --abort`, then ask whether to keep the new branch with partial replay or delete it (`git checkout main && git branch -D $NEW_BRANCH`).
-   - Empty cherry-picks (commit already in upstream): `git cherry-pick --skip` automatically; log a one-liner noting which commit was skipped.
-
-4. After all commits are replayed, run **Step 6 (dependency sync)** and **Step 7 (validation)** again — fdj patches may modify deps or types.
-
-5. **Do not push yet.** Phase 2's new branch stays local until the publish gate in Step 9.
+Do not push any branch yet. Publishing happens only in Step 9 after all selected environments have been processed.
 
 # Step 6: Dependency sync (only if manifests changed)
 
-Run this after Phase 1's merge AND, separately, after Phase 2's replay (manifest changes can come from either side).
+Run this after Phase 1's merge and separately after each selected environment's replay (manifest changes can come from any side).
 
 Check whether the most recent operation touched any manifest or lockfile:
+
 - For Phase 1: `git diff $MAIN_BACKUP_TAG..HEAD --name-only | grep -E '(^|/)(package\.json|package-lock\.json)$'`
-- For Phase 2: `git diff main..HEAD --name-only | grep -E '(^|/)(package\.json|package-lock\.json)$'`
+- For each environment branch: `git diff main..HEAD --name-only | grep -E '(^|/)(package\.json|package-lock\.json)$'`
 
 If nothing matched: skip — `node_modules` is still in sync. Proceed to Step 7.
 
 If anything matched: validation in Step 7 would otherwise run against stale `node_modules`. Use AskUserQuestion:
+
 - **Run `npm install` now** (Recommended)
 - **Skip — I'll handle deps myself** (validation may fail with module-not-found errors)
 
@@ -344,6 +389,7 @@ If Run: `npm install`. If it fails (peer-dep conflicts, registry issues), surfac
 ## 7a — Build
 
 Run, in order:
+
 - `npm run build:data-provider` — shared types must be current before downstream packages compile.
 - `npm run build` — Turborepo orchestrates the rest; cached where possible.
 
@@ -356,10 +402,12 @@ If either fails: show the error and only fix issues clearly caused by the merge/
 **Scope**: only fork-touched JS files in `api/` (where `module-alias` maps `~/` → `api/`). The sweep doesn't look at TS code under `packages/` (different resolver).
 
 **Range to scan**:
+
 - Phase 1: `$MAIN_BACKUP_TAG..HEAD` on `main` (post-merge changes)
-- Phase 2: `main..HEAD` on `$NEW_BRANCH` (the replayed fdj commits)
+- Each environment: `main..HEAD` while checked out on that environment's `$NEW_BRANCH`.
 
 **Run**:
+
 ```bash
 RANGE=...  # set per phase
 git diff --name-only $RANGE -- 'api/**/*.js' | while read f; do
@@ -377,14 +425,16 @@ done
 If the sweep returns nothing: log "✓ require sweep clean" and proceed.
 
 If the sweep returns one or more lines: surface them clearly and use AskUserQuestion:
+
 - **Fix each broken require interactively** (Recommended) — for each hit, open the file at the matched line, show what's there, propose a fix (typical fix: change `require('~/foo/bar')` to `require('~/foo')` if `bar` was consolidated into the parent index — verify by checking what the parent index exports), and ask: Apply / Keep as-is / Skip this one.
 - **Flag in summary and continue** — the upgrade proceeds; broken requires are listed in Step 10's summary as `⚠ N broken requires — smoke test WILL fail until fixed`.
 - **Abort and roll back** — see the rollback paragraph below.
 
 **Important — what this sweep does NOT catch**:
+
 - TypeScript path-alias mismatches in `packages/api/` (different resolver)
 - Dynamic requires whose path comes from a variable
-- Wrong *named* exports from a still-valid module (`require('~/models').foo` returning `undefined` because `foo` was renamed)
+- Wrong _named_ exports from a still-valid module (`require('~/models').foo` returning `undefined` because `foo` was renamed)
 - Anything logically broken but syntactically resolved
 
 Smoke-testing the running app (Step 10's recommendation) is still the ultimate validation. The sweep is a cheap first pass.
@@ -392,8 +442,9 @@ Smoke-testing the running app (Step 10's recommendation) is still the ultimate v
 ## 7c — Rollback offer
 
 If 7a build is broken and you cannot pinpoint a fix in a few attempts, OR if 7b sweep finds broken requires you cannot easily resolve, **stop and offer rollback**:
+
 - **Phase 1 failure**: `git reset --hard $MAIN_BACKUP_TAG` returns `main` to its pre-merge state. Suggest re-running the skill targeting a smaller upstream tag.
-- **Phase 2 failure**: `git checkout main && git branch -D $NEW_BRANCH` drops the new release branch. The starting release branch is untouched. Suggest re-running Phase 2 with a smaller subset of fdj commits to localize the breakage.
+- **Environment replay failure**: `git checkout main && git branch -D "$NEW_BRANCH"` drops only that new destination branch. All source branches and any already-completed destination for the other environment remain untouched. Suggest retrying that environment with a smaller subset.
 
 # Step 8: Breaking changes check
 
@@ -402,12 +453,15 @@ After validation succeeds, scan the merged commit history and any release notes 
 LibreChat upstream uses Conventional Commits — breaking changes appear as `feat!:`, `fix!:`, or a `BREAKING CHANGE:` footer.
 
 Check commit messages between BASE and the synced ref:
+
 - `git log $BASE..$UPSTREAM_REF --grep='BREAKING CHANGE' --grep='!:' --regexp-ignore-case`
 
 Also check release notes if they exist in the tree:
+
 - `git diff $MAIN_BACKUP_TAG..main -- CHANGELOG.md changelog/ docs/changelog/` (skip silently if none of those paths exist)
 
 If hits found:
+
 - Display a warning: "This update includes potential breaking changes — review before deploying:"
 - For each hit, show the commit hash + subject (or CHANGELOG section).
 - Recommend `npm run backend` + `npm run frontend:dev` to verify behaviour locally before pushing.
@@ -418,60 +472,66 @@ If nothing matches: say so in one line and proceed.
 
 This is the only place where the skill pushes to a shared remote. By this point everything is built, validated, and reviewed locally — nothing has been published yet.
 
-Show the user what would be pushed:
-```
-main:           $MAIN_HASH → $(git rev-parse --short main)   (validated locally)
-$NEW_BRANCH:    new branch                                   (validated locally)
-                based on synced main + $REPLAY_COUNT replayed fdj commits
+Show the user one row per ref:
+
+```text
+main:  $MAIN_HASH → <new-main-hash>                       validated: yes/no
+dev:   $SOURCE_BRANCH_DEV → $NEW_BRANCH_DEV               commits: N, validated: yes/no
+prod:  $SOURCE_BRANCH_PROD → $NEW_BRANCH_PROD             commits: N, validated: yes/no
 ```
 
-(If `WORKFLOW=phase1-only`, only the `main` line is shown.)
+Omit unselected or skipped environments. Never offer an environment branch whose validation failed.
 
-Before asking, verify the new release branch doesn't already exist on origin (someone might have pushed during the run):
-- `git ls-remote --exit-code --heads origin "$NEW_BRANCH"`
-- If it exists, surface this loudly and refuse to overwrite. Ask the user to pick a new local name (`git branch -m $NEW_BRANCH $NEW_BRANCH-2`) or delete the remote ref themselves before re-running this step. **Never `--force`.**
+Immediately before asking, fetch origin and re-check every selected destination branch. If any destination now exists remotely, refuse to overwrite it and ask for a new local destination name. Revalidate the renamed branch. **Never force-push.**
 
 Use AskUserQuestion:
-- **Push all branches** (Recommended) — pushes `main`, then `$NEW_BRANCH`
-- **Push only `main`** — leave `$NEW_BRANCH` local for further review
-- **Push only `$NEW_BRANCH`** — leave `main` local (rare; only if `main` has unrelated work that shouldn't be published yet)
+
+- **Push all validated refs** (Recommended) — pushes `main`, then every validated selected environment branch
+- **Choose refs to push** — the user explicitly selects `main`, dev, and/or prod
 - **Skip — I'll push manually**
 
 If pushing `main`:
+
 - `git push origin main`
 - If push fails (e.g. remote `main` moved since Step 4's ff-pull), surface the error. Do NOT auto-rebase or force-push. Tell the user to reconcile manually and re-run this step.
 
-If pushing the new release branch (two-phase only):
-- `git push -u origin "$NEW_BRANCH"`
-- If push fails for any reason (network, hooks, protection rules), surface the error. Same rule — no force.
+For each approved environment branch:
 
-Record which branches were pushed for the summary.
+- `git push -u origin "$NEW_BRANCH"`
+- If push fails for any reason, stop before pushing another environment, surface exactly which refs succeeded, and never force.
+
+Record push status separately for `main`, dev, and prod.
 
 # Step 10: Summary
 
 Show:
-- Starting branch: `$START_BRANCH` (untouched — no force-push happened)
-- Workflow: `$WORKFLOW`
+
+- Requested environments: `$TARGET_ENVS`
+- Invoking branch: `$INVOKING_BRANCH` (context only)
 - Synced to: `$UPSTREAM_REF`
 - `main`: `$MAIN_HASH` → `$(git rev-parse --short main)`, pushed to origin: **yes / no**
-- (Two-phase only) New release branch: `$NEW_BRANCH`, based on synced `main` + `$REPLAY_COUNT` replayed fdj commits, pushed: **yes / no**
+- For every selected environment: source branch, source upstream base, destination branch, selected/replayed/skipped commits, validation result, and push result
 - Main backup tag (for rollback): `$MAIN_BACKUP_TAG`
-- Conflicts resolved across both phases (list files, if any)
+- Conflicts resolved on `main` and per environment (list files, if any)
 - MCP fork hotspot files touched (list, if any) — smoke-test the confirmation dialog before/after pushing
-- **Broken requires flagged at Step 7b** (if any were flagged-and-skipped, list each `<file> → ~/<path>`) — surface as a `⚠ WARNING: backend WILL crash at startup until these are fixed` block. Show the typical fix pattern (consolidate `require('~/foo/bar')` into `require('~/foo')` if `bar` was rolled into the parent index). Recommend fixing on the new release branch *before* pushing if not done already.
+- **Broken requires flagged at Step 7b**: group them by destination branch and surface the existing crash warning for each affected branch.
 
 If anything was NOT pushed in Step 9, remind the user of the manual commands:
+
 - `git push origin main`
-- `git push -u origin $NEW_BRANCH`
+- `git push -u origin $NEW_BRANCH_DEV` (if dev was selected and not pushed)
+- `git push -u origin $NEW_BRANCH_PROD` (if prod was selected and not pushed)
 
 Recommended next steps:
+
 1. `npm run backend` + `npm run frontend:dev` — smoke-test the MCP confirmation dialog and at least one MCP server (Atlassian or Ms-Teams) end-to-end.
 2. Push any remaining branches when ready.
 3. Never force-push.
 
 Rollback paths:
+
 - Roll back `main` (if not pushed): `git checkout main && git reset --hard $MAIN_BACKUP_TAG`.
 - Roll back `main` (if pushed): same reset, then coordinate with anyone who pulled `main`; a force-push is required and is destructive — avoid unless the merge genuinely needs to be undone.
-- Drop the new release branch (if not pushed): `git checkout main && git branch -D $NEW_BRANCH`.
-- Drop the new release branch (if pushed): `git push origin --delete $NEW_BRANCH`, then delete locally.
-- Starting release branch `$START_BRANCH` was never modified — nothing to undo there.
+- Drop a new environment branch (if not pushed): `git checkout main && git branch -D "$NEW_BRANCH"`.
+- Drop a pushed environment branch only after explicit confirmation: `git push origin --delete "$NEW_BRANCH"`, then delete it locally.
+- Selected source branches were never modified — nothing to undo there.
