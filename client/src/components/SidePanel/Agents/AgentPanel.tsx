@@ -320,7 +320,6 @@ export default function AgentPanel() {
     () => new Set(agentsConfig?.allowedProviders),
     [agentsConfig?.allowedProviders],
   );
-  const isAdmin = user?.role === SystemRoles.ADMIN;
 
   const providers = useMemo(
     () =>
@@ -333,7 +332,7 @@ export default function AgentPanel() {
             (isAdmin || !['AI Studio', 'Text to SQL'].includes(key)),
         )
         .map((provider) => createProviderOption(provider)),
-    [endpointsConfig, allowedProviders],
+    [endpointsConfig, allowedProviders, isAdmin],
   );
 
   /* Mutations */
