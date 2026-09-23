@@ -4101,6 +4101,7 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
     });
 
     describe('adminListAllAgents yaml toggle', () => {
+      /* eslint jest/expect-expect: ["warn", { "assertFunctionNames": ["expect", "expectAllAgentsListed"] }] */
       const setAdminListConfig = (enabled) => {
         mockReq.config = {
           endpoints: {
