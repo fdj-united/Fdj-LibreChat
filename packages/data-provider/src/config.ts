@@ -1376,7 +1376,7 @@ export const agentsEndpointSchema = baseEndpointSchema
         .default(DEFAULT_AGENT_MODEL_RESPONSE_HEADERS_TIMEOUT_MS),
       recursionLimit: z.number().optional(),
       disableBuilder: z.boolean().optional().default(false),
-      adminListAllAgents: z.boolean().optional().default(false),
+      adminListAllAgents: z.boolean().optional().default(true),
       /** Optional workspace guidance acquisition budget, separate from command execution. */
       repositoryInstructions: z
         .object({
@@ -1684,7 +1684,7 @@ export const agentsEndpointSchema = baseEndpointSchema
   )
   .default({
     disableBuilder: false,
-    adminListAllAgents: false,
+    adminListAllAgents: true,
     capabilities: defaultAgentCapabilities,
     maxCitations: 30,
     maxCitationsPerFile: 7,

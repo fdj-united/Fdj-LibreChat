@@ -4111,6 +4111,17 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
         };
       };
 
+      const expectAllAgentsListed = () => {
+        const agentIds = mockRes.json.mock.calls[0][0].data.map((agent) => agent.id);
+        expect(agentIds).toEqual(
+          expect.arrayContaining([agentA1.id, agentA2.id, agentA3.id, agentB1.id]),
+        );
+        expect(agentIds).toHaveLength(4);
+        expect(
+          mockRes.json.mock.calls[0][0].data.every((agent) => agent.isEditable === false),
+        ).toBe(true);
+      };
+
       test('does not bypass ACL when adminListAllAgents is false even with read:agents', async () => {
         const role = `LIST_READER_DISABLED_${nanoid(8)}`;
         await db.grantCapability({
@@ -4144,17 +4155,27 @@ describe('Agent Controllers - Mass Assignment Protection', () => {
         expect(await hasCapability(mockReq.user, SystemCapabilities.READ_AGENTS)).toBe(true);
         await getListAgentsHandler(mockReq, mockRes);
 
-        const agentIds = mockRes.json.mock.calls[0][0].data.map((agent) => agent.id);
-        expect(agentIds).toEqual(
-          expect.arrayContaining([agentA1.id, agentA2.id, agentA3.id, agentB1.id]),
-        );
-        expect(agentIds).toHaveLength(4);
-        expect(
-          mockRes.json.mock.calls[0][0].data.every((agent) => agent.isEditable === false),
-        ).toBe(true);
+        expectAllAgentsListed();
       });
 
-      test('does not bypass ACL when adminListAllAgents is true but user lacks read:agents', async () => {
+      test('lists all agents by default when config is omitted and user has read:agents', async () => {
+        const role = `LIST_READER_DEFAULT_${nanoid(8)}`;
+        await db.grantCapability({
+          principalType: PrincipalType.ROLE,
+          principalId: role,
+          capability: SystemCapabilities.READ_AGENTS,
+        });
+        mockReq.config = undefined;
+        mockReq.user = { id: userB.toString(), role, idOnTheSource: null };
+        findPubliclyAccessibleResources.mockResolvedValue([]);
+
+        expect(await hasCapability(mockReq.user, SystemCapabilities.READ_AGENTS)).toBe(true);
+        await getListAgentsHandler(mockReq, mockRes);
+
+        expectAllAgentsListed();
+      });
+
+      test('does not bypass ACL when adminListAllAgents is enabled but user lacks read:agents', async () => {
         setAdminListConfig(true);
         mockReq.user = { id: userB.toString(), role: 'USER', idOnTheSource: null };
         findAccessibleResources.mockResolvedValue([]);

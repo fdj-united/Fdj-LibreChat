@@ -1940,7 +1940,7 @@ const getListAgentsHandler = async (req, res) => {
         { hasCapability, findAccessibleResources },
         {
           allowReadAllAgents:
-            req.config?.endpoints?.[EModelEndpoint.agents]?.adminListAllAgents === true,
+            req.config?.endpoints?.[EModelEndpoint.agents]?.adminListAllAgents !== false,
         },
       ),
       findPubliclyAccessibleResources({
