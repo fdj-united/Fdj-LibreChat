@@ -1,9 +1,9 @@
 //reading libreChat theme classes
 export var THEME_CLASSES = {
-  popup: ["bg-surface-primary", "text-text-primary"],
-  field: ["bg-surface-secondary", "text-text-primary"],
-  tooltip: ["bg-surface-secondary", "text-text-primary"],
-  button: ["text-text-secondary", "hover:bg-surface-hover"]
+  popup: ['bg-surface-primary', 'text-text-primary'],
+  field: ['bg-surface-secondary', 'text-text-primary'],
+  tooltip: ['bg-surface-secondary', 'text-text-primary'],
+  button: ['text-text-secondary', 'hover:bg-surface-hover'],
 };
 
 export function addThemeClasses(element, key) {

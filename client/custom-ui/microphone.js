@@ -1,7 +1,6 @@
 //AIS-797: microphone functionality
 export function patchSpeechRecognition() {
-  var SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
+  var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   var originalStart;
   var originalStop;
 
@@ -26,11 +25,11 @@ export function patchSpeechRecognition() {
 
     if (!this._kaitEndPatched) {
       this._kaitEndPatched = true;
-      this.addEventListener("end", function () {
+      this.addEventListener('end', function () {
         if (!recognition._kaitManuallyStopped) {
           try {
             recognition.start();
-          } catch (error) {
+          } catch (_error) {
             // start() throws if recognition is already running
           }
         }

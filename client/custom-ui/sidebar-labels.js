@@ -1,56 +1,47 @@
 //AIS-796: sidebar label & collapse/expand functionality
 export function createSidebarExpandableLabelsAmendment() {
   var LABELS_BY_TESTID = {
-    "close-sidebar-button": "Close",
-    "new-chat-button": "New chat",
-    "nav-panel-conversations": "History",
-    "nav-panel-agents": "Agents",
-    "nav-panel-skills": "Skills",
-    "nav-panel-prompts": "Prompts",
-    "nav-panel-memories": "Memories",
-    "nav-panel-bookmarks": "Bookmarks",
-    "nav-panel-files": "Files",
-    "nav-panel-mcp-builder": "MCP",
-    "nav-panel-review-agent": "Review",
-    "nav-user": "Account"
+    'close-sidebar-button': 'Close',
+    'new-chat-button': 'New chat',
+    'nav-panel-conversations': 'History',
+    'nav-panel-agents': 'Agents',
+    'nav-panel-skills': 'Skills',
+    'nav-panel-prompts': 'Prompts',
+    'nav-panel-memories': 'Memories',
+    'nav-panel-bookmarks': 'Bookmarks',
+    'nav-panel-files': 'Files',
+    'nav-panel-mcp-builder': 'MCP',
+    'nav-panel-review-agent': 'Review',
+    'nav-user': 'Account',
   };
 
   var LABELS_BY_ARIA = {
-    "Close sidebar": "Close",
-    "New chat": "New chat",
-    "Chat History": "History",
-    "Agent Builder": "Agents",
-    Skills: "Skills",
-    Prompts: "Prompts",
-    Memories: "Memories",
-    Bookmarks: "Bookmarks",
-    "Attach Files": "Files",
-    "MCP Settings": "MCP",
-    Review: "Review",
-    "Account Settings": "Account"
+    'Close sidebar': 'Close',
+    'New chat': 'New chat',
+    'Chat History': 'History',
+    'Agent Builder': 'Agents',
+    Skills: 'Skills',
+    Prompts: 'Prompts',
+    Memories: 'Memories',
+    Bookmarks: 'Bookmarks',
+    'Attach Files': 'Files',
+    'MCP Settings': 'MCP',
+    Review: 'Review',
+    'Account Settings': 'Account',
   };
 
-  var INJECT_ATTR =
-    "data-kait-sidebar-label-injected";
-  var STYLE_ID =
-    "kait-sidebar-expand-style";
-  var TOGGLE_ID =
-    "kait-sidebar-expand-toggle";
-  var HTML_CLASS =
-    "kait-sidebar-expanded";
-  var STORAGE_KEY =
-    "kait-sidebar-expanded";
+  var INJECT_ATTR = 'data-kait-sidebar-label-injected';
+  var STYLE_ID = 'kait-sidebar-expand-style';
+  var TOGGLE_ID = 'kait-sidebar-expand-toggle';
+  var HTML_CLASS = 'kait-sidebar-expanded';
+  var STORAGE_KEY = 'kait-sidebar-expanded';
 
   var savedStateApplied = false;
 
   function getCloseButton() {
     return (
-      document.getElementById(
-        "close-sidebar-button"
-      ) ||
-      document.querySelector(
-        '[data-testid="close-sidebar-button"]'
-      )
+      document.getElementById('close-sidebar-button') ||
+      document.querySelector('[data-testid="close-sidebar-button"]')
     );
   }
 
@@ -64,16 +55,11 @@ export function createSidebarExpandableLabelsAmendment() {
 
     element = closeButton.parentElement;
 
-    while (
-      element &&
-      element !== document.body
-    ) {
+    while (element && element !== document.body) {
       if (
-        element.tagName === "DIV" &&
-        element.classList.contains("border-r") &&
-        element.classList.contains(
-          "bg-surface-primary-alt"
-        )
+        element.tagName === 'DIV' &&
+        element.classList.contains('border-r') &&
+        element.classList.contains('bg-surface-primary-alt')
       ) {
         return element;
       }
@@ -81,7 +67,7 @@ export function createSidebarExpandableLabelsAmendment() {
       element = element.parentElement;
     }
 
-    return closeButton.closest("div");
+    return closeButton.closest('div');
   }
 
   function getScrollSection(rail) {
@@ -89,9 +75,7 @@ export function createSidebarExpandableLabelsAmendment() {
       return null;
     }
 
-    return rail.querySelector(
-      ".flex.flex-col.gap-1.overflow-y-auto"
-    );
+    return rail.querySelector('.flex.flex-col.gap-1.overflow-y-auto');
   }
 
   function getBottomSection(rail) {
@@ -99,21 +83,14 @@ export function createSidebarExpandableLabelsAmendment() {
       return null;
     }
 
-    return rail.querySelector(
-      ".mt-auto.flex.flex-col.items-center.gap-2"
-    );
+    return rail.querySelector('.mt-auto.flex.flex-col.items-center.gap-2');
   }
 
   function getLabel(element) {
-    var testId =
-      element.getAttribute("data-testid");
-    var aria =
-      element.getAttribute("aria-label");
+    var testId = element.getAttribute('data-testid');
+    var aria = element.getAttribute('aria-label');
 
-    if (
-      testId &&
-      LABELS_BY_TESTID[testId]
-    ) {
+    if (testId && LABELS_BY_TESTID[testId]) {
       return LABELS_BY_TESTID[testId];
     }
 
@@ -127,18 +104,11 @@ export function createSidebarExpandableLabelsAmendment() {
   function isRailAction(element) {
     var rail = getRail();
 
-    if (
-      !element ||
-      element.nodeType !== 1 ||
-      !rail
-    ) {
+    if (!element || element.nodeType !== 1 || !rail) {
       return false;
     }
 
-    if (
-      element.tagName !== "BUTTON" &&
-      element.tagName !== "A"
-    ) {
+    if (element.tagName !== 'BUTTON' && element.tagName !== 'A') {
       return false;
     }
 
@@ -160,86 +130,82 @@ export function createSidebarExpandableLabelsAmendment() {
       return;
     }
 
-    style = document.createElement("style");
+    style = document.createElement('style');
     style.id = STYLE_ID;
 
     style.textContent = [
-      "html body .kait-sidebar-rail {",
-      "  transition: width 0.2s ease, min-width 0.2s ease;",
-      "}",
+      'html body .kait-sidebar-rail {',
+      '  transition: width 0.2s ease, min-width 0.2s ease;',
+      '}',
 
-      "html." + HTML_CLASS + " body .kait-sidebar-rail {",
-      "  width: 220px !important;",
-      "  min-width: 220px !important;",
-      "  align-items: stretch !important;",
-      "}",
+      'html.' + HTML_CLASS + ' body .kait-sidebar-rail {',
+      '  width: 220px !important;',
+      '  min-width: 220px !important;',
+      '  align-items: stretch !important;',
+      '}',
 
-      "html." + HTML_CLASS + " body .kait-sidebar-scroll-section {",
-      "  align-items: stretch !important;",
-      "}",
+      'html.' + HTML_CLASS + ' body .kait-sidebar-scroll-section {',
+      '  align-items: stretch !important;',
+      '}',
 
-      "html." + HTML_CLASS + " body .kait-sidebar-bottom-section {",
-      "  align-items: stretch !important;",
-      "}",
+      'html.' + HTML_CLASS + ' body .kait-sidebar-bottom-section {',
+      '  align-items: stretch !important;',
+      '}',
 
-      "html body .kait-sidebar-inline-label {",
-      "  display: none;",
-      "  white-space: nowrap;",
-      "  font-size: 14px;",
-      "  line-height: 1;",
-      "  color: var(--text-primary, currentColor) !important;",
-      "  pointer-events: none;",
-      "  flex: 0 1 auto;",
-      "}",
+      'html body .kait-sidebar-inline-label {',
+      '  display: none;',
+      '  white-space: nowrap;',
+      '  font-size: 14px;',
+      '  line-height: 1;',
+      '  color: var(--text-primary, currentColor) !important;',
+      '  pointer-events: none;',
+      '  flex: 0 1 auto;',
+      '}',
 
-      "html." + HTML_CLASS + " body .kait-sidebar-inline-label {",
-      "  display: inline;",
-      "}",
+      'html.' + HTML_CLASS + ' body .kait-sidebar-inline-label {',
+      '  display: inline;',
+      '}',
 
-      "html." + HTML_CLASS + " body .kait-sidebar-rail button[" +
-        INJECT_ATTR +
-        '="true"],',
+      'html.' + HTML_CLASS + ' body .kait-sidebar-rail button[' + INJECT_ATTR + '="true"],',
 
-      "html." + HTML_CLASS + " body .kait-sidebar-rail a[" +
-        INJECT_ATTR +
-        '="true"],',
+      'html.' + HTML_CLASS + ' body .kait-sidebar-rail a[' + INJECT_ATTR + '="true"],',
 
-      "html." + HTML_CLASS + " body #" + TOGGLE_ID + " {",
-      "  width: 100% !important;",
-      "  min-width: 0 !important;",
-      "  justify-content: flex-start !important;",
-      "  padding-left: 10px !important;",
-      "  padding-right: 10px !important;",
-      "  gap: 10px !important;",
-      "  box-sizing: border-box !important;",
-      "}",
+      'html.' + HTML_CLASS + ' body #' + TOGGLE_ID + ' {',
+      '  width: 100% !important;',
+      '  min-width: 0 !important;',
+      '  justify-content: flex-start !important;',
+      '  padding-left: 10px !important;',
+      '  padding-right: 10px !important;',
+      '  gap: 10px !important;',
+      '  box-sizing: border-box !important;',
+      '}',
 
-      "html body #" + TOGGLE_ID + " .kait-toggle-label {",
-      "  display: none;",
-      "  white-space: nowrap;",
-      "  font-size: 14px;",
-      "  line-height: 1;",
-      "  color: var(--text-primary, currentColor) !important;",
-      "  pointer-events: none;",
-      "}",
+      'html body #' + TOGGLE_ID + ' .kait-toggle-label {',
+      '  display: none;',
+      '  white-space: nowrap;',
+      '  font-size: 14px;',
+      '  line-height: 1;',
+      '  color: var(--text-primary, currentColor) !important;',
+      '  pointer-events: none;',
+      '}',
 
-      "html." + HTML_CLASS + " body #" + TOGGLE_ID + " .kait-toggle-label {",
-      "  display: inline;",
-      "}",
+      'html.' + HTML_CLASS + ' body #' + TOGGLE_ID + ' .kait-toggle-label {',
+      '  display: inline;',
+      '}',
 
-      "html body #" + TOGGLE_ID + " .kait-toggle-icon {",
-      "  width: 20px;",
-      "  height: 20px;",
-      "  display: inline-flex;",
-      "  align-items: center;",
-      "  justify-content: center;",
-      "  flex: 0 0 auto;",
-      "}",
+      'html body #' + TOGGLE_ID + ' .kait-toggle-icon {',
+      '  width: 20px;',
+      '  height: 20px;',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  justify-content: center;',
+      '  flex: 0 0 auto;',
+      '}',
 
-      "html body #" + TOGGLE_ID + " svg {",
-      "  display: block;",
-      "}"
-    ].join("\n");
+      'html body #' + TOGGLE_ID + ' svg {',
+      '  display: block;',
+      '}',
+    ].join('\n');
 
     document.head.appendChild(style);
   }
@@ -252,47 +218,44 @@ export function createSidebarExpandableLabelsAmendment() {
       '<path d="M4 6H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
       '<path d="M4 12H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
       '<path d="M4 18H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
-      "</svg>"
+      '</svg>'
     );
   }
 
   function getToggleButtonClassName() {
     return [
-      "inline-flex",
-      "items-center",
-      "justify-center",
-      "gap-2",
-      "whitespace-nowrap",
-      "text-sm",
-      "font-medium",
-      "ring-offset-background",
-      "transition-colors",
-      "focus-visible:outline-none",
-      "focus-visible:ring-2",
-      "focus-visible:ring-ring",
-      "focus-visible:ring-offset-2",
-      "disabled:pointer-events-none",
-      "disabled:opacity-50",
-      "hover:bg-surface-hover",
-      "hover:text-accent-foreground",
-      "size-10",
-      "cursor-pointer",
-      "h-9",
-      "w-9",
-      "rounded-lg",
-      "text-text-secondary"
-    ].join(" ");
+      'inline-flex',
+      'items-center',
+      'justify-center',
+      'gap-2',
+      'whitespace-nowrap',
+      'text-sm',
+      'font-medium',
+      'ring-offset-background',
+      'transition-colors',
+      'focus-visible:outline-none',
+      'focus-visible:ring-2',
+      'focus-visible:ring-ring',
+      'focus-visible:ring-offset-2',
+      'disabled:pointer-events-none',
+      'disabled:opacity-50',
+      'hover:bg-surface-hover',
+      'hover:text-accent-foreground',
+      'size-10',
+      'cursor-pointer',
+      'h-9',
+      'w-9',
+      'rounded-lg',
+      'text-text-secondary',
+    ].join(' ');
   }
 
   function isExpanded() {
-    return document.documentElement.classList.contains(
-      HTML_CLASS
-    );
+    return document.documentElement.classList.contains(HTML_CLASS);
   }
 
   function updateToggleState() {
-    var toggle =
-      document.getElementById(TOGGLE_ID);
+    var toggle = document.getElementById(TOGGLE_ID);
     var expanded = isExpanded();
     var label;
 
@@ -300,51 +263,29 @@ export function createSidebarExpandableLabelsAmendment() {
       return;
     }
 
-    toggle.setAttribute(
-      "aria-pressed",
-      expanded ? "true" : "false"
-    );
+    toggle.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+
+    toggle.setAttribute('title', expanded ? 'Collapse sidebar labels' : 'Expand sidebar labels');
 
     toggle.setAttribute(
-      "title",
-      expanded
-        ? "Collapse sidebar labels"
-        : "Expand sidebar labels"
+      'aria-label',
+      expanded ? 'Collapse sidebar labels' : 'Expand sidebar labels',
     );
 
-    toggle.setAttribute(
-      "aria-label",
-      expanded
-        ? "Collapse sidebar labels"
-        : "Expand sidebar labels"
-    );
-
-    label = toggle.querySelector(
-      ".kait-toggle-label"
-    );
+    label = toggle.querySelector('.kait-toggle-label');
 
     if (label) {
-      label.textContent =
-        expanded ? "Collapse" : "Expand";
+      label.textContent = expanded ? 'Collapse' : 'Expand';
     }
   }
 
   function setExpandedState(expanded) {
-    document.documentElement.classList.toggle(
-      HTML_CLASS,
-      expanded
-    );
+    document.documentElement.classList.toggle(HTML_CLASS, expanded);
 
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        expanded ? "true" : "false"
-      );
+      localStorage.setItem(STORAGE_KEY, expanded ? 'true' : 'false');
     } catch (error) {
-      console.warn(
-        "[KAIT UI] could not save sidebar state",
-        error
-      );
+      console.warn('[KAIT UI] could not save sidebar state', error);
     }
 
     updateToggleState();
@@ -361,44 +302,34 @@ export function createSidebarExpandableLabelsAmendment() {
 
     try {
       saved = localStorage.getItem(STORAGE_KEY);
-    } catch (error) {
+    } catch (_error) {
       saved = null;
     }
 
-    document.documentElement.classList.toggle(
-      HTML_CLASS,
-      saved === "true"
-    );
+    document.documentElement.classList.toggle(HTML_CLASS, saved === 'true');
   }
 
   function createToggleButton() {
-    var button =
-      document.createElement("button");
-    var icon =
-      document.createElement("span");
-    var label =
-      document.createElement("span");
+    var button = document.createElement('button');
+    var icon = document.createElement('span');
+    var label = document.createElement('span');
 
-    button.type = "button";
+    button.type = 'button';
     button.id = TOGGLE_ID;
-    button.className =
-      getToggleButtonClassName();
+    button.className = getToggleButtonClassName();
 
-    icon.className = "kait-toggle-icon";
+    icon.className = 'kait-toggle-icon';
     icon.innerHTML = getToggleIconSvg();
 
-    label.className = "kait-toggle-label";
-    label.textContent = "Expand";
+    label.className = 'kait-toggle-label';
+    label.textContent = 'Expand';
 
     button.appendChild(icon);
     button.appendChild(label);
 
-    button.addEventListener(
-      "click",
-      function () {
-        setExpandedState(!isExpanded());
-      }
-    );
+    button.addEventListener('click', function () {
+      setExpandedState(!isExpanded());
+    });
 
     return button;
   }
@@ -413,8 +344,7 @@ export function createSidebarExpandableLabelsAmendment() {
       return;
     }
 
-    existing =
-      document.getElementById(TOGGLE_ID);
+    existing = document.getElementById(TOGGLE_ID);
 
     if (existing) {
       return;
@@ -423,19 +353,10 @@ export function createSidebarExpandableLabelsAmendment() {
     toggle = createToggleButton();
     closeButton = getCloseButton();
 
-    if (
-      closeButton &&
-      closeButton.parentNode
-    ) {
-      closeButton.parentNode.insertBefore(
-        toggle,
-        closeButton.nextSibling
-      );
+    if (closeButton && closeButton.parentNode) {
+      closeButton.parentNode.insertBefore(toggle, closeButton.nextSibling);
     } else {
-      rail.insertBefore(
-        toggle,
-        rail.firstChild
-      );
+      rail.insertBefore(toggle, rail.firstChild);
     }
   }
 
@@ -448,26 +369,18 @@ export function createSidebarExpandableLabelsAmendment() {
       return;
     }
 
-    rail.classList.add(
-      "kait-sidebar-rail"
-    );
+    rail.classList.add('kait-sidebar-rail');
 
-    scrollSection =
-      getScrollSection(rail);
+    scrollSection = getScrollSection(rail);
 
     if (scrollSection) {
-      scrollSection.classList.add(
-        "kait-sidebar-scroll-section"
-      );
+      scrollSection.classList.add('kait-sidebar-scroll-section');
     }
 
-    bottomSection =
-      getBottomSection(rail);
+    bottomSection = getBottomSection(rail);
 
     if (bottomSection) {
-      bottomSection.classList.add(
-        "kait-sidebar-bottom-section"
-      );
+      bottomSection.classList.add('kait-sidebar-bottom-section');
     }
   }
 
@@ -475,10 +388,7 @@ export function createSidebarExpandableLabelsAmendment() {
     var labelText;
     var label;
 
-    if (
-      element.getAttribute(INJECT_ATTR) ===
-      "true"
-    ) {
+    if (element.getAttribute(INJECT_ATTR) === 'true') {
       return;
     }
 
@@ -488,17 +398,13 @@ export function createSidebarExpandableLabelsAmendment() {
       return;
     }
 
-    label = document.createElement("span");
-    label.className =
-      "kait-sidebar-inline-label";
+    label = document.createElement('span');
+    label.className = 'kait-sidebar-inline-label';
     label.textContent = labelText;
 
     element.appendChild(label);
 
-    element.setAttribute(
-      INJECT_ATTR,
-      "true"
-    );
+    element.setAttribute(INJECT_ATTR, 'true');
   }
 
   function processRoot(root) {
@@ -514,10 +420,7 @@ export function createSidebarExpandableLabelsAmendment() {
     }
 
     items = root.querySelectorAll(
-      "button[aria-label], " +
-        "a[aria-label], " +
-        "button[data-testid], " +
-        "a[data-testid]"
+      'button[aria-label], ' + 'a[aria-label], ' + 'button[data-testid], ' + 'a[data-testid]',
     );
 
     for (i = 0; i < items.length; i++) {
@@ -553,6 +456,6 @@ export function createSidebarExpandableLabelsAmendment() {
 
       processRoot(node);
       updateToggleState();
-    }
+    },
   };
 }
