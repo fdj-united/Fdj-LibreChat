@@ -1144,9 +1144,10 @@ const getListAgentsHandler = async (req, res) => {
       filter.$or = [{ name: regex }, { description: regex }];
     }
 
-    // When enabled in librechat.yaml, admins with read:agents list all agents (not just ACL shares).
+    // Users with read:agents list every agent (including unpublished / unshared).
+    // Opt out via endpoints.agents.adminListAllAgents: false in librechat.yaml.
     const adminListAllAgents =
-      req.config?.endpoints?.[EModelEndpoint.agents]?.adminListAllAgents === true;
+      req.config?.endpoints?.[EModelEndpoint.agents]?.adminListAllAgents !== false;
 
     let bypassAccessFilter = false;
     if (adminListAllAgents) {
