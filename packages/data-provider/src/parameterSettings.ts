@@ -16,6 +16,7 @@ import {
   anthropicSettings,
 } from './types';
 import { SettingDefinition, SettingsConfiguration } from './generate';
+import { isOpus55Model } from './bedrock';
 
 // Base definitions
 const baseDefinitions: Record<string, SettingDefinition> = {
@@ -1259,6 +1260,13 @@ export function applyModelAwareDefaults(
   endpoint: string,
   model?: string,
 ): SettingsConfiguration {
+  /** Upstream #16215: Opus 5.5 hides the thinking and sampling controls. */
+  if (model && isOpus55Model(model)) {
+    return settings.filter(
+      (setting) =>
+        !['thinking', 'thinkingBudget', 'temperature', 'topP', 'topK'].includes(setting.key),
+    );
+  }
   if (endpoint !== EModelEndpoint.google || !model) {
     return settings;
   }

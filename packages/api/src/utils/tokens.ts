@@ -1,5 +1,5 @@
 import z from 'zod';
-import { EModelEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, isOpus55Model } from 'librechat-data-provider';
 import type { EndpointTokenConfig, TokenConfig } from '~/types';
 
 /**
@@ -163,10 +163,33 @@ const anthropicModels = {
   'claude-opus-4-6': 1000000,
   'claude-opus-4-7': 1000000,
   'claude-opus-4-8': 1000000,
+  'claude-opus-5-5': 1000000,
+  'claude-opus-5.5': 1000000,
   'claude-opus-5': 1000000,
   'claude-fable-5': 1000000,
   'claude-mythos-5': 1000000,
 };
+
+const ANTHROPIC_OPUS_55_OUTPUT = 128000;
+
+/** Endpoints that can serve Anthropic models and therefore use the Anthropic limits. */
+function usesAnthropicContextMap(endpoint: EModelEndpoint): boolean {
+  return (
+    endpoint === EModelEndpoint.anthropic ||
+    endpoint === EModelEndpoint.bedrock ||
+    endpoint === EModelEndpoint.openAI ||
+    endpoint === EModelEndpoint.agents ||
+    endpoint === EModelEndpoint.custom
+  );
+}
+
+/** Upstream #16215: Opus 5.5 gets its 128K output on every Anthropic-capable endpoint. */
+function getAnthropicOpus55Output(modelName: string, endpoint: EModelEndpoint): number | undefined {
+  if (!usesAnthropicContextMap(endpoint) || !isOpus55Model(modelName)) {
+    return undefined;
+  }
+  return ANTHROPIC_OPUS_55_OUTPUT;
+}
 
 const deepseekModels = {
   deepseek: 128000,
@@ -422,6 +445,8 @@ const anthropicMaxOutputs = {
   'claude-opus-4-6': 128000,
   'claude-opus-4-7': 128000,
   'claude-opus-4-8': 128000,
+  'claude-opus-5-5': 128000,
+  'claude-opus-5.5': 128000,
   'claude-opus-5': 128000,
   'claude-fable-5': 128000,
   'claude-mythos-5': 128000,
@@ -561,6 +586,10 @@ export function getModelMaxOutputTokens(
     if (overrideValue != null) {
       return overrideValue;
     }
+  }
+  const opus55Value = getAnthropicOpus55Output(modelName, endpoint);
+  if (opus55Value != null) {
+    return opus55Value;
   }
   return getModelTokenValue(
     modelName,

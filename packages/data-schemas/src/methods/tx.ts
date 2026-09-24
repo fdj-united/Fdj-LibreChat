@@ -93,7 +93,7 @@ const bedrockValues: Record<string, { prompt: number; completion: number }> = {
   'nova-premier': { prompt: 2.5, completion: 12.5 },
   'deepseek.r1': { prompt: 1.35, completion: 5.4 },
   // Claude models on Bedrock cross-region inference (eu.* prefix — 10% surcharge over Anthropic direct)
-  'eu.anthropic.claude-sonnet-4-6': { prompt: 3.30, completion: 16.50 },
+  'eu.anthropic.claude-sonnet-4-6': { prompt: 3.3, completion: 16.5 },
   // Moonshot/Kimi models on Bedrock
   'moonshot.kimi': { prompt: 0.6, completion: 2.5 },
   'moonshot.kimi-k2': { prompt: 0.6, completion: 2.5 },
@@ -174,6 +174,8 @@ export const tokenValues: Record<string, { prompt: number; completion: number }>
     'claude-opus-4-7': { prompt: 5, completion: 25 },
     'claude-opus-4-8': { prompt: 5, completion: 25 },
     'claude-opus-5': { prompt: 5, completion: 25 },
+    'claude-opus-5-5': { prompt: 4, completion: 20 },
+    'claude-opus-5.5': { prompt: 4, completion: 20 },
     'claude-fable-5': { prompt: 10, completion: 50 },
     'claude-mythos-5': { prompt: 10, completion: 50 },
     'claude-sonnet-4': { prompt: 3, completion: 15 },
@@ -321,6 +323,8 @@ export const cacheTokenValues: Record<string, { write: number; read: number }> =
   'claude-opus-4-7': { write: 6.25, read: 0.5 },
   'claude-opus-4-8': { write: 6.25, read: 0.5 },
   'claude-opus-5': { write: 6.25, read: 0.5 },
+  'claude-opus-5-5': { write: 5, read: 0.2 },
+  'claude-opus-5.5': { write: 5, read: 0.2 },
   'claude-fable-5': { write: 12.5, read: 1 },
   'claude-mythos-5': { write: 12.5, read: 1 },
   'gpt-4o': { write: 2.5, read: 1.25 },

@@ -2880,3 +2880,31 @@ describe('Long-Context Premium Cache Pricing', () => {
 
 // Cross-package sync validation tests (tokens.ts ↔ tx.ts) moved to
 // packages/api tests since they require maxTokensMap from @librechat/api.
+
+describe('Opus 5.5 pricing', () => {
+  it.each([
+    'claude-opus-5-5',
+    'claude-opus-5.5',
+    'anthropic/claude-opus-5-5',
+    'global.anthropic.claude-opus-5-5',
+    'eu.anthropic.claude-opus-5-5',
+  ])('prices %s independently of Opus 5, without a long-context surcharge', (model) => {
+    const key = model.includes('5.5') ? 'claude-opus-5.5' : 'claude-opus-5-5';
+    for (const inputTokenCount of [1000, 200000, 1000000]) {
+      expect(getMultiplier({ model, tokenType: 'prompt', inputTokenCount })).toBe(
+        tokenValues[key].prompt,
+      );
+      expect(getMultiplier({ model, tokenType: 'completion', inputTokenCount })).toBe(
+        tokenValues[key].completion,
+      );
+      expect(getCacheMultiplier({ model, cacheType: 'write', inputTokenCount })).toBe(
+        cacheTokenValues[key].write,
+      );
+      expect(getCacheMultiplier({ model, cacheType: 'read', inputTokenCount })).toBe(
+        cacheTokenValues[key].read,
+      );
+    }
+    expect(tokenValues[key].prompt).toBeLessThan(tokenValues['claude-opus-5'].prompt);
+    expect(cacheTokenValues[key].read).toBeLessThan(cacheTokenValues['claude-opus-5'].read);
+  });
+});
