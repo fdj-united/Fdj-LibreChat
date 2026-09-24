@@ -1,6 +1,6 @@
-import { EModelEndpoint, BedrockProviders } from './types';
-import { applyModelAwareDefaults, paramSettings } from './parameterSettings';
 import type { SettingDefinition } from './generate';
+import { applyModelAwareDefaults, paramSettings } from './parameterSettings';
+import { EModelEndpoint, BedrockProviders } from './types';
 
 const googleParams = paramSettings[EModelEndpoint.google] as SettingDefinition[];
 const anthropicParams = paramSettings[EModelEndpoint.anthropic] as SettingDefinition[];

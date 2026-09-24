@@ -93,7 +93,7 @@ const bedrockValues: Record<string, { prompt: number; completion: number }> = {
   'nova-premier': { prompt: 2.5, completion: 12.5 },
   'deepseek.r1': { prompt: 1.35, completion: 5.4 },
   // Claude models on Bedrock cross-region inference (eu.* prefix — 10% surcharge over Anthropic direct)
-  'eu.anthropic.claude-sonnet-4-6': { prompt: 3.30, completion: 16.50 },
+  'eu.anthropic.claude-sonnet-4-6': { prompt: 3.3, completion: 16.5 },
   // Moonshot/Kimi models on Bedrock
   'moonshot.kimi': { prompt: 0.6, completion: 2.5 },
   'moonshot.kimi-k2': { prompt: 0.6, completion: 2.5 },
