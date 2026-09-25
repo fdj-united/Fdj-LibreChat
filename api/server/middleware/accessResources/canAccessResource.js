@@ -11,6 +11,7 @@ const { checkPermission } = require('~/server/services/PermissionService');
  * @param {number} options.requiredPermission - The permission bit required (1=view, 2=edit, 4=delete, 8=share)
  * @param {string} [options.resourceIdParam='resourceId'] - The name of the route parameter containing the resource ID
  * @param {Function} [options.idResolver] - Optional function to resolve custom IDs to ObjectIds
+ * @param {boolean} [options.allowCapabilityBypass=true] - Whether resource managers may bypass ACL checks
  * @returns {Function} Express middleware function
  *
  * @example
@@ -38,6 +39,7 @@ const canAccessResource = (options) => {
     requiredPermission,
     resourceIdParam = 'resourceId',
     idResolver = null,
+    allowCapabilityBypass = true,
   } = options;
 
   if (!resourceType || typeof resourceType !== 'string') {
@@ -71,18 +73,22 @@ const canAccessResource = (options) => {
           message: 'Authentication required',
         });
       }
-      const cap = ResourceCapabilityMap[resourceType];
-      let hasCap = false;
-      try {
-        hasCap = cap != null && (await hasCapability(req.user, cap));
-      } catch (err) {
-        logger.warn(`[canAccessResource] capability check failed, denying bypass: ${err.message}`);
-      }
-      if (hasCap) {
-        logger.debug(
-          `[canAccessResource] ${cap} bypass for user ${req.user.id} on ${resourceType} ${rawResourceId}`,
-        );
-        return next();
+      if (allowCapabilityBypass) {
+        const cap = ResourceCapabilityMap[resourceType];
+        let hasCap = false;
+        try {
+          hasCap = cap != null && (await hasCapability(req.user, cap));
+        } catch (err) {
+          logger.warn(
+            `[canAccessResource] capability check failed, denying bypass: ${err.message}`,
+          );
+        }
+        if (hasCap) {
+          logger.debug(
+            `[canAccessResource] ${cap} bypass for user ${req.user.id} on ${resourceType} ${rawResourceId}`,
+          );
+          return next();
+        }
       }
       const userId = req.user.id;
       let resourceId = rawResourceId;

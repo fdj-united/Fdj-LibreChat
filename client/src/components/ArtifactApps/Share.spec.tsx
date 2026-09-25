@@ -51,21 +51,16 @@ function mockAccess({
   viewUsers = false,
   viewGroups = false,
   viewRoles = false,
-  sharePublic = false,
 }: {
   share?: boolean;
   viewUsers?: boolean;
   viewGroups?: boolean;
   viewRoles?: boolean;
-  sharePublic?: boolean;
 } = {}) {
   mockUseHasAccess.mockImplementation(
     ({ permissionType, permission }: { permissionType: string; permission: string }) => {
       if (permissionType === PermissionTypes.ARTIFACTS && permission === Permissions.SHARE) {
         return share;
-      }
-      if (permissionType === PermissionTypes.ARTIFACTS && permission === Permissions.SHARE_PUBLIC) {
-        return sharePublic;
       }
       if (
         permissionType === PermissionTypes.PEOPLE_PICKER &&
@@ -105,12 +100,12 @@ describe('ArtifactAppShareDialog', () => {
     expect(dialog).toHaveTextContent('Revenue chart');
   });
 
-  it('exposes the share dialog for an admin who does not own the artifact', () => {
+  it('hides the share dialog from an admin who does not own the artifact', () => {
     mockUseAuthContext.mockReturnValue({ user: { id: 'admin-1', role: SystemRoles.ADMIN } });
 
     render(<ArtifactAppShareDialog app={app} />);
 
-    expect(screen.getByTestId('artifact-share-dialog')).toBeInTheDocument();
+    expect(screen.queryByTestId('artifact-share-dialog')).not.toBeInTheDocument();
   });
 
   it('exposes the share dialog when the catalog entry already includes SHARE', () => {
@@ -137,7 +132,7 @@ describe('ArtifactAppShareDialog', () => {
     expect(screen.queryByTestId('artifact-share-dialog')).not.toBeInTheDocument();
   });
 
-  it('hides the share dialog when no user, group, or public destination is permitted', () => {
+  it('hides the share dialog when no user or group destination is permitted', () => {
     mockAccess({ share: true, viewRoles: true });
 
     render(<ArtifactAppShareDialog app={app} />);
@@ -155,14 +150,6 @@ describe('ArtifactAppShareDialog', () => {
 
   it('exposes the share dialog when only people-picker groups are permitted', () => {
     mockAccess({ share: true, viewGroups: true });
-
-    render(<ArtifactAppShareDialog app={app} />);
-
-    expect(screen.getByTestId('artifact-share-dialog')).toBeInTheDocument();
-  });
-
-  it('exposes the share dialog when only public sharing is permitted', () => {
-    mockAccess({ share: true, sharePublic: true });
 
     render(<ArtifactAppShareDialog app={app} />);
 

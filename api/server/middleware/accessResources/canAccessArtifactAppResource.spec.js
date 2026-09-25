@@ -1,9 +1,14 @@
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
-const { ResourceType, PrincipalType, PrincipalModel } = require('librechat-data-provider');
+const {
+  ResourceType,
+  PrincipalType,
+  PrincipalModel,
+  SystemRoles,
+} = require('librechat-data-provider');
 const { canAccessArtifactAppResource } = require('./canAccessArtifactAppResource');
 const { User, Role, AclEntry } = require('~/db/models');
-const { createArtifactAppWithVersion } = require('~/models');
+const { createArtifactAppWithVersion, seedSystemGrants } = require('~/models');
 
 const VIEW = 1;
 const EDIT = 2;
@@ -123,6 +128,31 @@ describe('canAccessArtifactAppResource middleware', () => {
         error: 'Forbidden',
         message: `Insufficient permissions to access this ${ResourceType.ARTIFACT_APP}`,
       });
+    });
+
+    test('denies an administrator with management capability but no artifact ACL', async () => {
+      const admin = await User.create({
+        email: 'admin@example.com',
+        name: 'Admin User',
+        username: 'adminuser',
+        role: SystemRoles.ADMIN,
+      });
+      await seedSystemGrants();
+      const otherUser = await User.create({
+        email: 'owner@example.com',
+        name: 'Artifact Owner',
+        username: 'artifactowner',
+        role: 'test-role',
+      });
+      const { app } = await publishApp(otherUser._id);
+      await grant({ principalId: otherUser._id, resourceId: app.id, permBits: OWNER_BITS });
+      req.user = { id: admin._id, role: SystemRoles.ADMIN };
+      req.params.id = app.artifactAppId;
+
+      await canAccessArtifactAppResource({ requiredPermission: VIEW })(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(403);
     });
 
     /* The route table gates PATCH on EDIT and DELETE on DELETE, so a

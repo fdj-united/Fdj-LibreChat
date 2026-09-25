@@ -212,10 +212,10 @@ describe('GenericGrantAccessDialog - permissions load failure', () => {
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_share_var' }));
 
     expect(screen.getByTestId('principals-list')).toHaveAttribute('data-role-selection', 'false');
-    expect(screen.getByTestId('public-toggle')).toHaveAttribute('data-role-selection', 'false');
+    expect(screen.queryByTestId('public-toggle')).not.toBeInTheDocument();
   });
 
-  it('counts artifact recipients and public access while excluding the owner', () => {
+  it('counts artifact recipients while excluding the owner and obsolete public access', () => {
     const artifactConfig = getResourceConfig(ResourceType.ARTIFACT_APP);
     mockUseResourcePermissionState.mockReturnValue(
       baseState({
@@ -246,11 +246,11 @@ describe('GenericGrantAccessDialog - permissions load failure', () => {
     );
 
     const shareButton = screen.getByRole('button', { name: 'com_ui_share_var' });
-    expect(within(shareButton).getByText('2')).toBeInTheDocument();
-    expect(within(shareButton).queryByText('3')).not.toBeInTheDocument();
+    expect(within(shareButton).getByText('1')).toBeInTheDocument();
+    expect(within(shareButton).queryByText('2')).not.toBeInTheDocument();
   });
 
-  it('shows a share badge for an artifact shared only with everyone', () => {
+  it('does not show a share badge for obsolete artifact public access', () => {
     const artifactConfig = getResourceConfig(ResourceType.ARTIFACT_APP);
     mockUseResourcePermissionState.mockReturnValue(
       baseState({
@@ -276,8 +276,8 @@ describe('GenericGrantAccessDialog - permissions load failure', () => {
     );
 
     expect(
-      within(screen.getByRole('button', { name: 'com_ui_share_var' })).getByText('1'),
-    ).toBeInTheDocument();
+      within(screen.getByRole('button', { name: 'com_ui_share_var' })).queryByText('1'),
+    ).not.toBeInTheDocument();
   });
 
   it('hides role principals from the artifact app picker for administrators', () => {
@@ -365,7 +365,7 @@ describe('GenericGrantAccessDialog - permissions load failure', () => {
     expect(screen.getByRole('button', { name: 'com_ui_share_var' })).toBeInTheDocument();
   });
 
-  it('keeps the artifact app share control when public sharing is the only destination', () => {
+  it('hides the artifact app share control when public sharing is the only destination', () => {
     mockUsePeoplePickerPermissions.mockReturnValue({
       hasPeoplePickerAccess: true,
       peoplePickerTypeFilter: [PrincipalType.ROLE],
@@ -384,6 +384,6 @@ describe('GenericGrantAccessDialog - permissions load failure', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'com_ui_share_var' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'com_ui_share_var' })).not.toBeInTheDocument();
   });
 });

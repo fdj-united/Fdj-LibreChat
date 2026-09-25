@@ -53,8 +53,7 @@ describe('Artifact App sharing policy', () => {
           },
         ],
         removed: [],
-        public: true,
-        publicAccessRoleId: AccessRoleIds.ARTIFACT_APP_VIEWER,
+        public: false,
       }),
       response,
       next,
@@ -89,24 +88,31 @@ describe('Artifact App sharing policy', () => {
     },
   );
 
-  it('rejects public owner access', async () => {
-    const response = makeResponse();
+  it.each([AccessRoleIds.ARTIFACT_APP_VIEWER, AccessRoleIds.ARTIFACT_APP_OWNER])(
+    'rejects public sharing with %s access',
+    async (publicAccessRoleId) => {
+      const response = makeResponse();
 
-    await policy(
-      makeRequest({
-        updated: [],
-        removed: [],
-        public: true,
-        publicAccessRoleId: AccessRoleIds.ARTIFACT_APP_OWNER,
-      }),
-      response,
-      next,
-    );
+      await policy(
+        makeRequest({
+          updated: [],
+          removed: [],
+          public: true,
+          publicAccessRoleId,
+        }),
+        response,
+        next,
+      );
 
-    expect(response.statusCode).toBe(400);
-    expect(getArtifactAppsByIds).not.toHaveBeenCalled();
-    expect(next).not.toHaveBeenCalled();
-  });
+      expect(response.statusCode).toBe(400);
+      expect(response.body).toEqual({
+        error: 'Bad Request',
+        message: 'Artifact Apps cannot be shared publicly',
+      });
+      expect(getArtifactAppsByIds).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects role-wide grants even when they use viewer access', async () => {
     const response = makeResponse();
@@ -179,16 +185,20 @@ describe('Artifact App sharing policy', () => {
     expect(getArtifactAppsByIds).not.toHaveBeenCalled();
   });
 
-  it('rejects public sharing when the artifact has been deleted', async () => {
+  it('rejects sharing when the artifact has been deleted', async () => {
     getArtifactAppsByIds.mockResolvedValueOnce([]);
     const response = makeResponse();
 
     await policy(
       makeRequest({
-        updated: [],
+        updated: [
+          {
+            type: PrincipalType.USER,
+            id: 'viewer-user',
+            accessRoleId: AccessRoleIds.ARTIFACT_APP_VIEWER,
+          },
+        ],
         removed: [],
-        public: true,
-        publicAccessRoleId: AccessRoleIds.ARTIFACT_APP_VIEWER,
       }),
       response,
       next,
