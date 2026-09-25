@@ -415,11 +415,11 @@ describe('agentsEndpointSchema', () => {
     }
   });
 
-  it('defaults adminListAllAgents to false when omitted', () => {
+  it('defaults adminListAllAgents to true when omitted', () => {
     const result = agentsEndpointSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.adminListAllAgents).toBe(false);
+      expect(result.data.adminListAllAgents).toBe(true);
     }
   });
 

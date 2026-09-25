@@ -244,12 +244,16 @@ export default function AgentPanel() {
   );
 
   const canEdit = hasPermission(PermissionBits.EDIT);
+  const isAdmin = user?.role === SystemRoles.ADMIN;
+  // Admins can configure any agent (API bypasses ACL via manage:agents); ACL EDIT alone is insufficient.
+  const canLoadExpanded = canEdit || isAdmin;
 
   const expandedAgentQuery = useGetExpandedAgentByIdQuery(current_agent_id ?? '', {
-    enabled: !isEphemeralAgent(current_agent_id) && canEdit && !permissionsLoading,
+    enabled: !isEphemeralAgent(current_agent_id) && canLoadExpanded && !permissionsLoading,
   });
 
-  const agentQuery = canEdit && expandedAgentQuery.data ? expandedAgentQuery : basicAgentQuery;
+  const agentQuery =
+    canLoadExpanded && expandedAgentQuery.data ? expandedAgentQuery : basicAgentQuery;
 
   const models = useMemo(() => modelsQuery.data ?? {}, [modelsQuery.data]);
   const methods = useForm<AgentForm>({
@@ -316,7 +320,6 @@ export default function AgentPanel() {
     () => new Set(agentsConfig?.allowedProviders),
     [agentsConfig?.allowedProviders],
   );
-  const isAdmin = user?.role === SystemRoles.ADMIN;
 
   const providers = useMemo(
     () =>
@@ -329,7 +332,7 @@ export default function AgentPanel() {
             (isAdmin || !['AI Studio', 'Text to SQL'].includes(key)),
         )
         .map((provider) => createProviderOption(provider)),
-    [endpointsConfig, allowedProviders],
+    [endpointsConfig, allowedProviders, isAdmin],
   );
 
   /* Mutations */
@@ -485,12 +488,12 @@ export default function AgentPanel() {
       return true;
     }
 
-    if (user?.role === SystemRoles.ADMIN) {
+    if (isAdmin) {
       return true;
     }
 
     return canEdit;
-  }, [agentQuery.data?.id, user?.role, canEdit]);
+  }, [agentQuery.data?.id, isAdmin, canEdit]);
 
   return (
     <FormProvider {...methods}>
