@@ -674,7 +674,7 @@ describe('get / list', () => {
     ).toBeUndefined();
   });
 
-  test('lets resource managers discover apps without needing an explicit ACL grant', async () => {
+  test("does not expose another user's private app in the shared scope", async () => {
     const created = makeRes();
     await handlers.publish(
       makeReq({
@@ -685,9 +685,8 @@ describe('get / list', () => {
     );
     accessibleIds = [];
 
-    const managerHandlers = createArtifactAppHandlers({
+    const privateHandlers = createArtifactAppHandlers({
       ...methods,
-      hasResourceManagementCapability: async () => true,
       getResourcePermissionsMap: async () => new Map(),
       grantPermission: async () => undefined,
       removeAllPermissions: async () => undefined,
@@ -695,11 +694,9 @@ describe('get / list', () => {
     });
 
     const res = makeRes();
-    await managerHandlers.list(makeReq({ query: { scope: 'shared' } }), res);
+    await privateHandlers.list(makeReq({ query: { scope: 'shared' } }), res);
 
-    expect((res.body as { apps: Array<{ title: string }> }).apps).toEqual([
-      expect.objectContaining({ title: 'Owned by someone else' }),
-    ]);
+    expect((res.body as { apps: Array<{ title: string }> }).apps).toEqual([]);
   });
 
   test('list rejects malformed cursors', async () => {
@@ -990,14 +987,13 @@ describe('remove', () => {
     });
   });
 
-  test('allows a resource administrator to delete without an artifact ACL', async () => {
+  test('denies an administrator deletion without an artifact ACL', async () => {
     const { appId } = await createSyncedVersions(1);
     const administrativeHandlers = createArtifactAppHandlers({
       ...methods,
       getResourcePermissionsMap: async () => new Map(),
       grantPermission: async () => undefined,
       removeAllPermissions: async () => undefined,
-      hasResourceManagementCapability: async () => true,
       recordAuditEntry: async () => undefined,
     });
 
@@ -1005,12 +1001,13 @@ describe('remove', () => {
     await administrativeHandlers.remove(
       makeReq({
         params: { id: appId } as never,
-        user: makeUser({ id: 'admin-user', email: 'admin@example.com' }),
+        user: makeUser({ id: 'admin-user', role: 'ADMIN', email: 'admin@example.com' }),
       }),
       res,
     );
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(403);
+    expect(await methods.getArtifactAppByAppId({ artifactAppId: appId })).not.toBeNull();
   });
 
   test('returns 410 when a persistent queue retries a deleted source', async () => {

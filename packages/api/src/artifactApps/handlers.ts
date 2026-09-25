@@ -112,7 +112,6 @@ export interface ArtifactAppHandlersDeps {
     grantedBy: string;
   }) => Promise<void>;
   removeAllPermissions: (params: { resourceType: string; resourceId: string }) => Promise<unknown>;
-  hasResourceManagementCapability?: (user: NonNullable<ServerRequest['user']>) => Promise<boolean>;
   recordAuditEntry: (input: RecordAuditEntryInput) => Promise<void>;
   sourceConversationExists?: (params: {
     userId: string;
@@ -310,7 +309,6 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
     getResourcePermissionsMap,
     grantPermission,
     removeAllPermissions,
-    hasResourceManagementCapability,
     recordAuditEntry,
     sourceConversationExists,
     getConfig,
@@ -332,13 +330,6 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
     user: NonNullable<ServerRequest['user']>,
     artifactAppId: string,
   ): Promise<boolean> {
-    try {
-      if ((await hasResourceManagementCapability?.(user)) === true) {
-        return true;
-      }
-    } catch (error) {
-      logger.warn(`[artifactApps] capability check failed for ${user.id as string}`, error);
-    }
     const app = await getArtifactAppByAppId({ artifactAppId });
     if (!app) {
       return false;
@@ -674,15 +665,6 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
       }
       let scanCursor = parsed.data.cursor;
       const userId = user.id as string;
-      let isManager = false;
-      try {
-        isManager = (await hasResourceManagementCapability?.(user)) === true;
-      } catch (error) {
-        logger.warn(
-          `[GET /artifact-apps] Capability check failed for ${userId}; falling back to ACL`,
-          error,
-        );
-      }
       const ownership: Pick<ArtifactAppListOptions, 'createdBy' | 'excludeCreatedBy'> = {};
       if (parsed.data.scope === 'personal') {
         ownership.createdBy = userId;
@@ -723,22 +705,6 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
           offset += config.aclBatchSize
         ) {
           const aclEntries = candidatePage.entries.slice(offset, offset + config.aclBatchSize);
-          if (isManager) {
-            for (const entry of aclEntries) {
-              accessibleEntries.push(entry);
-              permissionById.set(
-                entry.id,
-                PermissionBits.VIEW |
-                  PermissionBits.EDIT |
-                  PermissionBits.DELETE |
-                  PermissionBits.SHARE,
-              );
-              if (accessibleEntries.length > parsed.data.limit) {
-                break;
-              }
-            }
-            continue;
-          }
           const permissions = await getResourcePermissionsMap({
             userId,
             role: user.role,
@@ -884,22 +850,7 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
       if (!app) {
         return res.status(200).json({ success: true });
       }
-      let hasManagementCapability = false;
       if (app.createdBy !== userId && app.deletion?.requestedBy !== userId) {
-        try {
-          hasManagementCapability = (await hasResourceManagementCapability?.(user)) === true;
-        } catch (error) {
-          logger.warn(
-            `[DELETE /artifact-apps/:id] Capability check failed for ${userId}; falling back to ACL`,
-            error,
-          );
-        }
-      }
-      if (
-        app.createdBy !== userId &&
-        app.deletion?.requestedBy !== userId &&
-        !hasManagementCapability
-      ) {
         const permissions = await getResourcePermissionsMap({
           userId,
           role: user.role,

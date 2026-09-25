@@ -45,14 +45,19 @@ export function createArtifactAppSharingPolicy(deps: ArtifactAppSharingPolicyDep
       (principal) => principal.accessRoleId !== AccessRoleIds.ARTIFACT_APP_VIEWER,
     );
     const roleGrant = updated.some((principal) => principal.type === PrincipalType.ROLE);
-    const invalidPublicGrant =
-      req.body?.public === true &&
-      req.body.publicAccessRoleId !== AccessRoleIds.ARTIFACT_APP_VIEWER;
 
-    if (invalidGrant || invalidPublicGrant) {
+    if (invalidGrant) {
       res.status(400).json({
         error: 'Bad Request',
         message: 'Artifact Apps can only be shared with viewer access',
+      });
+      return;
+    }
+
+    if (req.body?.public === true) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'Artifact Apps cannot be shared publicly',
       });
       return;
     }

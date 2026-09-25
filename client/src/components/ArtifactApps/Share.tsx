@@ -1,5 +1,4 @@
 import {
-  SystemRoles,
   Permissions,
   ResourceType,
   PermissionBits,
@@ -14,27 +13,23 @@ import { useAuthContext, useHasAccess } from '~/hooks';
 export function canShareArtifactApp({
   app,
   userId,
-  userRole,
   hasAccessToShare,
   canViewUsers,
   canViewGroups,
-  canSharePublic,
 }: {
   app: TArtifactApp;
   userId?: string;
-  userRole?: string;
   hasAccessToShare: boolean;
   canViewUsers: boolean;
   canViewGroups: boolean;
-  canSharePublic: boolean;
 }): boolean {
   if (!hasAccessToShare || !app.id) {
     return false;
   }
-  if (!canViewUsers && !canViewGroups && !canSharePublic) {
+  if (!canViewUsers && !canViewGroups) {
     return false;
   }
-  if (app.createdBy === userId || userRole === SystemRoles.ADMIN) {
+  if (app.createdBy === userId) {
     return true;
   }
   return hasPermissions(app.permissionBits ?? 0, PermissionBits.SHARE);
@@ -54,18 +49,12 @@ export function useCanShareArtifactApp(app: TArtifactApp): boolean {
     permissionType: PermissionTypes.PEOPLE_PICKER,
     permission: Permissions.VIEW_GROUPS,
   });
-  const canSharePublic = useHasAccess({
-    permissionType: PermissionTypes.ARTIFACTS,
-    permission: Permissions.SHARE_PUBLIC,
-  });
   return canShareArtifactApp({
     app,
     userId: user?.id,
-    userRole: user?.role,
     hasAccessToShare,
     canViewUsers,
     canViewGroups,
-    canSharePublic,
   });
 }
 

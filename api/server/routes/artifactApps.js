@@ -4,13 +4,7 @@ const {
   createSourceConversationExistsCheck,
   generateCheckAccess,
 } = require('@librechat/api');
-const { ResourceCapabilityMap } = require('@librechat/data-schemas');
-const {
-  Permissions,
-  PermissionBits,
-  PermissionTypes,
-  ResourceType,
-} = require('librechat-data-provider');
+const { Permissions, PermissionBits, PermissionTypes } = require('librechat-data-provider');
 const {
   createArtifactAppWithVersion,
   syncArtifactAppWithVersion,
@@ -34,7 +28,6 @@ const {
   getConvo,
 } = require('~/models');
 const { requireJwtAuth, canAccessArtifactAppResource } = require('~/server/middleware');
-const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const {
   getResourcePermissionsMap,
   grantPermission,
@@ -79,8 +72,6 @@ const handlers = createArtifactAppHandlers({
   getResourcePermissionsMap,
   grantPermission,
   removeAllPermissions,
-  hasResourceManagementCapability: (user) =>
-    hasCapability(user, ResourceCapabilityMap[ResourceType.ARTIFACT_APP]),
   recordAuditEntry,
   sourceConversationExists: createSourceConversationExistsCheck(getConvo),
   getConfig: (req) => req.config?.artifactApps,
