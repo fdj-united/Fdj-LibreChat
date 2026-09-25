@@ -438,6 +438,12 @@ export class AccessControlService {
       if (!resourceId || !Types.ObjectId.isValid(resourceId)) {
         throw new Error(`Invalid resource ID: ${resourceId}`);
       }
+      if (
+        resourceType === ResourceType.ARTIFACT_APP &&
+        updatedPrincipals.some((principal) => principal.type === PrincipalType.PUBLIC)
+      ) {
+        throw new Error('Artifact Apps cannot be shared publicly');
+      }
 
       if (!localSession && supportsTransactions) {
         localSession = await this._mongoose.startSession();

@@ -26,6 +26,7 @@ const canAccessArtifactAppResource = (options) => {
     requiredPermission,
     resourceIdParam,
     idResolver: (artifactAppId) => resolveArtifactAppId({ artifactAppId }),
+    allowCapabilityBypass: false,
   });
 };
 

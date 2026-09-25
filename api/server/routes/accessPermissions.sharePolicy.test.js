@@ -75,6 +75,7 @@ describe('Access permissions share policy', () => {
         resourceType: ResourceType.ARTIFACT_APP,
         requiredPermission: PermissionBits.SHARE,
         resourceIdParam: 'resourceId',
+        allowCapabilityBypass: false,
       },
     },
     {
@@ -401,6 +402,23 @@ describe('Access permissions share policy', () => {
 
     expect(response.status).toBe(200);
     expect(updateResourcePermissions).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks public Artifact App viewer grants', async () => {
+    allowArtifactSharing();
+
+    const response = await request(app)
+      .put(`/api/permissions/${ResourceType.ARTIFACT_APP}/${resourceId}`)
+      .send({
+        updated: [],
+        removed: [],
+        public: true,
+        publicAccessRoleId: AccessRoleIds.ARTIFACT_APP_VIEWER,
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe('Artifact Apps cannot be shared publicly');
+    expect(updateResourcePermissions).not.toHaveBeenCalled();
   });
 
   it('blocks Artifact App role-wide grants even when public sharing is allowed', async () => {

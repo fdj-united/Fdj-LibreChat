@@ -74,6 +74,22 @@ describe('AccessControlService', () => {
   const grantedById = new Types.ObjectId();
 
   describe('bulkUpdateResourcePermissions', () => {
+    test('rejects public permission grants for artifact apps', async () => {
+      await expect(
+        service.bulkUpdateResourcePermissions({
+          resourceType: ResourceType.ARTIFACT_APP,
+          resourceId,
+          updatedPrincipals: [
+            {
+              type: PrincipalType.PUBLIC,
+              accessRoleId: AccessRoleIds.ARTIFACT_APP_VIEWER,
+            },
+          ],
+          grantedBy: grantedById,
+        }),
+      ).rejects.toThrow('Artifact Apps cannot be shared publicly');
+    });
+
     test('records only the revocation that actually deleted Insights access', async () => {
       await service.bulkUpdateResourcePermissions({
         resourceType: ResourceType.AGENT,

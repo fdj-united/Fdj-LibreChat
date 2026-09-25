@@ -29,6 +29,18 @@ const validateResourceType = (resourceType) => {
   }
 };
 
+const getResourcePrincipals = async ({ userId, role, idOnTheSource, resourceType }) => {
+  const principals = await db.getUserPrincipals({ userId, role, idOnTheSource });
+  if (resourceType !== ResourceType.ARTIFACT_APP) {
+    return principals;
+  }
+  return principals.filter(
+    (principal) =>
+      principal.principalType === PrincipalType.USER ||
+      principal.principalType === PrincipalType.GROUP,
+  );
+};
+
 const ensureLocalUserPrincipalExists = async (principalId) => {
   const user = await db.findUser({ _id: principalId }, '_id');
   if (!user) {
@@ -99,6 +111,10 @@ const grantPermission = async ({
 
     validateResourceType(resourceType);
 
+    if (resourceType === ResourceType.ARTIFACT_APP && principalType === PrincipalType.PUBLIC) {
+      throw new Error('Artifact Apps cannot be shared publicly');
+    }
+
     // Get the role to determine permission bits
     const role = await db.findRoleByIdentifier(accessRoleId);
     if (!role) {
@@ -151,7 +167,7 @@ const checkPermission = async ({ userId, role, resourceType, resourceId, require
 
     validateResourceType(resourceType);
 
-    const principals = await db.getUserPrincipals({ userId, role });
+    const principals = await getResourcePrincipals({ userId, role, resourceType });
 
     if (principals.length === 0) {
       return false;
@@ -180,7 +196,7 @@ const getEffectivePermissions = async ({ userId, role, resourceType, resourceId 
   try {
     validateResourceType(resourceType);
 
-    const principals = await db.getUserPrincipals({ userId, role });
+    const principals = await getResourcePrincipals({ userId, role, resourceType });
 
     if (principals.length === 0) {
       return 0;
@@ -216,7 +232,7 @@ const getResourcePermissionsMap = async ({ userId, role, resourceType, resourceI
 
   try {
     // Get user principals (user + groups + public)
-    const principals = await db.getUserPrincipals({ userId, role });
+    const principals = await getResourcePrincipals({ userId, role, resourceType });
 
     // Use batch method from aclEntry
     const permissionsMap = await db.getEffectivePermissionsForResources(
@@ -262,7 +278,12 @@ const findAccessibleResources = async ({
     validateResourceType(resourceType);
 
     // Get all principals for the user (user + groups + public)
-    const principalsList = await db.getUserPrincipals({ userId, role, idOnTheSource });
+    const principalsList = await getResourcePrincipals({
+      userId,
+      role,
+      idOnTheSource,
+      resourceType,
+    });
 
     if (principalsList.length === 0) {
       return [];
@@ -292,6 +313,10 @@ const findPubliclyAccessibleResources = async ({ resourceType, requiredPermissio
     }
 
     validateResourceType(resourceType);
+
+    if (resourceType === ResourceType.ARTIFACT_APP) {
+      return [];
+    }
 
     return await db.findPublicResourceIds(resourceType, requiredPermissions);
   } catch (error) {
@@ -669,6 +694,10 @@ const hasPublicPermission = async ({ resourceType, resourceId, requiredPermissio
     }
 
     validateResourceType(resourceType);
+
+    if (resourceType === ResourceType.ARTIFACT_APP) {
+      return false;
+    }
 
     // Use public principal to check permissions
     const publicPrincipal = [{ principalType: PrincipalType.PUBLIC }];
