@@ -95,7 +95,8 @@ export default function GenericGrantAccessDialog({
   const { showToast } = useToastContext();
   const [isCopying, setIsCopying] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(defaultOpen);
-  const canSharePublic = useCanSharePublic(resourceType);
+  const hasPublicShareAccess = useCanSharePublic(resourceType);
+  const canSharePublic = resourceType !== ResourceType.ARTIFACT_APP && hasPublicShareAccess;
   const { hasPeoplePickerAccess, peoplePickerTypeFilter } = usePeoplePickerPermissions();
   const peoplePickerTypes = useMemo(
     () => peoplePickerTypesForResource(resourceType, peoplePickerTypeFilter),
@@ -298,8 +299,7 @@ export default function GenericGrantAccessDialog({
   // Validation and calculated values
   const totalCurrentShares =
     resourceType === ResourceType.ARTIFACT_APP
-      ? currentShares.filter((share) => share.accessRoleId !== config.defaultOwnerRoleId).length +
-        (currentIsPublic ? 1 : 0)
+      ? currentShares.filter((share) => share.accessRoleId !== config.defaultOwnerRoleId).length
       : currentShares.length + (currentIsPublic ? 1 : 0);
 
   // Check if there's at least one owner (user, group, or public with owner role)
