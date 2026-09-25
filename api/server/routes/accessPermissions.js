@@ -117,6 +117,7 @@ const checkResourcePermissionAccess = (requiredPermission) =>
           resourceType: ResourceType.ARTIFACT_APP,
           requiredPermission,
           resourceIdParam: 'resourceId',
+          allowCapabilityBypass: false,
         });
       } else {
         return res.status(400).json({
