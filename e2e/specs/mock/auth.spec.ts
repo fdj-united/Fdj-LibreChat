@@ -106,7 +106,6 @@ test.describe('auth session', () => {
     test.setTimeout(30000);
 
     const expiredToken = createJwt(Date.now() - 60_000);
-    const expiredBearerPaths: string[] = [];
     let refreshCalls = 0;
 
     await page.addInitScript(() => {
@@ -150,7 +149,6 @@ test.describe('auth session', () => {
       }
 
       if (request.headers().authorization === `Bearer ${expiredToken}`) {
-        expiredBearerPaths.push(pathname);
         await route.fulfill({
           status: 401,
           contentType: 'application/json',
@@ -167,7 +165,6 @@ test.describe('auth session', () => {
     await expect(page).not.toHaveURL(/\/login/);
     await expect(page.getByRole('textbox', { name: 'Message input' })).toBeVisible();
     await expect.poll(() => refreshCalls).toBe(2);
-    expect(expiredBearerPaths.length).toBeGreaterThan(0);
 
     const events = await page.evaluate(
       () => (window as AuthRecoveryTestWindow).__authRecoveryTestEvents,

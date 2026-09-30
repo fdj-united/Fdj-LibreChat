@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { NEW_CHAT_PATH, selectModelSpec, sendMessage } from './helpers';
+import { CONVERSATION_URL_PATTERN, NEW_CHAT_PATH, selectModelSpec, sendMessage } from './helpers';
 
 const ICON_SPEC_LABEL = 'E2E Icon Spec';
 const ICON_SPEC_URL = '/assets/openai.svg';
@@ -22,7 +22,7 @@ async function openIconSpecChat(page: Page) {
 async function sendIconSpecStream(page: Page, label: string) {
   const response = await sendMessage(page, iconPrompt(label));
   expect(response.ok()).toBeTruthy();
-  await expect(page).toHaveURL(/\/c\/[0-9a-fA-F-]{36}(?:\?.*)?$/);
+  await expect(page).toHaveURL(CONVERSATION_URL_PATTERN);
 
   const reply = iconReplyPrefix(label);
   const message = assistantMessage(page, reply);

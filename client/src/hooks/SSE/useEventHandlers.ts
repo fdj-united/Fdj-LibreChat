@@ -8,6 +8,7 @@ import {
   Constants,
   EndpointURLs,
   ContentTypes,
+  dataService,
   tPresetSchema,
   tMessageSchema,
   tConvoUpdateSchema,
@@ -158,6 +159,40 @@ export const commitFinalMessages = ({
   queryClient.setQueryData<TMessage[]>([QueryKeys.messages, conversationId], messages);
   if (updateActiveView) {
     setMessages(messages);
+  }
+};
+
+/** Re-apply persisted messages after regenerate so sibling branches survive the scoped stream cache. */
+export const applyCanonicalMessagesAfterRegenerate = async ({
+  queryClient,
+  setMessages,
+  conversationId,
+  updateActiveView,
+}: {
+  queryClient: QueryClient;
+  setMessages: (messages: TMessage[]) => void;
+  conversationId: string;
+  updateActiveView: boolean;
+}): Promise<void> => {
+  try {
+    const serverMessages = await dataService.getMessagesByConvoId(conversationId);
+    if (!Array.isArray(serverMessages) || serverMessages.length === 0) {
+      return;
+    }
+
+    commitFinalMessages({
+      queryClient,
+      setMessages,
+      conversationId,
+      messages: serverMessages,
+      updateActiveView,
+    });
+  } catch (error) {
+    logger.warn(
+      'messages',
+      `Failed to apply canonical messages after regenerate for ${conversationId}`,
+      error,
+    );
   }
 };
 
@@ -866,6 +901,19 @@ export default function useEventHandlers({
           setFinalMessages(conversation.conversationId, finalMessages);
           const finalConversationId = conversation.conversationId;
           if (
+            isRegenerate &&
+            finalConversationId &&
+            !_isTemporary &&
+            finalConversationId !== Constants.NEW_CONVO &&
+            finalConversationId !== Constants.PENDING_CONVO
+          ) {
+            void applyCanonicalMessagesAfterRegenerate({
+              queryClient,
+              setMessages,
+              conversationId: finalConversationId,
+              updateActiveView: true,
+            });
+          } else if (
             finalConversationId &&
             shouldRefetchFinalMessages({
               activeConversation,

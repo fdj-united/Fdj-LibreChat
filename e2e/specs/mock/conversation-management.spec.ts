@@ -3,6 +3,7 @@ import type { Locator, Page } from '@playwright/test';
 import {
   MOCK_ENDPOINTS,
   NEW_CHAT_PATH,
+  CONVERSATION_URL_PATTERN,
   messagesView,
   replyPrompt,
   replyText,
@@ -54,9 +55,9 @@ test.describe('conversation management', () => {
     await openMockChat(page);
     const firstTurn = await sendAndExpectReply(page, firstLabel);
     const secondTurn = await sendAndExpectReply(page, secondLabel);
-    const conversationUrl = page.url();
+    const conversationPath = new URL(page.url()).pathname;
 
-    await expect(page).toHaveURL(/\/c\/[0-9a-fA-F-]{36}$/);
+    await expect(page).toHaveURL(CONVERSATION_URL_PATTERN);
     await expect(firstConversation(page)).toBeVisible();
 
     await page.goto(NEW_CHAT_PATH, { timeout: 10000 });
@@ -65,7 +66,7 @@ test.describe('conversation management', () => {
     await expect(messagesView(page).getByText(secondTurn.prompt)).toHaveCount(0);
 
     await firstConversation(page).click();
-    await expect(page).toHaveURL(conversationUrl);
+    await expect(page).toHaveURL((url) => url.pathname === conversationPath);
     await expect(messagesView(page).getByText(firstTurn.prompt)).toBeVisible();
     await expect(messagesView(page).getByText(firstTurn.reply)).toBeVisible();
     await expect(messagesView(page).getByText(secondTurn.prompt)).toBeVisible();

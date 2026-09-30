@@ -1,7 +1,13 @@
 import { expect, test } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 import type { User } from '../../types';
-import { MOCK_ENDPOINTS, NEW_CHAT_PATH, selectMockEndpoint, sendMessage } from './helpers';
+import {
+  MOCK_ENDPOINTS,
+  NEW_CHAT_PATH,
+  CONVERSATION_URL_PATTERN,
+  selectMockEndpoint,
+  sendMessage,
+} from './helpers';
 import { getSecondaryE2EUser } from '../../setup/users.mock';
 import cleanupUser from '../../setup/cleanupUser';
 
@@ -72,7 +78,7 @@ test.describe('user isolation', () => {
     await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
     await sendMessage(page, A_PRIVATE_MARKER);
     await expect(page.getByText(A_PRIVATE_MARKER)).toBeVisible();
-    await expect(page).toHaveURL(/\/c\/[0-9a-fA-F-]{36}$/);
+    await expect(page).toHaveURL(CONVERSATION_URL_PATTERN);
     const conversationAUrl = page.url();
 
     // User B in a fresh, unauthenticated context.

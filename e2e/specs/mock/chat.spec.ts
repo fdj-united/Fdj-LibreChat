@@ -4,6 +4,7 @@ import {
   isAgentsStream,
   MOCK_ENDPOINTS,
   NEW_CHAT_PATH,
+  CONVERSATION_URL_PATTERN,
   messagesView,
   mockReply,
   replyText,
@@ -101,7 +102,7 @@ test.describe('core chat loop', () => {
     await expect(userMessageTurn.locator('.agent-turn')).toHaveCount(0);
     await expect(mockReply(page)).toBeVisible();
 
-    await expect(page).toHaveURL(/\/c\/[0-9a-fA-F-]{36}$/);
+    await expect(page).toHaveURL(CONVERSATION_URL_PATTERN);
     const conversationUrl = page.url();
 
     await expect(page.getByTestId('convo-item').first()).toBeVisible();
@@ -345,7 +346,7 @@ test.describe('core chat loop', () => {
     ).toBeVisible();
     await expect(fileChip).toBeVisible();
 
-    await expect(page).toHaveURL(/\/c\/[0-9a-fA-F-]{36}$/);
+    await expect(page).toHaveURL(CONVERSATION_URL_PATTERN);
     const conversationUrl = page.url();
     await page.reload({ timeout: 10000 });
     await expect(page).toHaveURL(conversationUrl);

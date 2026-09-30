@@ -4,6 +4,7 @@ import {
   isAgentGenerationStart,
   MOCK_ENDPOINTS,
   NEW_CHAT_PATH,
+  CONVERSATION_URL_PATTERN,
   fetchJson,
   getAccessToken,
   selectMockEndpoint,
@@ -511,7 +512,7 @@ async function submitMessageExpectingGenerationFailure(
 }
 
 async function conversationIdFromPage(page: Page): Promise<string> {
-  await expect(page).toHaveURL(/\/c\/(?!new)[0-9a-fA-F-]{36}$/);
+  await expect(page).toHaveURL(CONVERSATION_URL_PATTERN);
   const id = new URL(page.url()).pathname.split('/').pop();
   if (!id) {
     throw new Error(`Could not parse conversation id from ${page.url()}`);
@@ -766,7 +767,7 @@ test.describe('message tree stream operations', () => {
     if (!forkedConversationId) {
       throw new Error('Expected fork response to include a conversation id');
     }
-    await expect(page).toHaveURL(new RegExp(`/c/${forkedConversationId}$`));
+    await expect(page).toHaveURL(new RegExp(`/c/${forkedConversationId}(?:\\?.*)?$`));
 
     messages = fork.messages;
     expectNoFoldedMessages(messages);

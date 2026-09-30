@@ -14,6 +14,9 @@ export type MockEndpoint = { label: string; model: string };
 
 export const NEW_CHAT_PATH = '/c/new';
 
+/** Conversation UUID path; optional query (e.g. `?spec=...`) may remain after model selection. */
+export const CONVERSATION_URL_PATTERN = /\/c\/(?!new)[0-9a-fA-F-]{36}(?:\?.*)?$/;
+
 type RefreshTokenBody = {
   token?: string;
 };

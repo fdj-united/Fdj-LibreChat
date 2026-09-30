@@ -6,6 +6,7 @@ import {
   MOCK_ENDPOINTS,
   MOCK_REPLY_TEXT,
   NEW_CHAT_PATH,
+  CONVERSATION_URL_PATTERN,
   mockReply,
   selectMockEndpoint,
   sendMessage,
@@ -88,7 +89,7 @@ test.describe('shared links', () => {
     await expect(page.getByText(userMessage)).toBeVisible();
     await expect(mockReply(page)).toBeVisible();
 
-    await expect(page).toHaveURL(/\/c\/(?!new)[0-9a-fA-F-]{36}$/);
+    await expect(page).toHaveURL(CONVERSATION_URL_PATTERN);
     const conversationUrl = new URL(page.url());
     const conversationId = conversationUrl.pathname.split('/').pop();
     if (!conversationId) {
