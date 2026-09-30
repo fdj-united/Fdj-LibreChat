@@ -132,7 +132,6 @@ function NotificationCard({
             {notification.title}
           </span>
         )}
-
       </div>
       <p className="line-clamp-7 text-xs text-text-secondary">{notification.message}</p>
       <div className="mt-1 flex items-end justify-between gap-2">
@@ -335,7 +334,6 @@ export default function HeaderBell({
     const url = new URL(link, window.location.origin);
     window.open(url.href, '_blank', 'noopener,noreferrer');
   }, []);
-
 
   return (
     <div className={className}>
