@@ -37,15 +37,6 @@ jest.mock('@librechat/client', () => ({
   TooltipAnchor: ({ render }: { render: React.ReactElement }) => render,
 }));
 
-const mockSetActive = jest.fn();
-
-jest.mock('~/Providers', () => ({
-  useActivePanel: () => ({
-    active: 'conversations',
-    setActive: mockSetActive,
-  }),
-}));
-
 import HeaderBell from '../HeaderBell';
 
 const unreadNotification: TNotification = {
@@ -160,7 +151,8 @@ describe('HeaderBell', () => {
     });
   });
 
-  it('opens agent review when a notification link is clicked', () => {
+  it('opens notification links in a new tab', () => {
+    const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null);
     const verificationNotification: TNotification = {
       ...unreadNotification,
       id: 'n-verification',
@@ -187,6 +179,37 @@ describe('HeaderBell', () => {
     fireEvent.click(getBellButton());
     fireEvent.click(screen.getByRole('button', { name: 'New comment on Test Agent' }));
 
-    expect(mockSetActive).toHaveBeenCalledWith('review-agent');
+    expect(openSpy).toHaveBeenCalledWith(
+      `${window.location.origin}/c/new?agent_id=agent_abc&panel=review-agent`,
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('exposes the full title as a tooltip on truncated notification titles', () => {
+    const longTitle = 'A very long notification title that should be truncated in the card layout';
+    const longTitleNotification: TNotification = {
+      ...unreadNotification,
+      title: longTitle,
+    };
+
+    mockUseNotificationsQuery.mockImplementation((params: { unreadOnly?: boolean }) => {
+      if (params?.unreadOnly === true) {
+        return {
+          data: { notifications: [longTitleNotification], nextCursor: null, hasNextPage: false },
+          isLoading: false,
+        };
+      }
+      return {
+        data: { notifications: [longTitleNotification], nextCursor: null, hasNextPage: false },
+        isLoading: false,
+      };
+    });
+
+    renderBell();
+    fireEvent.click(getBellButton());
+
+    expect(screen.getByText(longTitle)).toHaveAttribute('title', longTitle);
   });
 });
