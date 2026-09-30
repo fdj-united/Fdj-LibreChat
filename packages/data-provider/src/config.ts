@@ -4719,6 +4719,7 @@ export const specialVariables = {
   current_user: true,
   iso_datetime: true,
   current_datetime: true,
+  librechat_user_email: true,
   librechat_user_jobtitle: true,
   librechat_user_department: true,
   librechat_user_companyname: true,

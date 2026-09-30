@@ -430,14 +430,15 @@ export function findLastSeparatorIndex(text: string, separators = SEPARATORS): n
 }
 
 /**
- * Directory attributes exposed to prompts and agent instructions as `{{LIBRECHAT_USER_<FIELD>}}`.
+ * User attributes exposed to prompts and agent instructions as `{{LIBRECHAT_USER_<FIELD>}}`.
  *
  * Every entry must also be registered in `specialVariables`, otherwise prompt detection treats it
- * as a manual variable while this parser resolves it automatically. Identity fields such as name
- * and email are deliberately absent: `{{current_user}}` already covers the display name, and the
- * broader set in `@librechat/api` applies to MCP headers rather than prompts.
+ * as a manual variable while this parser resolves it automatically. The display name remains
+ * absent because `{{current_user}}` already covers it; the broader set in `@librechat/api` applies
+ * to MCP headers rather than prompts.
  */
 const DIRECTORY_PLACEHOLDER_FIELDS = [
+  'email',
   'jobTitle',
   'department',
   'companyName',
@@ -509,7 +510,8 @@ export function replaceSpecialVars({
 
   if (user && DIRECTORY_PLACEHOLDER_PREFIX.test(result)) {
     for (const [field, pattern] of DIRECTORY_PLACEHOLDER_PATTERNS) {
-      result = result.replace(pattern, user[field] ?? '');
+      const value = user[field] ?? '';
+      result = result.replace(pattern, () => value);
     }
   }
 
