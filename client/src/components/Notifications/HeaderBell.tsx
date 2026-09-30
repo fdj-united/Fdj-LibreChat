@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import * as Ariakit from '@ariakit/react';
-import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { Bell, BellDot, ExternalLink, Megaphone, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
@@ -17,8 +16,6 @@ import {
   useNotificationsQuery,
   useUnreadNotificationCount,
 } from '~/data-provider';
-import { REVIEW_AGENT_PANEL_ID } from '~/components/SidePanel/Review';
-import { useActivePanel } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 
@@ -114,8 +111,9 @@ function NotificationCard({
           <button
             type="button"
             id={titleId}
+            title={notification.title}
             className={cn(
-              'line-clamp-1 text-left text-sm text-text-primary underline-offset-2 hover:underline',
+              'line-clamp-2 text-left text-sm text-text-primary underline-offset-2 hover:underline',
               notification.read ? 'font-medium' : 'font-semibold',
             )}
             onClick={() => onOpenLink(notification)}
@@ -125,16 +123,18 @@ function NotificationCard({
         ) : (
           <span
             id={titleId}
+            title={notification.title}
             className={cn(
-              'line-clamp-1 text-sm text-text-primary',
+              'line-clamp-3 text-sm text-text-primary',
               notification.read ? 'font-medium' : 'font-semibold',
             )}
           >
             {notification.title}
           </span>
         )}
+
       </div>
-      <p className="line-clamp-2 text-xs text-text-secondary">{notification.message}</p>
+      <p className="line-clamp-7 text-xs text-text-secondary">{notification.message}</p>
       <div className="mt-1 flex items-end justify-between gap-2">
         <span className="text-xs text-text-secondary">{timestamp}</span>
         {!notification.read ? (
@@ -246,8 +246,6 @@ export default function HeaderBell({
   panelDirection?: 'up' | 'down';
 }) {
   const localize = useLocalize();
-  const navigate = useNavigate();
-  const { setActive } = useActivePanel();
   const cardIdPrefix = useId();
   const bellButtonRef = useRef<HTMLButtonElement>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -327,29 +325,17 @@ export default function HeaderBell({
     [localize, markReadMutation],
   );
 
-  const handleOpenLink = useCallback(
-    (notification: TNotification) => {
-      const link = notification.link;
-      if (!link) {
-        return;
-      }
+  const handleOpenLink = useCallback((notification: TNotification) => {
+    const link = notification.link;
+    if (!link) {
+      return;
+    }
 
-      setIsOpen(false);
-      if (link.startsWith('http://') || link.startsWith('https://')) {
-        window.location.assign(link);
-        return;
-      }
+    setIsOpen(false);
+    const url = new URL(link, window.location.origin);
+    window.open(url.href, '_blank', 'noopener,noreferrer');
+  }, []);
 
-      const url = new URL(link, window.location.origin);
-      const panel = url.searchParams.get('panel');
-      if (panel === REVIEW_AGENT_PANEL_ID) {
-        setActive(REVIEW_AGENT_PANEL_ID);
-      }
-
-      navigate(`${url.pathname}${url.search}`);
-    },
-    [navigate, setActive],
-  );
 
   return (
     <div className={className}>
