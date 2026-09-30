@@ -164,6 +164,7 @@ describe('replaceSpecialVars', () => {
     const directoryUser = {
       name: 'Test User',
       id: 'user123',
+      email: 'test.user@example.com',
       jobTitle: 'Staff Engineer',
       department: 'Platform',
       companyName: 'FDJ United',
@@ -174,12 +175,12 @@ describe('replaceSpecialVars', () => {
 
     test('should replace every directory placeholder with its value', () => {
       const result = replaceSpecialVars({
-        text: '{{LIBRECHAT_USER_JOBTITLE}} | {{LIBRECHAT_USER_DEPARTMENT}} | {{LIBRECHAT_USER_COMPANYNAME}} | {{LIBRECHAT_USER_OFFICELOCATION}} | {{LIBRECHAT_USER_MANAGERNAME}} | {{LIBRECHAT_USER_MANAGEREMAIL}}',
+        text: '{{LIBRECHAT_USER_EMAIL}} | {{LIBRECHAT_USER_JOBTITLE}} | {{LIBRECHAT_USER_DEPARTMENT}} | {{LIBRECHAT_USER_COMPANYNAME}} | {{LIBRECHAT_USER_OFFICELOCATION}} | {{LIBRECHAT_USER_MANAGERNAME}} | {{LIBRECHAT_USER_MANAGEREMAIL}}',
         user: directoryUser,
       });
 
       expect(result).toBe(
-        'Staff Engineer | Platform | FDJ United | Paris | Marie Dupont | marie.dupont@example.com',
+        'test.user@example.com | Staff Engineer | Platform | FDJ United | Paris | Marie Dupont | marie.dupont@example.com',
       );
     });
 
@@ -230,7 +231,7 @@ describe('replaceSpecialVars', () => {
         key.startsWith('librechat_user_'),
       );
 
-      expect(registered).toHaveLength(6);
+      expect(registered).toHaveLength(7);
 
       for (const key of registered) {
         const result = replaceSpecialVars({ text: `[{{${key}}}]`, user: directoryUser });
@@ -238,7 +239,7 @@ describe('replaceSpecialVars', () => {
       }
     });
 
-    test('should leave identity placeholders to manual handling in prompts', () => {
+    test('should resolve user email while leaving unsupported identity placeholders untouched', () => {
       const text =
         '{{LIBRECHAT_USER_NAME}} {{LIBRECHAT_USER_USERNAME}} {{LIBRECHAT_USER_EMAIL}} {{LIBRECHAT_USER_ROLE}}';
 
@@ -247,7 +248,18 @@ describe('replaceSpecialVars', () => {
         user: { ...directoryUser, username: 'testuser', email: 'me@example.com', role: 'admin' },
       });
 
-      expect(result).toBe(text);
+      expect(result).toBe(
+        '{{LIBRECHAT_USER_NAME}} {{LIBRECHAT_USER_USERNAME}} me@example.com {{LIBRECHAT_USER_ROLE}}',
+      );
+    });
+
+    test('should preserve literal dollar-sign sequences in user email', () => {
+      const result = replaceSpecialVars({
+        text: 'Email: {{LIBRECHAT_USER_EMAIL}}',
+        user: { ...directoryUser, email: 'finance$&ops@example.com' },
+      });
+
+      expect(result).toBe('Email: finance$&ops@example.com');
     });
   });
 });

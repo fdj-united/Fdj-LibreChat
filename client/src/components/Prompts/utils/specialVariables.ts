@@ -23,6 +23,7 @@ export const specialVariableIcons: Record<
   current_datetime: Clock,
   current_user: User,
   iso_datetime: Globe,
+  librechat_user_email: Mail,
   librechat_user_jobtitle: Briefcase,
   librechat_user_department: Users,
   librechat_user_companyname: Building2,
