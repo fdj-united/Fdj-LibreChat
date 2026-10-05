@@ -1,12 +1,12 @@
 import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { matchModelName, findMatchingPattern } from './test-helpers';
-import { createModels } from '~/models';
+import type { IBalance } from '..';
+import type { ITransaction } from '~/schema/transaction';
 import { createTxMethods, tokenValues, premiumTokenValues } from './tx';
+import { matchModelName, findMatchingPattern } from './test-helpers';
 import { createTransactionMethods } from './transaction';
 import { createSpendTokensMethods } from './spendTokens';
-import type { ITransaction } from '~/schema/transaction';
-import type { IBalance } from '..';
+import { createModels } from '~/models';
 
 jest.mock('~/config/winston', () => ({
   error: jest.fn(),
@@ -52,6 +52,7 @@ describe('spendTokens', () => {
     const spendMethods = createSpendTokensMethods(mongoose, {
       createTransaction: transactionMethods.createTransaction,
       createStructuredTransaction: transactionMethods.createStructuredTransaction,
+      maybeApplyAutoRefill: transactionMethods.maybeApplyAutoRefill,
     });
     spendTokens = spendMethods.spendTokens;
     spendStructuredTokens = spendMethods.spendStructuredTokens;
@@ -634,80 +635,53 @@ describe('spendTokens', () => {
     expect(Math.abs(totalTokenValue)).toBeCloseTo(actualSpend, -3); // Allow for larger differences
   });
 
-  // Add this new test case
-  it('should handle multiple concurrent balance increases correctly', async () => {
-    // Start with zero balance
+  // Auto-refill claims are tied to a specific eligibility *window*, not an
+  // arbitrary increment — unlike ordinary concurrent spends/credits, which
+  // should all independently land, concurrent auto-refill attempts for the
+  // same (still-unclaimed) window must only let exactly one through. See
+  // `createAutoRefillTransaction`'s own doc comment in transaction.ts.
+  it('only lets one of many concurrent auto-refill attempts for the same window land', async () => {
     const initialBalance = 0;
+    // The Balance schema defaults `lastRefill` to `Date.now` on creation —
+    // set it explicitly so every concurrent attempt below reads the exact
+    // same value and the race is genuinely over one shared window, not an
+    // artifact of each attempt seeing a different "now".
+    const overdueLastRefill = new Date('2020-01-01T00:00:00.000Z');
     await Balance.create({
       user: userId,
       tokenCredits: initialBalance,
+      lastRefill: overdueLastRefill,
     });
 
-    const numberOfRefills = 25;
+    const numberOfAttempts = 25;
     const refillAmount = 1000;
 
-    const promises: Promise<unknown>[] = [];
-    for (let i = 0; i < numberOfRefills; i++) {
-      promises.push(
-        createAutoRefillTransaction({
+    const promises = Array.from({ length: numberOfAttempts }, () =>
+      createAutoRefillTransaction(
+        {
           user: userId,
           tokenType: 'credits',
           context: 'concurrent-refill-test',
           rawAmount: refillAmount,
           balance: { enabled: true },
-        }),
-      );
-    }
+        },
+        overdueLastRefill,
+      ),
+    );
 
-    // Wait for all refill transactions to complete
     const results = await Promise.all(promises);
 
-    // Verify final balance
+    const applied = results.filter((result) => result != null);
+    expect(applied).toHaveLength(1);
+
     const finalBalance = await Balance.findOne({ user: userId });
-    expect(finalBalance).toBeDefined();
+    expect(finalBalance!.tokenCredits).toBe(initialBalance + refillAmount);
 
-    // The final balance should be the initial balance plus the sum of all refills
-    const expectedFinalBalance = initialBalance + numberOfRefills * refillAmount;
-
-    console.log('Initial balance (Increase Test):', initialBalance);
-    console.log(`Performed ${numberOfRefills} refills of ${refillAmount} each.`);
-    console.log('Expected final balance (Increase Test):', expectedFinalBalance);
-    console.log('Actual final balance (Increase Test):', finalBalance!.tokenCredits);
-
-    // Use toBeCloseTo for safety, though toBe should work for integer math
-    expect(finalBalance!.tokenCredits).toBeCloseTo(expectedFinalBalance, 0);
-
-    // Verify all transactions were created
     const transactions = await Transaction.find({
       user: userId,
       context: 'concurrent-refill-test',
     });
-
-    // We should have one transaction for each refill attempt
-    expect(transactions.length).toBe(numberOfRefills);
-
-    // Optional: Verify the sum of increments from the results matches the balance change
-    const totalIncrementReported = results.reduce((sum: number, result) => {
-      // Assuming createAutoRefillTransaction returns an object with the increment amount
-      // Adjust this based on the actual return structure.
-      // Let's assume it returns { balance: newBalance, transaction: { rawAmount: ... } }
-      // Or perhaps we check the transaction.rawAmount directly
-      const r = result as Record<string, Record<string, unknown>>;
-      return sum + ((r?.transaction?.rawAmount as number) || 0);
-    }, 0);
-    console.log('Total increment reported by results:', totalIncrementReported);
-    expect(totalIncrementReported).toBe(expectedFinalBalance - initialBalance);
-
-    // Optional: Check the sum of tokenValue from saved transactions
-    let totalTokenValueFromDb = 0;
-    transactions.forEach((tx) => {
-      // For refills, rawAmount is positive, and tokenValue might be calculated based on it
-      // Let's assume tokenValue directly reflects the increment for simplicity here
-      // If calculation is involved, adjust accordingly
-      totalTokenValueFromDb += tx.rawAmount!; // Or tx.tokenValue if that holds the increment
-    });
-    console.log('Total rawAmount from DB transactions:', totalTokenValueFromDb);
-    expect(totalTokenValueFromDb).toBeCloseTo(expectedFinalBalance - initialBalance, 0);
+    expect(transactions).toHaveLength(1);
   });
 
   it('should create structured transactions for both prompt and completion tokens', async () => {
@@ -1219,6 +1193,148 @@ describe('spendTokens', () => {
 
       const standardRate = tokenValues[model].completion;
       expect(completionTx?.rate).toBe(standardRate);
+    });
+  });
+
+  describe('auto-refill after an exhausting spend', () => {
+    // The pre-flight balance gate (`checkBalanceRecord` in packages/api)
+    // only ever re-checks refill eligibility against the *prompt*-token
+    // cost, before generation starts. These tests cover the gap that left
+    // open: the *completion*-token deduction below is what actually lands
+    // the user at zero, and it must catch up an already-due refill itself
+    // rather than leaving the user stuck until their next message.
+
+    it('applies a due auto-refill when a completion-token spend exhausts the balance', async () => {
+      await Balance.create({
+        user: userId,
+        tokenCredits: 50,
+        autoRefillEnabled: true,
+        refillAmount: 1000,
+        refillIntervalValue: 1,
+        refillIntervalUnit: 'hours',
+        lastRefill: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      });
+
+      const txData = {
+        user: userId,
+        conversationId: 'test-convo-autorefill',
+        model: 'gpt-4',
+        context: 'test',
+        balance: { enabled: true },
+      };
+
+      await spendTokens(txData, { promptTokens: 1, completionTokens: 100 });
+
+      const balance = await Balance.findOne({ user: userId });
+      expect(balance).toBeDefined();
+      // Not stuck at zero — the overdue refill applied as part of this spend.
+      expect(balance!.tokenCredits).toBeGreaterThan(0);
+      expect(balance!.lastRefill?.getTime()).toBeGreaterThan(Date.now() - 5000);
+    });
+
+    it('does not refill when auto-refill is not yet eligible', async () => {
+      await Balance.create({
+        user: userId,
+        tokenCredits: 50,
+        autoRefillEnabled: true,
+        refillAmount: 1000,
+        refillIntervalValue: 1,
+        refillIntervalUnit: 'hours',
+        lastRefill: new Date(),
+      });
+
+      const txData = {
+        user: userId,
+        conversationId: 'test-convo-not-eligible',
+        model: 'gpt-4',
+        context: 'test',
+        balance: { enabled: true },
+      };
+
+      await spendTokens(txData, { promptTokens: 1, completionTokens: 100 });
+
+      const balance = await Balance.findOne({ user: userId });
+      expect(balance!.tokenCredits).toBe(0);
+    });
+
+    it('does not refill when auto-refill is disabled', async () => {
+      await Balance.create({
+        user: userId,
+        tokenCredits: 50,
+        autoRefillEnabled: false,
+        refillAmount: 1000,
+        refillIntervalValue: 1,
+        refillIntervalUnit: 'hours',
+        lastRefill: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      });
+
+      const txData = {
+        user: userId,
+        conversationId: 'test-convo-disabled',
+        model: 'gpt-4',
+        context: 'test',
+        balance: { enabled: true },
+      };
+
+      await spendTokens(txData, { promptTokens: 1, completionTokens: 100 });
+
+      const balance = await Balance.findOne({ user: userId });
+      expect(balance!.tokenCredits).toBe(0);
+    });
+
+    it('does not refill a balance that is still positive after the spend', async () => {
+      await Balance.create({
+        user: userId,
+        tokenCredits: 1_000_000,
+        autoRefillEnabled: true,
+        refillAmount: 1000,
+        refillIntervalValue: 1,
+        refillIntervalUnit: 'hours',
+        lastRefill: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      });
+
+      const txData = {
+        user: userId,
+        conversationId: 'test-convo-still-positive',
+        model: 'gpt-4',
+        context: 'test',
+        balance: { enabled: true },
+      };
+
+      await spendTokens(txData, { promptTokens: 1, completionTokens: 100 });
+
+      const balance = await Balance.findOne({ user: userId });
+      // Only the real spend applied — no refill was due to trigger.
+      expect(balance!.tokenCredits).toBeLessThan(1_000_000);
+      expect(balance!.tokenCredits).toBeGreaterThan(1_000_000 - 10_000);
+    });
+
+    it('applies the refill for spendStructuredTokens too', async () => {
+      await Balance.create({
+        user: userId,
+        tokenCredits: 50,
+        autoRefillEnabled: true,
+        refillAmount: 1000,
+        refillIntervalValue: 1,
+        refillIntervalUnit: 'hours',
+        lastRefill: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      });
+
+      const txData = {
+        user: userId,
+        conversationId: 'test-convo-structured-autorefill',
+        model: 'claude-3-5-sonnet',
+        context: 'test',
+        balance: { enabled: true },
+      };
+
+      await spendStructuredTokens(txData, {
+        promptTokens: { input: 1, write: 0, read: 0 },
+        completionTokens: 500,
+      });
+
+      const balance = await Balance.findOne({ user: userId });
+      expect(balance!.tokenCredits).toBeGreaterThan(0);
     });
   });
 });

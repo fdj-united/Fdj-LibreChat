@@ -41,6 +41,23 @@ const balanceSchema: Schema<t.IBalance> = new Schema<t.IBalance>({
     type: String,
     index: true,
   },
+  // Bounded ring buffer of recently applied admin-credit idempotency keys.
+  // See `applyIdempotentCredit` in methods/transaction.ts.
+  recentIdempotencyKeys: {
+    type: [String],
+    default: undefined,
+  },
 });
+
+/**
+ * Exactly one Balance document per user per tenant. Without this, concurrent
+ * "first ever credit" upserts (in `updateBalance`'s and `applyIdempotentCredit`'s
+ * lazy-create branch) can each independently decide no document exists yet and
+ * insert their own — see `migrations/balanceIndexes.ts` for the repair migration
+ * this depends on for already-populated deployments. That migration refuses to
+ * build this index at all while any duplicate group can't be safely merged, so
+ * it's never created over data that would violate it.
+ */
+balanceSchema.index({ user: 1, tenantId: 1 }, { unique: true });
 
 export default balanceSchema;
