@@ -263,4 +263,115 @@ describe('checkBalance', () => {
       );
     });
   });
+
+  describe('auto-refill', () => {
+    const overdueLastRefill = new Date('2026-01-01T00:00:00.000Z');
+
+    it("passes the record's current lastRefill through as expectedLastRefill, for an atomic claim", async () => {
+      const createAutoRefillTransaction = jest.fn().mockResolvedValue({ balance: 1000 });
+      const deps = createMockDeps({
+        findBalanceByUser: jest.fn().mockResolvedValue({
+          tokenCredits: 0,
+          autoRefillEnabled: true,
+          refillAmount: 1000,
+          refillIntervalValue: 1,
+          refillIntervalUnit: 'days',
+          lastRefill: overdueLastRefill,
+        }),
+        createAutoRefillTransaction,
+      });
+
+      await checkBalance({ req, res, txData: { ...baseTxData, amount: 10 } }, deps);
+
+      expect(createAutoRefillTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ user: 'user-1', rawAmount: 1000 }),
+        overdueLastRefill,
+      );
+    });
+
+    it('uses the refilled balance when the claim succeeds', async () => {
+      const deps = createMockDeps({
+        findBalanceByUser: jest.fn().mockResolvedValue({
+          tokenCredits: 0,
+          autoRefillEnabled: true,
+          refillAmount: 1000,
+          refillIntervalValue: 1,
+          refillIntervalUnit: 'days',
+          lastRefill: overdueLastRefill,
+        }),
+        createAutoRefillTransaction: jest.fn().mockResolvedValue({ balance: 1000 }),
+      });
+
+      const result = await checkBalance({ req, res, txData: { ...baseTxData, amount: 10 } }, deps);
+
+      expect(result).toBe(true);
+    });
+
+    it('re-reads the balance instead of trusting the stale pre-refill value when the claim is lost to a concurrent caller', async () => {
+      // `createAutoRefillTransaction` returning `undefined` means another
+      // caller already won the race for this exact refill window — the
+      // real balance is now whatever that caller left it at, not the 0
+      // this request originally read.
+      const findBalanceByUser = jest
+        .fn()
+        .mockResolvedValueOnce({
+          tokenCredits: 0,
+          autoRefillEnabled: true,
+          refillAmount: 1000,
+          refillIntervalValue: 1,
+          refillIntervalUnit: 'days',
+          lastRefill: overdueLastRefill,
+        })
+        .mockResolvedValueOnce({ tokenCredits: 1000 });
+      const deps = createMockDeps({
+        findBalanceByUser,
+        createAutoRefillTransaction: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const result = await checkBalance({ req, res, txData: { ...baseTxData, amount: 10 } }, deps);
+
+      expect(result).toBe(true);
+      expect(findBalanceByUser).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not attempt a refill when the balance is sufficient without one', async () => {
+      const createAutoRefillTransaction = jest.fn();
+      const deps = createMockDeps({
+        findBalanceByUser: jest.fn().mockResolvedValue({
+          tokenCredits: 1000,
+          autoRefillEnabled: true,
+          refillAmount: 1000,
+          refillIntervalValue: 1,
+          refillIntervalUnit: 'days',
+          lastRefill: overdueLastRefill,
+        }),
+        createAutoRefillTransaction,
+      });
+
+      await checkBalance({ req, res, txData: { ...baseTxData, amount: 10 } }, deps);
+
+      expect(createAutoRefillTransaction).not.toHaveBeenCalled();
+    });
+
+    it('does not attempt a refill when not yet eligible, even if the balance is exhausted', async () => {
+      const createAutoRefillTransaction = jest.fn();
+      const deps = createMockDeps({
+        findBalanceByUser: jest.fn().mockResolvedValue({
+          tokenCredits: 0,
+          autoRefillEnabled: true,
+          refillAmount: 1000,
+          refillIntervalValue: 1,
+          refillIntervalUnit: 'days',
+          lastRefill: new Date(),
+        }),
+        createAutoRefillTransaction,
+      });
+
+      await expect(
+        checkBalance({ req, res, txData: { ...baseTxData, amount: 10 } }, deps),
+      ).rejects.toThrow();
+
+      expect(createAutoRefillTransaction).not.toHaveBeenCalled();
+    });
+  });
 });

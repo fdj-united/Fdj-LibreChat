@@ -1,6 +1,7 @@
 import { createSkillSyncCredentialModel } from './skillSyncCredential';
 import { createSkillSyncStatusModel } from './skillSyncStatus';
 import { createConversationTagModel } from './conversationTag';
+import { createBalanceRequestModel } from './balanceRequest';
 import { createAgentCategoryModel } from './agentCategory';
 import { createNotificationModel } from './notification';
 import { createChatProjectModel } from './chatProject';
@@ -44,6 +45,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
   Token: ReturnType<typeof createTokenModel>;
   Session: ReturnType<typeof createSessionModel>;
   Balance: ReturnType<typeof createBalanceModel>;
+  BalanceRequest: ReturnType<typeof createBalanceRequestModel>;
   Conversation: ReturnType<typeof createConversationModel>;
   ChatProject: ReturnType<typeof createChatProjectModel>;
   Message: ReturnType<typeof createMessageModel>;
@@ -83,6 +85,7 @@ export function createModels(mongoose: typeof import('mongoose')): {
     Token: createTokenModel(mongoose),
     Session: createSessionModel(mongoose),
     Balance: createBalanceModel(mongoose),
+    BalanceRequest: createBalanceRequestModel(mongoose),
     Conversation: createConversationModel(mongoose),
     ChatProject: createChatProjectModel(mongoose),
     Message: createMessageModel(mongoose),

@@ -45,6 +45,8 @@ export const user = () => `${BASE_URL}/api/user`;
 
 export const balance = () => `${BASE_URL}/api/balance`;
 
+export const requestBalance = () => `${BASE_URL}/api/balance/request`;
+
 export const userPlugins = () => `${BASE_URL}/api/user/plugins`;
 
 export const deleteUser = () => `${BASE_URL}/api/user/delete`;

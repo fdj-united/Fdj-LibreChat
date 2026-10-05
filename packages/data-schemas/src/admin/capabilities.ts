@@ -39,6 +39,8 @@ export const SystemCapabilities = {
   MANAGE_SKILLS: 'manage:skills',
   READ_SHARED_LINKS: 'read:sharedlinks',
   MANAGE_SHARED_LINKS: 'manage:sharedlinks',
+  READ_BALANCES: 'read:balances',
+  MANAGE_BALANCES: 'manage:balances',
   /** Reserved — not yet enforced by any middleware. */
   READ_ASSISTANTS: 'read:assistants',
   MANAGE_ASSISTANTS: 'manage:assistants',
@@ -65,6 +67,7 @@ export const CapabilityImplications: Partial<Record<BaseSystemCapability, BaseSy
     [SystemCapabilities.MANAGE_SKILLS]: [SystemCapabilities.READ_SKILLS],
     [SystemCapabilities.MANAGE_SHARED_LINKS]: [SystemCapabilities.READ_SHARED_LINKS],
     [SystemCapabilities.MANAGE_ASSISTANTS]: [SystemCapabilities.READ_ASSISTANTS],
+    [SystemCapabilities.MANAGE_BALANCES]: [SystemCapabilities.READ_BALANCES],
   };
 
 // ---------------------------------------------------------------------------
@@ -234,6 +237,8 @@ export const CAPABILITY_CATEGORIES: CapabilityCategory[] = [
       SystemCapabilities.ACCESS_ADMIN,
       SystemCapabilities.READ_USAGE,
       SystemCapabilities.READ_AUDIT_LOG,
+      SystemCapabilities.MANAGE_BALANCES,
+      SystemCapabilities.READ_BALANCES,
     ],
   },
 ];

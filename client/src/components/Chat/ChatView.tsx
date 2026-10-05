@@ -14,11 +14,12 @@ import {
   useLocalize,
 } from '~/hooks';
 import { ChatContext, AddedChatContext, ChatFormProvider, useFileMapContext } from '~/Providers';
+import MCPConfirmationDialog from '~/components/MCP/MCPConfirmationDialog';
 import ConversationStarters from './Input/ConversationStarters';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import ProjectLandingChip from './ProjectLandingChip';
+import OutOfCreditNotice from './OutOfCreditNotice';
 import MessagesView from './Messages/MessagesView';
-import MCPConfirmationDialog from '~/components/MCP/MCPConfirmationDialog';
 import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
 import Landing from './Landing';
@@ -121,6 +122,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                   >
                     {isProjectLandingPage && project && <ProjectLandingChip project={project} />}
                     {isLandingPage && <ConversationStarters />}
+                    <OutOfCreditNotice />
                     <ChatForm index={index} placeholder={chatFormPlaceholder} />
                     {!isLandingPage && <Footer />}
                   </div>

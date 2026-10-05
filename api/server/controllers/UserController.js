@@ -358,6 +358,7 @@ const deleteUserController = async (req, res) => {
     await db.deleteTransactions({ user: user.id });
     await db.deleteUserKey({ userId: user.id, all: true });
     await db.deleteBalances({ user: user._id });
+    await db.deleteBalanceRequests({ user: user._id });
     await db.deletePresets(user.id);
     try {
       await db.deleteConvos(user.id);
