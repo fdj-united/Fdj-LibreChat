@@ -5,6 +5,7 @@ import type {
   BalanceReservationRenewal,
   BalanceReservationRelease,
   BalanceReservationResult,
+  IBalanceRequest,
   IBalancePendingRefill,
   IBalanceReservation,
   IBalanceUpdate,
@@ -12,7 +13,9 @@ import type {
   IBalance,
 } from '~/types';
 import type { ITransaction } from '~/schema/transaction';
+import { getTenantId, SYSTEM_TENANT_ID } from '~/config/tenantContext';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
+import { supportsTransactions } from '~/utils/transactions';
 import logger from '~/config/winston';
 
 const cancelRate = 1.15;
@@ -68,6 +71,8 @@ export interface TxData {
   readTokens?: number;
   balance?: { enabled?: boolean };
   transactions?: { enabled?: boolean };
+  /** Denormalized traceability field for admin-credit ledger rows. */
+  idempotencyKey?: string;
 }
 
 /** Return value from a successful transaction that also updates the balance */
@@ -85,6 +90,14 @@ export function createTransactionMethods(
   txMethods: {
     getMultiplier: (params: MultiplierParams) => number;
     getCacheMultiplier: (params: CacheMultiplierParams) => number | null;
+    findPendingBalanceRequestByUser?: (userId: string) => Promise<IBalanceRequest | null>;
+    claimBalanceRequestResolution?: (requestId: string, userId: string) => Promise<boolean>;
+    releaseBalanceRequestResolutionLease?: (requestId: string) => Promise<void>;
+    resolveBalanceRequestIfPending?: (
+      requestId: string,
+      userId: string,
+      fields: { resolvedAmount: number },
+    ) => Promise<unknown>;
   },
 ): {
   updateBalance: ({
@@ -101,11 +114,22 @@ export function createTransactionMethods(
     user: string,
     options?: { includeReservedCredits?: boolean },
   ) => Promise<IBalance | null>;
+  findBalancesByUsers: (userIds: string[]) => Promise<IBalance[]>;
   upsertBalanceFields: (
     user: string,
     fields: IBalanceUpdate,
     insertOnly?: IBalanceUpdate,
   ) => Promise<IBalance | null>;
+  applyIdempotentCredit: (params: {
+    user: string;
+    incrementValue: number;
+    idempotencyKey: string;
+    context: string;
+  }) => Promise<{ resultingBalance: number; applied: boolean; transactionId: string }>;
+  claimAuditRecording: (transactionId: string, leaseMs?: number) => Promise<boolean>;
+  markAuditRecorded: (transactionId: string) => Promise<void>;
+  releaseAuditRecordingLease: (transactionId: string) => Promise<void>;
+  ensureTransactionIdempotencyIndex: () => Promise<void>;
   getTransactions: (filter: FilterQuery<ITransaction>) => Promise<ITransaction[]>;
   deleteTransactions: (
     filter: FilterQuery<ITransaction>,
@@ -115,6 +139,19 @@ export function createTransactionMethods(
   reserveBalance: (request: BalanceReservationRequest) => Promise<BalanceReservationResult | null>;
   renewBalanceReservation: (params: BalanceReservationRenewal) => Promise<void>;
   releaseBalanceReservation: (params: BalanceReservationRelease) => Promise<void>;
+  createAutoRefillTransaction: (
+    txData: TxData,
+    expectedLastRefill: Date | null,
+  ) => Promise<
+    | {
+        rate: number;
+        user: string;
+        balance: number;
+        transaction: ITransaction;
+      }
+    | undefined
+  >;
+  maybeApplyAutoRefill: (user: string, currentBalance: number) => Promise<number>;
   createStructuredTransaction: (_txData: TxData) => Promise<TransactionResult | undefined>;
 } {
   /** Calculate and set the tokenValue for a transaction */
@@ -292,6 +329,243 @@ export function createTransactionMethods(
     );
   }
 
+  const MAX_RECENT_IDEMPOTENCY_KEYS = 50;
+
+  /** Creates the user's balance record without overwriting a concurrent credit. */
+  async function ensureBalanceDocumentExists(user: string): Promise<void> {
+    const Balance = mongoose.models.Balance as Model<IBalance>;
+    const tenantId = getTenantId();
+    const setStage: Record<string, unknown> = {
+      user: { $ifNull: ['$user', user] },
+      tokenCredits: { $ifNull: ['$tokenCredits', 0] },
+    };
+    if (tenantId && tenantId !== SYSTEM_TENANT_ID) {
+      setStage.tenantId = { $ifNull: ['$tenantId', tenantId] };
+    }
+    try {
+      await Balance.findOneAndUpdate({ user }, [{ $set: setStage }], { upsert: true });
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  /** Writes or recovers the unique ledger row for an idempotent credit. */
+  async function recordLedgerEntry({
+    user,
+    rawAmount,
+    idempotencyKey,
+    context,
+  }: {
+    user: string;
+    rawAmount: number;
+    idempotencyKey: string;
+    context: string;
+  }): Promise<string> {
+    const Transaction = mongoose.models.Transaction;
+    const transaction = new Transaction({
+      user,
+      tokenType: 'credits',
+      context,
+      rawAmount,
+      idempotencyKey,
+    });
+    calculateTokenValue(transaction);
+    try {
+      await transaction.save();
+      return (transaction._id as Types.ObjectId).toString();
+    } catch (error) {
+      if (isDuplicateKeyError(error)) {
+        const existing = await Transaction.findOne({ idempotencyKey }).lean<{
+          _id: Types.ObjectId;
+        }>();
+        if (existing) {
+          return existing._id.toString();
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** Applies the ledger row and balance increment in one replica-set transaction. */
+  async function applyIdempotentCreditTransactional({
+    user,
+    incrementValue,
+    idempotencyKey,
+    context,
+  }: {
+    user: string;
+    incrementValue: number;
+    idempotencyKey: string;
+    context: string;
+  }): Promise<{ resultingBalance: number; applied: boolean; transactionId: string }> {
+    const Balance = mongoose.models.Balance as Model<IBalance>;
+    const Transaction = mongoose.models.Transaction;
+    const session = await mongoose.startSession();
+    try {
+      let resultingBalance = 0;
+      let transactionId = '';
+      await session.withTransaction(async () => {
+        const transaction = new Transaction({
+          user,
+          tokenType: 'credits',
+          context,
+          rawAmount: incrementValue,
+          idempotencyKey,
+        });
+        calculateTokenValue(transaction);
+        await transaction.save({ session });
+        transactionId = (transaction._id as Types.ObjectId).toString();
+        const updated = await Balance.findOneAndUpdate(
+          { user },
+          { $inc: { tokenCredits: incrementValue } },
+          { new: true, upsert: true, session },
+        ).lean<IBalance>();
+        resultingBalance = updated!.tokenCredits;
+      });
+      return { resultingBalance, applied: true, transactionId };
+    } catch (error) {
+      if (isDuplicateKeyError(error)) {
+        const existing = await Transaction.findOne({ idempotencyKey }).lean<{
+          _id: Types.ObjectId;
+        }>();
+        if (existing) {
+          const balance = await Balance.findOne({ user }).sort(oldestFirst).lean<IBalance>();
+          return {
+            resultingBalance: balance?.tokenCredits ?? 0,
+            applied: false,
+            transactionId: existing._id.toString(),
+          };
+        }
+      }
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  /**
+   * Standalone-Mongo fallback: the balance and bounded key ring update atomically, followed by
+   * the durable ledger write. Replica sets use the fully transactional path above.
+   */
+  async function applyIdempotentCreditSingleDocument({
+    user,
+    incrementValue,
+    idempotencyKey,
+    context,
+  }: {
+    user: string;
+    incrementValue: number;
+    idempotencyKey: string;
+    context: string;
+  }): Promise<{ resultingBalance: number; applied: boolean; transactionId: string }> {
+    const Balance = mongoose.models.Balance as Model<IBalance>;
+    await ensureBalanceDocumentExists(user);
+    const updated = await Balance.findOneAndUpdate(
+      { user, recentIdempotencyKeys: { $ne: idempotencyKey } },
+      [
+        {
+          $set: {
+            tokenCredits: {
+              $max: [0, { $add: [{ $ifNull: ['$tokenCredits', 0] }, incrementValue] }],
+            },
+            recentIdempotencyKeys: {
+              $slice: [
+                { $concatArrays: [{ $ifNull: ['$recentIdempotencyKeys', []] }, [idempotencyKey]] },
+                -MAX_RECENT_IDEMPOTENCY_KEYS,
+              ],
+            },
+          },
+        },
+      ],
+      { new: true },
+    ).lean<IBalance>();
+    const existing = updated
+      ? null
+      : await Balance.findOne({ user }).sort(oldestFirst).lean<IBalance>();
+    const transactionId = await recordLedgerEntry({
+      user,
+      rawAmount: incrementValue,
+      idempotencyKey,
+      context,
+    });
+    return {
+      resultingBalance: updated?.tokenCredits ?? existing?.tokenCredits ?? 0,
+      applied: updated != null,
+      transactionId,
+    };
+  }
+
+  /** Applies an administrative credit once for the supplied durable idempotency key. */
+  async function applyIdempotentCredit({
+    user,
+    incrementValue,
+    idempotencyKey,
+    context,
+  }: {
+    user: string;
+    incrementValue: number;
+    idempotencyKey: string;
+    context: string;
+  }): Promise<{ resultingBalance: number; applied: boolean; transactionId: string }> {
+    const Balance = mongoose.models.Balance as Model<IBalance>;
+    const alreadyLedgered = await mongoose.models.Transaction.findOne({ idempotencyKey }).lean<{
+      _id: Types.ObjectId;
+    }>();
+    if (alreadyLedgered) {
+      const balance = await Balance.findOne({ user }).sort(oldestFirst).lean<IBalance>();
+      return {
+        resultingBalance: balance?.tokenCredits ?? 0,
+        applied: false,
+        transactionId: alreadyLedgered._id.toString(),
+      };
+    }
+    const params = { user, incrementValue, idempotencyKey, context };
+    return (await supportsTransactions(mongoose))
+      ? applyIdempotentCreditTransactional(params)
+      : applyIdempotentCreditSingleDocument(params);
+  }
+
+  const DEFAULT_AUDIT_RECORDING_LEASE_MS = 60_000;
+
+  async function claimAuditRecording(
+    transactionId: string,
+    leaseMs = DEFAULT_AUDIT_RECORDING_LEASE_MS,
+  ): Promise<boolean> {
+    const now = new Date();
+    const claimed = await mongoose.models.Transaction.findOneAndUpdate(
+      {
+        _id: transactionId,
+        auditRecorded: { $ne: true },
+        $or: [
+          { auditRecordingLeaseExpiresAt: { $exists: false } },
+          { auditRecordingLeaseExpiresAt: { $lte: now } },
+        ],
+      },
+      { $set: { auditRecordingLeaseExpiresAt: new Date(now.getTime() + leaseMs) } },
+    );
+    return claimed != null;
+  }
+
+  async function markAuditRecorded(transactionId: string): Promise<void> {
+    await mongoose.models.Transaction.updateOne(
+      { _id: transactionId },
+      { $set: { auditRecorded: true }, $unset: { auditRecordingLeaseExpiresAt: 1 } },
+    );
+  }
+
+  async function releaseAuditRecordingLease(transactionId: string): Promise<void> {
+    await mongoose.models.Transaction.updateOne(
+      { _id: transactionId },
+      { $unset: { auditRecordingLeaseExpiresAt: 1 } },
+    );
+  }
+
+  async function ensureTransactionIdempotencyIndex(): Promise<void> {
+    await mongoose.models.Transaction.createIndexes();
+  }
+
   function isAutoRefillDue(record: IBalance, now: Date): boolean {
     if (!record.autoRefillEnabled || !(record.refillAmount > 0)) {
       return false;
@@ -361,31 +635,57 @@ export function createTransactionMethods(
    */
   async function applyAutoRefill(record: IBalance, now: Date): Promise<boolean> {
     const Balance = mongoose.models.Balance as Model<IBalance>;
+    const userId = record.user.toString();
+    const pendingRequest = await txMethods.findPendingBalanceRequestByUser?.(userId);
+    let requestLeaseClaimed = false;
+    if (pendingRequest) {
+      requestLeaseClaimed =
+        (await txMethods.claimBalanceRequestResolution?.(pendingRequest._id.toString(), userId)) ??
+        false;
+      if (!requestLeaseClaimed) {
+        return false;
+      }
+    }
     const pendingRefill: IBalancePendingRefill = {
       transactionId: new mongoose.Types.ObjectId(),
       rawAmount: record.refillAmount,
     };
-    const result = await Balance.updateOne(
-      {
-        _id: record._id,
-        tokenCredits: record.tokenCredits ?? null,
-        reservedCredits: record.reservedCredits ?? null,
-        lastRefill: record.lastRefill ?? null,
-        pendingRefill: null,
-        autoRefillEnabled: record.autoRefillEnabled,
-        refillAmount: record.refillAmount,
-        refillIntervalValue: record.refillIntervalValue ?? null,
-        refillIntervalUnit: record.refillIntervalUnit ?? null,
-      },
-      {
-        $set: {
-          tokenCredits: Math.max(0, (record.tokenCredits ?? 0) + record.refillAmount),
-          lastRefill: now,
-          pendingRefill,
+    let result: Awaited<ReturnType<typeof Balance.updateOne>>;
+    try {
+      result = await Balance.updateOne(
+        {
+          _id: record._id,
+          tokenCredits: record.tokenCredits ?? null,
+          reservedCredits: record.reservedCredits ?? null,
+          lastRefill: record.lastRefill ?? null,
+          pendingRefill: null,
+          autoRefillEnabled: record.autoRefillEnabled,
+          refillAmount: record.refillAmount,
+          refillIntervalValue: record.refillIntervalValue ?? null,
+          refillIntervalUnit: record.refillIntervalUnit ?? null,
         },
-      },
-    );
+        {
+          $set: {
+            tokenCredits: Math.max(0, (record.tokenCredits ?? 0) + record.refillAmount),
+            lastRefill: now,
+            pendingRefill,
+          },
+        },
+      );
+    } catch (error) {
+      if (requestLeaseClaimed && pendingRequest) {
+        try {
+          await txMethods.releaseBalanceRequestResolutionLease?.(pendingRequest._id.toString());
+        } catch {
+          // The lease expires and remains recoverable.
+        }
+      }
+      throw error;
+    }
     if (result.matchedCount !== 1) {
+      if (requestLeaseClaimed && pendingRequest) {
+        await txMethods.releaseBalanceRequestResolutionLease?.(pendingRequest._id.toString());
+      }
       return false;
     }
     logger.debug('[Balance.reserve] Auto-refill applied', {
@@ -393,6 +693,18 @@ export function createTransactionMethods(
       rawAmount: record.refillAmount,
     });
     await settleAutoRefill(record._id, record.user, pendingRefill);
+    if (requestLeaseClaimed && pendingRequest) {
+      try {
+        await txMethods.resolveBalanceRequestIfPending?.(pendingRequest._id.toString(), userId, {
+          resolvedAmount: record.refillAmount,
+        });
+      } catch (error) {
+        logger.error(
+          '[Balance.reserve] Failed to resolve pending request after auto-refill',
+          error,
+        );
+      }
+    }
     return true;
   }
 
@@ -593,6 +905,133 @@ export function createTransactionMethods(
   }
 
   /**
+   * Atomically claims one auto-refill interval and records its ledger row. A pending top-up
+   * request is claimed with the same lease used by the admin path so both paths cannot credit the
+   * same shortage.
+   */
+  async function createAutoRefillTransaction(
+    txData: TxData,
+    expectedLastRefill: Date | null,
+  ): Promise<
+    | {
+        rate: number;
+        user: string;
+        balance: number;
+        transaction: ITransaction;
+      }
+    | undefined
+  > {
+    if (txData.rawAmount != null && isNaN(txData.rawAmount)) {
+      return;
+    }
+
+    const Balance = mongoose.models.Balance as Model<IBalance>;
+    const userId = txData.user.toString();
+    const pendingRequest = await txMethods.findPendingBalanceRequestByUser?.(userId);
+    let requestLeaseClaimed = false;
+    if (pendingRequest) {
+      requestLeaseClaimed =
+        (await txMethods.claimBalanceRequestResolution?.(pendingRequest._id.toString(), userId)) ??
+        false;
+      if (!requestLeaseClaimed) {
+        return;
+      }
+    }
+
+    const filter: FilterQuery<IBalance> =
+      expectedLastRefill == null
+        ? { user: userId, $or: [{ lastRefill: { $exists: false } }, { lastRefill: null }] }
+        : { user: userId, lastRefill: expectedLastRefill };
+    let claimed: IBalance | null;
+    try {
+      claimed = await Balance.findOneAndUpdate(
+        filter,
+        [
+          {
+            $set: {
+              tokenCredits: {
+                $max: [0, { $add: [{ $ifNull: ['$tokenCredits', 0] }, txData.rawAmount ?? 0] }],
+              },
+              lastRefill: new Date(),
+            },
+          },
+        ],
+        { new: true },
+      ).lean<IBalance>();
+    } catch (error) {
+      if (requestLeaseClaimed && pendingRequest) {
+        try {
+          await txMethods.releaseBalanceRequestResolutionLease?.(pendingRequest._id.toString());
+        } catch {
+          // The lease expires and remains recoverable.
+        }
+      }
+      throw error;
+    }
+
+    if (!claimed) {
+      if (requestLeaseClaimed && pendingRequest) {
+        await txMethods.releaseBalanceRequestResolutionLease?.(pendingRequest._id.toString());
+      }
+      return;
+    }
+
+    const Transaction = mongoose.models.Transaction;
+    const transaction = new Transaction(txData);
+    transaction.endpointTokenConfig = txData.endpointTokenConfig;
+    transaction.inputTokenCount = txData.inputTokenCount;
+    calculateTokenValue(transaction);
+    await transaction.save();
+
+    if (requestLeaseClaimed && pendingRequest) {
+      try {
+        await txMethods.resolveBalanceRequestIfPending?.(pendingRequest._id.toString(), userId, {
+          resolvedAmount: txData.rawAmount ?? 0,
+        });
+      } catch (error) {
+        logger.error('[Balance.check] Failed to resolve pending request after auto-refill', error);
+      }
+    }
+
+    return {
+      rate: transaction.rate as number,
+      user: transaction.user.toString(),
+      balance: claimed.tokenCredits,
+      transaction,
+    };
+  }
+
+  /** Applies a due auto-refill after a real spend exhausts the balance. */
+  async function maybeApplyAutoRefill(user: string, currentBalance: number): Promise<number> {
+    if (currentBalance > 0) {
+      return currentBalance;
+    }
+    const record = await findBalanceByUser(user);
+    if (!record || !isAutoRefillDue(record, new Date())) {
+      return currentBalance;
+    }
+    try {
+      const result = await createAutoRefillTransaction(
+        {
+          user,
+          tokenType: 'credits',
+          context: 'autoRefill',
+          rawAmount: record.refillAmount,
+        },
+        record.lastRefill ?? null,
+      );
+      if (result) {
+        return result.balance;
+      }
+      const fresh = await findBalanceByUser(user);
+      return fresh?.tokenCredits ?? currentBalance;
+    } catch (error) {
+      logger.error('[Balance.check] Failed to auto-refill after balance exhausted', error);
+      return currentBalance;
+    }
+  }
+
+  /**
    * Creates a transaction and updates the balance.
    */
   async function createTransaction(_txData: TxData): Promise<TransactionResult | undefined> {
@@ -709,6 +1148,15 @@ export function createTransactionMethods(
     return { ...balance, reservedCredits } as IBalance;
   }
 
+  /** Batch-retrieves balance records for the admin list view. */
+  async function findBalancesByUsers(userIds: string[]): Promise<IBalance[]> {
+    if (userIds.length === 0) {
+      return [];
+    }
+    const Balance = mongoose.models.Balance as Model<IBalance>;
+    return Balance.find({ user: { $in: userIds } }).lean<IBalance[]>();
+  }
+
   /** Upserts balance fields for a user; `insertOnly` fields apply only when the record is created. */
   async function upsertBalanceFields(
     user: string,
@@ -749,8 +1197,14 @@ export function createTransactionMethods(
 
   return {
     updateBalance,
+    applyIdempotentCredit,
+    claimAuditRecording,
+    markAuditRecorded,
+    releaseAuditRecordingLease,
+    ensureTransactionIdempotencyIndex,
     bulkInsertTransactions,
     findBalanceByUser,
+    findBalancesByUsers,
     upsertBalanceFields,
     getTransactions,
     deleteTransactions,
@@ -759,6 +1213,8 @@ export function createTransactionMethods(
     reserveBalance,
     renewBalanceReservation,
     releaseBalanceReservation,
+    createAutoRefillTransaction,
+    maybeApplyAutoRefill,
     createStructuredTransaction,
   };
 }

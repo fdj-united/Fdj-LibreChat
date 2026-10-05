@@ -26,6 +26,7 @@ import { pendingApprovalActionFamily } from './approval/state';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import Footer, { useConfiguredFooter } from './Footer';
 import { AskAnswerHostProvider } from './ask/state';
+import OutOfCreditNotice from './OutOfCreditNotice';
 import MessagesView from './Messages/MessagesView';
 import Presentation from './Presentation';
 import ChatForm from './Input/ChatForm';
@@ -204,6 +205,7 @@ function ChatView({ index = 0, project }: { index?: number; project?: TChatProje
                           )}
                         >
                           {isLandingPage && <ConversationStarters />}
+                          <OutOfCreditNotice />
                           {isSubagentThreadReadOnly ? (
                             <div
                               className="mx-auto w-full max-w-3xl px-4 py-3 text-center text-sm text-text-secondary xl:max-w-4xl"

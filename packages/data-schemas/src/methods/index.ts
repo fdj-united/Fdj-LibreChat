@@ -67,6 +67,7 @@ import { createShareMethods, type ShareMethods } from './share';
 import { createActionMethods, type ActionMethods } from './action';
 import { createAssistantMethods, type AssistantMethods } from './assistant';
 import { createBannerMethods, type BannerMethods } from './banner';
+import { createBalanceRequestMethods, type BalanceRequestMethods } from './balanceRequest';
 import { createToolCallMethods, type ToolCallMethods } from './toolCall';
 import { createCategoriesMethods, type CategoriesMethods } from './categories';
 import { createPresetMethods, type PresetMethods } from './preset';
@@ -256,6 +257,7 @@ export type AllMethods = UserMethods &
   ActionMethods &
   AssistantMethods &
   BannerMethods &
+  BalanceRequestMethods &
   ToolCallMethods &
   CategoriesMethods &
   PresetMethods &
@@ -311,16 +313,26 @@ export function createMethods(
   };
   const txMethods = createTxMethods(mongoose, txDeps);
 
+  // Tier 1: balance request methods, needed by transaction methods below so
+  // auto-refill can resolve a now-moot pending request
+  const balanceRequestMethods = createBalanceRequestMethods(mongoose);
+
   // Tier 3: transaction methods need tx's getMultiplier/getCacheMultiplier
   const transactionMethods = createTransactionMethods(mongoose, {
     getMultiplier: txMethods.getMultiplier,
     getCacheMultiplier: txMethods.getCacheMultiplier,
+    findPendingBalanceRequestByUser: balanceRequestMethods.findPendingBalanceRequestByUser,
+    claimBalanceRequestResolution: balanceRequestMethods.claimBalanceRequestResolution,
+    releaseBalanceRequestResolutionLease:
+      balanceRequestMethods.releaseBalanceRequestResolutionLease,
+    resolveBalanceRequestIfPending: balanceRequestMethods.resolveBalanceRequestIfPending,
   });
 
   // Tier 3: spendTokens methods need transaction methods
   const spendTokensMethods = createSpendTokensMethods(mongoose, {
     createTransaction: transactionMethods.createTransaction,
     createStructuredTransaction: transactionMethods.createStructuredTransaction,
+    maybeApplyAutoRefill: transactionMethods.maybeApplyAutoRefill,
   });
 
   const messageMethods = createMessageMethods(mongoose);
@@ -488,6 +500,7 @@ export function createMethods(
     ...actionMethods,
     ...createAssistantMethods(mongoose),
     ...createBannerMethods(mongoose),
+    ...balanceRequestMethods,
     ...createToolCallMethods(mongoose),
     ...createCategoriesMethods(mongoose),
     ...createPresetMethods(mongoose),
@@ -545,6 +558,7 @@ export type {
   ActionMethods,
   AssistantMethods,
   BannerMethods,
+  BalanceRequestMethods,
   ToolCallMethods,
   CategoriesMethods,
   PresetMethods,

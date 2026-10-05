@@ -56,6 +56,7 @@ export const AUDIT_CATEGORIES = [
   'permission',
   'auth',
   'approval',
+  'balance',
 ] as const;
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
 
@@ -70,6 +71,7 @@ export const AUDIT_ACTIONS = [
   'grant.removed',
   'permission.insights_assigned',
   'permission.insights_removed',
+  'balance.credit_added',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -79,6 +81,7 @@ export const AUDIT_ACTION_CATEGORY: Record<AuditAction, AuditCategory> = {
   'grant.removed': 'grant',
   'permission.insights_assigned': 'permission',
   'permission.insights_removed': 'permission',
+  'balance.credit_added': 'balance',
 };
 
 /** Result of the audited operation. Kept first-class instead of being encoded
@@ -219,4 +222,21 @@ export type AdminUserSearchResult = {
   email: string;
   username?: string;
   avatarUrl?: string;
+};
+
+/** Row shape for the admin Balance list endpoint. */
+export type AdminBalanceListItem = {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string;
+  tokenCredits: number;
+  balanceEnabled: boolean;
+  lastRefill?: string;
+  refillAmount?: number;
+  pendingRequest?: {
+    requestId: string;
+    requestedAt: string;
+    reason?: string;
+  };
 };

@@ -174,4 +174,5 @@ export enum MutationKeys {
   updateCodeEnvironmentSettings = 'updateCodeEnvironmentSettings',
   deleteCodeEnvironment = 'deleteCodeEnvironment',
   moveConversationCodeEnvironment = 'moveConversationCodeEnvironment',
+  requestCredits = 'requestCredits',
 }

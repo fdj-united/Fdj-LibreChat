@@ -1005,6 +1005,22 @@ export type TBalanceResponse = {
   refillIntervalUnit?: RefillIntervalUnit;
   lastRefill?: Date | string;
   refillAmount?: number;
+  /** Present while the user has an unresolved "request more credits" request. */
+  pendingCreditRequest?: {
+    requestId: string;
+    requestedAt: Date | string;
+    reason?: string;
+  };
+};
+
+export type TRequestBalanceBody = {
+  reason?: string;
+};
+
+export type TRequestBalanceResponse = {
+  requestId: string;
+  requestedAt: Date | string;
+  reason?: string;
 };
 
 /* -------------------------------------------------------------------------- */
