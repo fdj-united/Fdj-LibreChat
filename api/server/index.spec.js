@@ -31,6 +31,16 @@ jest.mock('~/config', () => ({
   createMCPManager: jest.fn().mockResolvedValue({
     getAppToolFunctions: jest.fn().mockResolvedValue({}),
   }),
+  createOAuthReconnectionManager: jest.fn().mockResolvedValue({}),
+  getFlowStateManager: jest.fn(() => ({})),
+  getOAuthReconnectionManager: jest.fn(),
+  getMCPManager: jest.fn(),
+  getMCPServersRegistry: jest.fn(),
+  getActionFlowStateManager: jest.fn(() => ({})),
+}));
+
+jest.mock('~/server/services/start/migration', () => ({
+  checkMigrations: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock(
