@@ -1,4 +1,5 @@
 import type { TBalanceResponse } from 'librechat-data-provider';
+import RequestCreditsButton from '../SettingsTabs/Balance/RequestCreditsButton';
 import AutoRefillSettings from '../SettingsTabs/Balance/AutoRefillSettings';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import TokenCreditsItem from '../SettingsTabs/Balance/TokenCreditsItem';
@@ -17,7 +18,12 @@ function useBalance(): Partial<TBalanceResponse> {
 
 export function TokenCredits() {
   const { tokenCredits = 0 } = useBalance();
-  return <TokenCreditsItem tokenCredits={tokenCredits} />;
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <TokenCreditsItem tokenCredits={tokenCredits} />
+      <RequestCreditsButton />
+    </div>
+  );
 }
 
 export function AutoRefill() {

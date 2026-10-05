@@ -83,6 +83,7 @@ export const AUDIT_CATEGORIES = [
   'auth',
   'approval',
   'artifact',
+  'balance',
 ] as const;
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
 
@@ -112,6 +113,7 @@ export const AUDIT_ACTIONS = [
   'artifact_acl.granted',
   'artifact_acl.updated',
   'artifact_acl.revoked',
+  'balance.credit_added',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -136,6 +138,7 @@ export const AUDIT_ACTION_CATEGORY: Record<AuditAction, AuditCategory> = {
   'artifact_acl.granted': 'artifact',
   'artifact_acl.updated': 'artifact',
   'artifact_acl.revoked': 'artifact',
+  'balance.credit_added': 'balance',
 };
 
 /** Result of the audited operation. Kept first-class instead of being encoded
@@ -276,4 +279,33 @@ export type AdminUserSearchResult = {
   email: string;
   username?: string;
   avatarUrl?: string;
+};
+
+/** Row shape for the admin Balance list endpoint. */
+export type AdminBalanceListItem = {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string;
+  /**
+   * 0 when the user has no Balance document yet (never spent/been credited)
+   * OR when `balanceEnabled` is false — always check `balanceEnabled` before
+   * treating this as a real, exhausted balance.
+   */
+  tokenCredits: number;
+  /** Whether the balance feature is actually enabled for this user's
+   *  effective (role/user-override-resolved) config — the same check
+   *  `addCredit` performs before crediting. A disabled user still has
+   *  `tokenCredits: 0`, which is otherwise indistinguishable from a
+   *  genuinely exhausted balance. */
+  balanceEnabled: boolean;
+  lastRefill?: string;
+  /** The user's configured auto-refill amount, if any — used by the admin
+   *  panel as a sensible per-user default top-up amount. */
+  refillAmount?: number;
+  pendingRequest?: {
+    requestId: string;
+    requestedAt: string;
+    reason?: string;
+  };
 };

@@ -66,4 +66,6 @@ export {
   ensureArtifactAppIndexes,
   dropSupersededTenantIndexes,
   dropSupersededPromptGroupIndexes,
+  ensureBalanceIndexes,
+  dedupeBalanceDocuments,
 } from './migrations';

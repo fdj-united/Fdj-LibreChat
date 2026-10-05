@@ -13,11 +13,41 @@ export interface SpendTxData {
   valueKey?: string;
 }
 
+/**
+ * After a real deduction lands a user at or below zero, gives them a
+ * chance to catch up on an auto-refill that became due but was never
+ * re-checked — the pre-flight gate (`checkBalanceRecord` in
+ * `packages/api`) only ever checks eligibility against the *prompt*-token
+ * cost, never the completion-token cost that this function's caller just
+ * applied. See `maybeApplyAutoRefill`'s own doc comment in `transaction.ts`
+ * for the full rationale.
+ */
+async function maybeAutoRefillAfterSpend(
+  transactionMethods: {
+    maybeApplyAutoRefill: (user: string, currentBalance: number) => Promise<number>;
+  },
+  user: SpendTxData['user'],
+  resultingBalance: number,
+): Promise<void> {
+  const refilledBalance = await transactionMethods.maybeApplyAutoRefill(
+    String(user),
+    resultingBalance,
+  );
+  if (refilledBalance !== resultingBalance) {
+    logger.info('[spendTokens] Auto-refill applied after balance exhausted', {
+      user,
+      previousBalance: resultingBalance,
+      refilledBalance,
+    });
+  }
+}
+
 export function createSpendTokensMethods(
   _mongoose: typeof import('mongoose'),
   transactionMethods: {
     createTransaction: (txData: TxData) => Promise<TransactionResult | undefined>;
     createStructuredTransaction: (txData: TxData) => Promise<TransactionResult | undefined>;
+    maybeApplyAutoRefill: (user: string, currentBalance: number) => Promise<number>;
   },
 ): {
   spendTokens: (
@@ -71,13 +101,17 @@ export function createSpendTokensMethods(
       }
 
       if (prompt || completion) {
+        const resultingBalance = completion?.balance ?? prompt?.balance;
+        if (resultingBalance != null) {
+          await maybeAutoRefillAfterSpend(transactionMethods, txData.user, resultingBalance);
+        }
         logger.debug('[spendTokens] Transaction data record against balance:', {
           user: txData.user,
           prompt: prompt?.prompt,
           promptRate: prompt?.rate,
           completion: completion?.completion,
           completionRate: completion?.rate,
-          balance: completion?.balance ?? prompt?.balance,
+          balance: resultingBalance,
         });
       } else {
         logger.debug('[spendTokens] No transactions incurred against balance');
@@ -139,13 +173,17 @@ export function createSpendTokensMethods(
       }
 
       if (prompt || completion) {
+        const resultingBalance = completion?.balance ?? prompt?.balance;
+        if (resultingBalance != null) {
+          await maybeAutoRefillAfterSpend(transactionMethods, txData.user, resultingBalance);
+        }
         logger.debug('[spendStructuredTokens] Transaction data record against balance:', {
           user: txData.user,
           prompt: prompt?.prompt,
           promptRate: prompt?.rate,
           completion: completion?.completion,
           completionRate: completion?.rate,
-          balance: completion?.balance ?? prompt?.balance,
+          balance: resultingBalance,
         });
       } else {
         logger.debug('[spendStructuredTokens] No transactions incurred against balance');

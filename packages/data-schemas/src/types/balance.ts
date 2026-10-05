@@ -11,6 +11,12 @@ export interface IBalance extends Document {
   lastRefill: Date;
   refillAmount: number;
   tenantId?: string;
+  /**
+   * Bounded ring buffer of the most recently applied admin-credit idempotency
+   * keys, used by `applyIdempotentCredit` to make retried "Add credit" calls
+   * safe without a multi-document transaction.
+   */
+  recentIdempotencyKeys?: string[];
 }
 
 /** Plain data fields for creating or updating a balance record (no Mongoose Document methods) */
