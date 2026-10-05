@@ -118,4 +118,6 @@ export {
   migrateTenantIndexes,
   dropSupersededPromptGroupIndexes,
   backfillMCPServerNormalizedNames,
+  ensureBalanceIndexes,
+  dedupeBalanceDocuments,
 } from './migrations';

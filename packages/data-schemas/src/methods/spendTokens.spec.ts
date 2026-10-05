@@ -20,6 +20,9 @@ let spendTokens: ReturnType<typeof createSpendTokensMethods>['spendTokens'];
 let spendStructuredTokens: ReturnType<typeof createSpendTokensMethods>['spendStructuredTokens'];
 let createTransaction: ReturnType<typeof createTransactionMethods>['createTransaction'];
 let updateBalance: ReturnType<typeof createTransactionMethods>['updateBalance'];
+let createAutoRefillTransaction: ReturnType<
+  typeof createTransactionMethods
+>['createAutoRefillTransaction'];
 let getCacheMultiplier: ReturnType<typeof createTxMethods>['getCacheMultiplier'];
 
 describe('spendTokens', () => {
@@ -46,6 +49,7 @@ describe('spendTokens', () => {
     });
     createTransaction = transactionMethods.createTransaction;
     updateBalance = transactionMethods.updateBalance;
+    createAutoRefillTransaction = transactionMethods.createAutoRefillTransaction;
 
     const spendMethods = createSpendTokensMethods(mongoose, {
       createTransaction: transactionMethods.createTransaction,
@@ -606,6 +610,38 @@ describe('spendTokens', () => {
 
     const finalBalance = await Balance.findOne({ user: userId });
     expect(finalBalance!.tokenCredits).toBe(initialBalance + numberOfIncrements * incrementValue);
+  });
+
+  it('only lets one concurrent auto-refill claim the same eligibility window', async () => {
+    const overdueLastRefill = new Date('2020-01-01T00:00:00.000Z');
+    await Balance.create({
+      user: userId,
+      tokenCredits: 0,
+      lastRefill: overdueLastRefill,
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 25 }, () =>
+        createAutoRefillTransaction(
+          {
+            user: userId,
+            tokenType: 'credits',
+            context: 'concurrent-refill-test',
+            rawAmount: 1000,
+            balance: { enabled: true },
+          },
+          overdueLastRefill,
+        ),
+      ),
+    );
+
+    expect(results.filter((result) => result != null)).toHaveLength(1);
+    await expect(
+      Balance.findOne({ user: userId }).then((balance) => balance?.tokenCredits),
+    ).resolves.toBe(1000);
+    await expect(
+      Transaction.countDocuments({ user: userId, context: 'concurrent-refill-test' }),
+    ).resolves.toBe(1);
   });
 
   it('should create structured transactions for both prompt and completion tokens', async () => {
