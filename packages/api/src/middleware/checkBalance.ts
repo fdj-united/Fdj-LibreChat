@@ -30,6 +30,7 @@ export interface CheckBalanceDeps {
   getMultiplier: (params: Record<string, unknown>) => number;
   createAutoRefillTransaction: (
     data: Record<string, unknown>,
+    expectedLastRefill: Date | null,
   ) => Promise<{ balance: number } | undefined>;
   logViolation: (
     req: unknown,
@@ -127,14 +128,25 @@ async function checkBalanceRecord(
         )
     ) {
       try {
-        const result = await deps.createAutoRefillTransaction({
-          user,
-          tokenType: 'credits',
-          context: 'autoRefill',
-          rawAmount: record.refillAmount,
-        });
+        const result = await deps.createAutoRefillTransaction(
+          {
+            user,
+            tokenType: 'credits',
+            context: 'autoRefill',
+            rawAmount: record.refillAmount,
+          },
+          record.lastRefill ?? null,
+        );
         if (result) {
           balance = result.balance;
+        } else {
+          // Lost the claim race — a concurrent caller already applied this
+          // exact refill. Re-read rather than keeping the stale pre-refill
+          // `balance`: the real balance is now higher.
+          const fresh = await deps.findBalanceByUser(user);
+          if (fresh) {
+            balance = fresh.tokenCredits;
+          }
         }
       } catch (error) {
         logger.error('[Balance.check] Failed to record transaction for auto-refill', error);

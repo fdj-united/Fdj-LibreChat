@@ -54,4 +54,9 @@ export {
   SYSTEM_TENANT_ID,
 } from './config/tenantContext';
 export type { TenantContext } from './config/tenantContext';
-export { dropSupersededTenantIndexes, dropSupersededPromptGroupIndexes } from './migrations';
+export {
+  dropSupersededTenantIndexes,
+  dropSupersededPromptGroupIndexes,
+  ensureBalanceIndexes,
+  dedupeBalanceDocuments,
+} from './migrations';
