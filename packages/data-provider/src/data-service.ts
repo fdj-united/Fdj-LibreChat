@@ -1561,6 +1561,7 @@ export async function getArtifactAppBySource(
 ): Promise<aa.TArtifactAppWithVersion> {
   const response = await request.get<aa.TArtifactAppDetailResponse>(
     endpoints.artifactAppBySource(conversationId, sourceKey),
+    { headers: { 'Cache-Control': 'no-cache' } },
   );
   return aa.normalizeArtifactAppDetail(response);
 }
