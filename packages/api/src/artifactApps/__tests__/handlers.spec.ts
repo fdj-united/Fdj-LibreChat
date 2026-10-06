@@ -24,10 +24,19 @@ let accessibleIds: string[];
 let permissionBatchSizes: number[];
 let removedPermissionIds: string[];
 
-function makeRes(): Response & { statusCode: number; body: unknown } {
+function makeRes(): Response & {
+  statusCode: number;
+  body: unknown;
+  headers: Record<string, string>;
+} {
   const res = {
     statusCode: 0,
     body: undefined as unknown,
+    headers: {} as Record<string, string>,
+    setHeader(name: string, value: string) {
+      res.headers[name.toLowerCase()] = value;
+      return res;
+    },
     status(code: number) {
       res.statusCode = code;
       return res;
@@ -37,7 +46,11 @@ function makeRes(): Response & { statusCode: number; body: unknown } {
       return res;
     },
   };
-  return res as unknown as Response & { statusCode: number; body: unknown };
+  return res as unknown as Response & {
+    statusCode: number;
+    body: unknown;
+    headers: Record<string, string>;
+  };
 }
 
 /** Route bodies are validated by zod inside the handlers, so the mock body is
@@ -1041,6 +1054,7 @@ describe('remove', () => {
       lookup,
     );
     expect(lookup.statusCode).toBe(410);
+    expect(lookup.headers['cache-control']).toBe('private, no-store');
 
     grants = [];
     const restored = makeRes();
@@ -1054,6 +1068,22 @@ describe('remove', () => {
         accessRoleId: AccessRoleIds.ARTIFACT_APP_OWNER,
       }),
     ]);
+
+    const restoredLookup = makeRes();
+    await handlers.getBySource(
+      makeReq({
+        query: {
+          conversationId: syncBody.source.conversationId,
+          sourceKey: syncBody.source.sourceKey,
+        },
+      }),
+      restoredLookup,
+    );
+    expect(restoredLookup.statusCode).toBe(200);
+    expect(restoredLookup.headers['cache-control']).toBe('private, no-store');
+    expect((restoredLookup.body as { app: { artifactAppId: string } }).app.artifactAppId).toBe(
+      appId,
+    );
   });
 
   test('returns 410 when the source conversation no longer exists', async () => {
