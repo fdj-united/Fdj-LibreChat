@@ -82,6 +82,7 @@ export const AUDIT_CATEGORIES = [
   'permission',
   'auth',
   'approval',
+  'artifact',
   'balance',
 ] as const;
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
@@ -95,6 +96,23 @@ export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
 export const AUDIT_ACTIONS = [
   'grant.assigned',
   'grant.removed',
+  'artifact_app.created',
+  'artifact_app.updated',
+  'artifact_app.submitted',
+  'artifact_app.approved',
+  'artifact_app.rejected',
+  'artifact_app.published',
+  'artifact_app.suspended',
+  'artifact_app.archived',
+  'artifact_app.forked',
+  'artifact_app.embedded',
+  'artifact_version.created',
+  'artifact_version.released',
+  'artifact_version.activated',
+  'artifact_version.withdrawn',
+  'artifact_acl.granted',
+  'artifact_acl.updated',
+  'artifact_acl.revoked',
   'balance.credit_added',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -103,6 +121,23 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 export const AUDIT_ACTION_CATEGORY: Record<AuditAction, AuditCategory> = {
   'grant.assigned': 'grant',
   'grant.removed': 'grant',
+  'artifact_app.created': 'artifact',
+  'artifact_app.updated': 'artifact',
+  'artifact_app.submitted': 'artifact',
+  'artifact_app.approved': 'artifact',
+  'artifact_app.rejected': 'artifact',
+  'artifact_app.published': 'artifact',
+  'artifact_app.suspended': 'artifact',
+  'artifact_app.archived': 'artifact',
+  'artifact_app.forked': 'artifact',
+  'artifact_app.embedded': 'artifact',
+  'artifact_version.created': 'artifact',
+  'artifact_version.released': 'artifact',
+  'artifact_version.activated': 'artifact',
+  'artifact_version.withdrawn': 'artifact',
+  'artifact_acl.granted': 'artifact',
+  'artifact_acl.updated': 'artifact',
+  'artifact_acl.revoked': 'artifact',
   'balance.credit_added': 'balance',
 };
 

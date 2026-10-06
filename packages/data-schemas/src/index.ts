@@ -25,6 +25,14 @@ export {
   validateSkillFrontmatter,
   validateSkillDescription,
   deriveStructuredFrontmatterFields,
+  createArtifactAppMethods,
+  computeSourceHash,
+  ARTIFACT_SCHEMA_VERSION,
+  ArtifactAppDeletedError,
+  ArtifactAppRestoreNotFoundError,
+  ArtifactSyncConflictError,
+  recordArtifactSourceTombstones,
+  hasArtifactSourceTombstone,
   AUDIT_SCHEMA_VERSION,
   MAX_AUDIT_EXPORT_ROWS,
   MAX_AUDIT_LOG_LIMIT,
@@ -55,6 +63,7 @@ export {
 } from './config/tenantContext';
 export type { TenantContext } from './config/tenantContext';
 export {
+  ensureArtifactAppIndexes,
   dropSupersededTenantIndexes,
   dropSupersededPromptGroupIndexes,
   ensureBalanceIndexes,

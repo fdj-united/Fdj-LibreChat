@@ -1,18 +1,31 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import copy from 'copy-to-clipboard';
 import * as Tabs from '@radix-ui/react-tabs';
-import { Code, Play, RefreshCw, X } from 'lucide-react';
 import { useSetRecoilState, useResetRecoilState } from 'recoil';
-import { Button, Spinner, useMediaQuery, Radio } from '@librechat/client';
+import { Code, Play, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { DEFAULT_ARTIFACT_APPS_CONFIG } from 'librechat-data-provider';
+import {
+  Button,
+  Spinner,
+  TooltipAnchor,
+  useMediaQuery,
+  useToastContext,
+  Radio,
+} from '@librechat/client';
 import type { SandpackPreviewRef } from '@codesandbox/sandpack-react';
+import useClearArtifactNavigationRequest from '~/hooks/Artifacts/useClearArtifactNavigationRequest';
+import { TOOL_ARTIFACT_TYPES, isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
+import { captureArtifactPreview, toArtifactPreview } from '~/utils/artifactPreviewCapture';
+import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
+import useArtifactCatalogSync from '~/hooks/Artifacts/useArtifactCatalogSync';
+import ArtifactAppShareDialog from '~/components/ArtifactApps/Share';
 import CopyButton from '~/components/Messages/Content/CopyButton';
 import { useShareContext, useMutationState } from '~/Providers';
 import useArtifacts from '~/hooks/Artifacts/useArtifacts';
+import { useGetStartupConfig } from '~/data-provider';
 import DownloadArtifact from './DownloadArtifact';
 import ArtifactVersion from './ArtifactVersion';
 import ArtifactTabs from './ArtifactTabs';
-import { isCodeOnlyArtifact, isPreviewOnlyArtifact } from '~/utils/artifacts';
-import { displayFilename } from '~/components/Chat/Messages/Content/Parts/attachmentTypes';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 import store from '~/store';
@@ -20,12 +33,15 @@ import store from '~/store';
 const MAX_BLUR_AMOUNT = 32;
 const MAX_BACKDROP_OPACITY = 0.3;
 
-export default function Artifacts() {
+export default function Artifacts({ readOnly = false }: { readOnly?: boolean }) {
   const localize = useLocalize();
+  const { showToast } = useToastContext();
   const { isMutating } = useMutationState();
-  const { isSharedConvo } = useShareContext();
+  const { isSharedConvo, shareId } = useShareContext();
+  const isSharedView = readOnly || isSharedConvo === true || Boolean(shareId);
   const isMobile = useMediaQuery('(max-width: 868px)');
   const previewRef = useRef<SandpackPreviewRef>();
+  const previewSurfaceRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -38,6 +54,15 @@ export default function Artifacts() {
   const dragStartHeight = useRef(90);
   const setArtifactsVisible = useSetRecoilState(store.artifactsVisibility);
   const resetCurrentArtifactId = useResetRecoilState(store.currentArtifactId);
+  const setArtifacts = useSetRecoilState(store.artifactsState);
+  const clearArtifactNavigationRequest = useClearArtifactNavigationRequest();
+  const { data: startupConfig } = useGetStartupConfig();
+  const previewCaptureTimeoutMs =
+    startupConfig?.artifactApps?.clientPreviewCaptureTimeoutMs ??
+    DEFAULT_ARTIFACT_APPS_CONFIG.clientPreviewCaptureTimeoutMs;
+  const previewSettleDelayMs =
+    startupConfig?.artifactApps?.clientSyncSettleDelayMs ??
+    DEFAULT_ARTIFACT_APPS_CONFIG.clientSyncSettleDelayMs;
 
   const allTabOptions = useMemo(
     () => [
@@ -92,6 +117,10 @@ export default function Artifacts() {
     orderedArtifactIds,
     setCurrentArtifactId,
   } = useArtifacts();
+  const isMermaidArtifact = currentArtifact?.type === TOOL_ARTIFACT_TYPES.MERMAID;
+  const { artifactEntry, isDeleted, restoreArtifact, isSyncing } = useArtifactCatalogSync(
+    isSharedView ? null : currentArtifact,
+  );
 
   /* Office artifacts have no source view, and source-code artifacts have
    * no useful rendered preview. Filter each down to the only meaningful
@@ -122,6 +151,53 @@ export default function Artifacts() {
       setActiveTab(constrainedTab);
     }
   }, [constrainedTab, activeTab, setActiveTab]);
+
+  useEffect(() => {
+    const artifact = currentArtifact;
+    if (!artifact || artifact.preview || displayedTab !== 'preview') {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const surface = previewSurfaceRef.current;
+      if (!surface) {
+        return;
+      }
+      void captureArtifactPreview(
+        surface,
+        isMermaidArtifact ? 'element' : 'frame',
+        previewCaptureTimeoutMs,
+        controller.signal,
+      ).then((imageUrl) => {
+        if (!imageUrl || controller.signal.aborted) {
+          return;
+        }
+        const preview = toArtifactPreview(imageUrl, artifact.title?.slice(0, 500));
+        if (!preview) {
+          return;
+        }
+        setArtifacts((previous) => {
+          const latest = previous?.[artifact.id];
+          if (!latest || latest.lastUpdateTime !== artifact.lastUpdateTime || latest.preview) {
+            return previous;
+          }
+          return { ...previous, [artifact.id]: { ...latest, preview } };
+        });
+      });
+    }, previewSettleDelayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    currentArtifact,
+    displayedTab,
+    isMermaidArtifact,
+    previewCaptureTimeoutMs,
+    previewSettleDelayMs,
+    setArtifacts,
+  ]);
 
   const handleCopyArtifact = useCallback(() => {
     const content = currentArtifact?.content ?? '';
@@ -186,7 +262,23 @@ export default function Artifacts() {
     setTimeout(() => setIsRefreshing(false), 750);
   };
 
+  const handleRestore = async () => {
+    if (!restoreArtifact) {
+      return;
+    }
+    try {
+      await restoreArtifact();
+      showToast({
+        status: 'success',
+        message: localize('com_ui_artifact_restore_success'),
+      });
+    } catch {
+      showToast({ status: 'error', message: localize('com_ui_artifact_restore_error') });
+    }
+  };
+
   const closeArtifacts = () => {
+    clearArtifactNavigationRequest();
     if (isMobile) {
       setIsClosing(true);
       setIsVisible(false);
@@ -229,6 +321,10 @@ export default function Artifacts() {
           />
         )}
         <div
+          id="artifact-viewer"
+          role={isMobile ? 'dialog' : 'region'}
+          aria-modal={isMobile || undefined}
+          aria-label={currentArtifact.title ?? localize('com_ui_artifacts')}
           className={cn(
             'flex w-full flex-col bg-surface-primary text-xl text-text-primary',
             isMobile
@@ -293,25 +389,30 @@ export default function Artifacts() {
                 isVisible && !isClosing ? 'translate-x-0 opacity-100' : 'translate-x-2 opacity-0',
               )}
             >
-              {displayedTab === 'preview' && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-9 w-9"
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                  aria-label={localize('com_ui_refresh')}
-                >
-                  {isRefreshing ? (
-                    <Spinner size={16} />
-                  ) : (
-                    <RefreshCw
-                      size={16}
-                      className="transition-transform duration-200"
-                      aria-hidden="true"
-                    />
-                  )}
-                </Button>
+              {displayedTab === 'preview' && !isMermaidArtifact && (
+                <TooltipAnchor
+                  description={localize('com_ui_refresh')}
+                  render={
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-9 w-9"
+                      onClick={handleRefresh}
+                      disabled={isRefreshing}
+                      aria-label={localize('com_ui_refresh')}
+                    >
+                      {isRefreshing ? (
+                        <Spinner size={16} />
+                      ) : (
+                        <RefreshCw
+                          size={16}
+                          className="transition-transform duration-200"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </Button>
+                  }
+                />
               )}
               {displayedTab !== 'preview' && isMutating && (
                 <RefreshCw size={16} className="animate-spin text-text-secondary" />
@@ -330,6 +431,41 @@ export default function Artifacts() {
               )}
               <CopyButton isCopied={isCopied} iconOnly onClick={handleCopyArtifact} />
               <DownloadArtifact artifact={currentArtifact} />
+              {!isSharedView && isSyncing && (
+                <span
+                  className="flex h-9 w-9 items-center justify-center text-text-secondary"
+                  aria-label={localize('com_ui_artifact_syncing')}
+                >
+                  <Spinner size={16} />
+                </span>
+              )}
+              {!isSharedView && artifactEntry && (
+                <ArtifactAppShareDialog
+                  app={artifactEntry}
+                  buttonClassName="border-0 bg-transparent hover:bg-surface-hover"
+                />
+              )}
+              {!isSharedView && isDeleted && restoreArtifact && (
+                <TooltipAnchor
+                  description={localize('com_ui_artifact_restore')}
+                  render={
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-9 w-9"
+                      onClick={() => void handleRestore()}
+                      disabled={isSyncing}
+                      aria-label={localize('com_ui_artifact_restore')}
+                    >
+                      {isSyncing ? (
+                        <Spinner size={16} />
+                      ) : (
+                        <RotateCcw size={16} aria-hidden="true" />
+                      )}
+                    </Button>
+                  }
+                />
+              )}
               <Button
                 size="icon"
                 variant="ghost"
@@ -343,11 +479,11 @@ export default function Artifacts() {
           </div>
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-primary">
-            <div className="absolute inset-0 flex flex-col">
+            <div ref={previewSurfaceRef} className="absolute inset-0 flex flex-col">
               <ArtifactTabs
                 artifact={currentArtifact}
                 previewRef={previewRef as React.MutableRefObject<SandpackPreviewRef>}
-                isSharedConvo={isSharedConvo}
+                isSharedConvo={isSharedView}
               />
             </div>
 

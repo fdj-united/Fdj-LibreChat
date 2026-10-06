@@ -19,6 +19,7 @@ import {
 import KeyboardShortcutsDialog from '~/components/Nav/KeyboardShortcutsDialog';
 import KeyboardDeleteDialog from '~/components/Nav/KeyboardDeleteDialog';
 import { useUserTermsQuery, useGetStartupConfig } from '~/data-provider';
+import ArtifactSyncWorker from '~/components/ArtifactApps/sync/Worker';
 import useKeyboardShortcuts from '~/hooks/useKeyboardShortcuts';
 import { UnifiedSidebar } from '~/components/UnifiedSidebar';
 import { TermsAndConditionsModal } from '~/components/ui';
@@ -83,6 +84,7 @@ export default function Root() {
         <AssistantsMapContext.Provider value={assistantsMap}>
           <AgentsMapContext.Provider value={agentsMap}>
             <PromptGroupsProvider>
+              <ArtifactSyncWorker />
               <Banner onHeightChange={setBannerHeight} />
               <div className="flex" style={{ height: `calc(100dvh - ${bannerHeight}px)` }}>
                 <div className="relative z-0 flex h-full w-full overflow-hidden">

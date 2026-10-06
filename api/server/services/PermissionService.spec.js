@@ -161,6 +161,19 @@ describe('PermissionService', () => {
       expect(entry.roleId.toString()).toBe(role._id.toString());
     });
 
+    test('should reject public permission for an artifact app', async () => {
+      await expect(
+        grantPermission({
+          principalType: PrincipalType.PUBLIC,
+          principalId: null,
+          resourceType: ResourceType.ARTIFACT_APP,
+          resourceId,
+          accessRoleId: AccessRoleIds.ARTIFACT_APP_VIEWER,
+          grantedBy: grantedById,
+        }),
+      ).rejects.toThrow('Artifact Apps cannot be shared publicly');
+    });
+
     test('should throw error for invalid principal type', async () => {
       await expect(
         grantPermission({
@@ -423,6 +436,30 @@ describe('PermissionService', () => {
       });
 
       expect(hasPublicAccess).toBe(true);
+    });
+
+    test('should ignore legacy public permission for an artifact app', async () => {
+      const publicResourceId = new mongoose.Types.ObjectId();
+      await AclEntry.create({
+        principalType: PrincipalType.PUBLIC,
+        resourceType: ResourceType.ARTIFACT_APP,
+        resourceId: publicResourceId,
+        permBits: RoleBits.VIEWER,
+        grantedBy: grantedById,
+      });
+      getUserPrincipals.mockResolvedValue([
+        { principalType: PrincipalType.USER, principalId: userId },
+        { principalType: PrincipalType.PUBLIC },
+      ]);
+
+      const hasPublicAccess = await checkPermission({
+        userId,
+        resourceType: ResourceType.ARTIFACT_APP,
+        resourceId: publicResourceId,
+        requiredPermission: RoleBits.VIEWER,
+      });
+
+      expect(hasPublicAccess).toBe(false);
     });
 
     test('should return false for invalid permission bits', async () => {
@@ -1857,6 +1894,29 @@ describe('PermissionService', () => {
       expect(permissionsMap.size).toBe(2);
       expect(permissionsMap.get(resource1.toString())).toBe(3); // VIEW | EDIT
       expect(permissionsMap.get(resource2.toString())).toBe(1); // VIEW (public)
+    });
+
+    test('should ignore legacy public permissions in artifact app batch queries', async () => {
+      const publicResourceId = new mongoose.Types.ObjectId();
+      await AclEntry.create({
+        principalType: PrincipalType.PUBLIC,
+        resourceType: ResourceType.ARTIFACT_APP,
+        resourceId: publicResourceId,
+        permBits: RoleBits.VIEWER,
+        grantedBy: grantedById,
+      });
+      getUserPrincipals.mockResolvedValue([
+        { principalType: PrincipalType.USER, principalId: userId },
+        { principalType: PrincipalType.PUBLIC },
+      ]);
+
+      const permissionsMap = await getResourcePermissionsMap({
+        userId,
+        resourceType: ResourceType.ARTIFACT_APP,
+        resourceIds: [publicResourceId],
+      });
+
+      expect(permissionsMap).toEqual(new Map());
     });
 
     test('should handle large batch efficiently', async () => {
