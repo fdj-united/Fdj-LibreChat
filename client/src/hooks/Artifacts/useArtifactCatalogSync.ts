@@ -23,10 +23,11 @@ export default function useArtifactCatalogSync(artifact: Artifact | null | undef
   });
   const restoreMutation = useRestoreArtifactAppMutation();
   const status = (entryQuery.error as { response?: { status?: number } } | null)?.response?.status;
-  const isDeleted = status === 410;
+  const artifactEntry = entryQuery.data?.app;
+  const isDeleted = artifactEntry == null && status === 410;
 
   return {
-    artifactEntry: isDeleted ? undefined : entryQuery.data?.app,
+    artifactEntry,
     isDeleted,
     restoreArtifact: syncRequest ? () => restoreMutation.mutateAsync(syncRequest) : undefined,
     isSyncing: !!syncRequest && (entryQuery.isLoading || restoreMutation.isLoading),
