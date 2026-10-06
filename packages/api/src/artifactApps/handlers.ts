@@ -752,6 +752,7 @@ export function createArtifactAppHandlers(deps: ArtifactAppHandlersDeps): {
   }
 
   async function getBySource(req: ServerRequest, res: Response) {
+    res.setHeader('Cache-Control', 'private, no-store');
     try {
       const user = requireUser(req, res);
       if (!user) {

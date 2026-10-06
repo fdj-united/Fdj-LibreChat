@@ -6,6 +6,8 @@ import {
   publishArtifactAppSchema,
   syncArtifactAppSchema,
 } from './artifactApps';
+import { getArtifactAppBySource } from './data-service';
+import requestClient from './request';
 
 const app = { artifactAppId: 'app-1' } as TArtifactApp;
 const version = { artifactVersionId: 'version-1' } as TArtifactVersion;
@@ -17,6 +19,20 @@ describe('normalizeArtifactAppDetail', () => {
 
   it('accepts the raw app shape returned by short-lived rollout pods', () => {
     expect(normalizeArtifactAppDetail(app)).toEqual({ app, version: null });
+  });
+});
+
+describe('artifact app source lookup', () => {
+  it('bypasses stale browser cache entries', async () => {
+    const getSpy = jest.spyOn(requestClient, 'get').mockResolvedValue({ app, version });
+
+    await expect(getArtifactAppBySource('conversation-1', 'artifact:v1:id')).resolves.toEqual({
+      app,
+      version,
+    });
+    expect(getSpy).toHaveBeenCalledWith(expect.stringContaining('/api/artifact-apps/source?'), {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
   });
 });
 
