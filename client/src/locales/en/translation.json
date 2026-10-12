@@ -1378,6 +1378,8 @@
   "com_ui_mcp_click_to_defer": "Click to defer - tool will be discoverable via search but not loaded until needed",
   "com_ui_mcp_click_to_programmatic": "Enable programmatic calling - tool can only be invoked via code execution",
   "com_ui_mcp_configure_server": "Configure {{0}}",
+  "com_ui_mcp_confirmation_expired": "This approval request is no longer pending. If the action did not run, ask the assistant to try again.",
+  "com_ui_mcp_confirmation_send_failed": "Your response could not be sent. Please try again.",
   "com_ui_mcp_configure_server_description": "Configure custom variables for {{0}}",
   "com_ui_mcp_defer": "Defer",
   "com_ui_mcp_defer_all": "Defer all tools",
