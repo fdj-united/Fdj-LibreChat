@@ -3,7 +3,12 @@ import type {
   ConfirmationDecision,
   ConfirmationResolution,
 } from '~/mcp/ConfirmationStore';
-import { ConfirmationStore, parseConfirmationEnvelope } from '~/mcp/ConfirmationStore';
+import {
+  ConfirmationStore,
+  confirmationWaitMs,
+  parseConfirmationEnvelope,
+  NO_EXPIRY_CONFIRMATION_WAIT_MS,
+} from '~/mcp/ConfirmationStore';
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: {
@@ -413,6 +418,17 @@ describe('parseConfirmationEnvelope', () => {
     expect(parseConfirmationEnvelope(undefined)).toBeNull();
     expect(parseConfirmationEnvelope([])).toBeNull();
     expect(parseConfirmationEnvelope([null, undefined])).toBeNull();
+  });
+
+  it('keeps expiresInSeconds 0 as "no expiry"', () => {
+    const text = JSON.stringify({ confirmationRequired: true, preview: 'p', expiresInSeconds: 0 });
+    expect(parseConfirmationEnvelope([text, undefined])?.expiresInSeconds).toBe(0);
+  });
+
+  it('maps envelope expiry to a server-side wait, capping "no expiry"', () => {
+    expect(confirmationWaitMs(0)).toBe(NO_EXPIRY_CONFIRMATION_WAIT_MS);
+    expect(confirmationWaitMs(90)).toBe(90_000);
+    expect(confirmationWaitMs(0.05)).toBe(1_000);
   });
 
   it('clamps invalid expiresInSeconds to a sane default', () => {

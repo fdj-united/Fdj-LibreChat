@@ -467,9 +467,23 @@ export interface ConfirmationPresentation {
   fields: PresentationField[];
 }
 
+const DEFAULT_ENVELOPE_TTL_SECONDS = 120;
+const MIN_CONFIRMATION_WAIT_MS = 1_000;
+/** Safety cap for envelopes without expiry, so a forgotten dialog cannot hold the agent run forever. */
+export const NO_EXPIRY_CONFIRMATION_WAIT_MS: number = 24 * 60 * 60 * 1_000;
+
+/** Server-side wait for an envelope; `expiresInSeconds: 0` means the gateway set no expiry. */
+export function confirmationWaitMs(expiresInSeconds: number): number {
+  if (expiresInSeconds === 0) {
+    return NO_EXPIRY_CONFIRMATION_WAIT_MS;
+  }
+  return Math.max(MIN_CONFIRMATION_WAIT_MS, expiresInSeconds * 1_000);
+}
+
 export interface ConfirmationEnvelope {
   confirmationRequired: true;
   preview: string;
+  /** `0` when the gateway disabled expiry (`ttlSeconds: 0`). */
   expiresInSeconds: number;
   instruction?: string;
   presentation?: ConfirmationPresentation;
@@ -509,9 +523,9 @@ export function parseConfirmationEnvelope(result: unknown): ConfirmationEnvelope
     const env = parsed as Record<string, unknown>;
     const preview = typeof env.preview === 'string' ? env.preview : '';
     const expiresInSeconds =
-      typeof env.expiresInSeconds === 'number' && env.expiresInSeconds > 0
+      typeof env.expiresInSeconds === 'number' && env.expiresInSeconds >= 0
         ? env.expiresInSeconds
-        : 120;
+        : DEFAULT_ENVELOPE_TTL_SECONDS;
     const instruction = typeof env.instruction === 'string' ? env.instruction : undefined;
     const presentation = normalizePresentation(env.presentation);
     return {

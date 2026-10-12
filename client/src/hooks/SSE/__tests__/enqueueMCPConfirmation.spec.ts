@@ -9,8 +9,8 @@
  *   - per-entry deadline computed at call time from `expiresInSeconds`
  */
 
-import { enqueueMCPConfirmation } from '../enqueueMCPConfirmation';
 import type { MCPPendingConfirmation } from '~/store/mcpConfirmation';
+import { enqueueMCPConfirmation } from '../enqueueMCPConfirmation';
 
 function makeIncoming(
   overrides: Partial<Omit<MCPPendingConfirmation, 'deadline'>> = {},
@@ -70,5 +70,13 @@ describe('enqueueMCPConfirmation', () => {
     // deadline must be ~60s ahead of "now". Allow the test-execution window.
     expect(result[0].deadline).toBeGreaterThanOrEqual(before + 60_000);
     expect(result[0].deadline).toBeLessThanOrEqual(after + 60_000);
+  });
+
+  test('has no deadline when the gateway disabled expiry', () => {
+    const result = enqueueMCPConfirmation(
+      [],
+      makeIncoming({ confirmationId: 'cid-A', expiresInSeconds: 0 }),
+    );
+    expect(result[0].deadline).toBeNull();
   });
 });

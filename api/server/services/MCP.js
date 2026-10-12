@@ -26,6 +26,7 @@ const {
   buildMCPAuthToolCall,
   processMCPEnv,
   preProcessGraphTokens,
+  confirmationWaitMs,
   buildMCPAuthRunStepEvent,
   buildMCPAuthRunStepDeltaEvent,
   buildMCPAuthRunStepEndDeltaEvent,
@@ -1273,7 +1274,7 @@ async function awaitConfirmationDecision({
   jobCreatedAt,
 }) {
   const store = getConfirmationStore();
-  const ttlMs = Math.max(1000, envelope.expiresInSeconds * 1000);
+  const ttlMs = confirmationWaitMs(envelope.expiresInSeconds);
   let registration;
   try {
     registration = await store.register(userId, ttlMs);
