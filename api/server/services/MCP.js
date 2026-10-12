@@ -733,6 +733,12 @@ async function createMCPTool({
 
 const ARRAY_CONTENT_PROVIDERS = new Set(['google', 'anthropic', 'azureopenai', 'openai']);
 
+const CONFIRMATION_CANCEL_REASONS = {
+  cancel: 'User declined.',
+  timeout: 'User did not confirm in time.',
+  unavailable: 'Confirmation could not be requested. Please retry.',
+};
+
 /**
  * Build a synthetic "canceled" tool result that mirrors the FormattedContentResult shape
  * MCPManager.callTool returns. The agent loop sees this as a normal tool response and
@@ -761,7 +767,8 @@ async function emitMCPSSE(res, streamId, eventData) {
  * Emits an `mcp_confirmation_required` SSE event, then awaits a decision posted to
  * /api/mcp/confirm/:id by the originating user. On accept, the caller re-invokes the
  * tool with identical args so the gateway's Phase 2 args-hash matches and forwards
- * upstream. On cancel or timeout, the caller returns a synthesized canceled result.
+ * upstream. On cancel or timeout, the caller returns a synthesized canceled result;
+ * `unavailable` means the confirmation could not be registered and is treated the same.
  *
  * The LLM never observes the envelope: this function returns the decision but the
  * envelope itself is dropped and replaced by either the real upstream result or a
@@ -779,7 +786,14 @@ async function awaitConfirmationDecision({
 }) {
   const store = getConfirmationStore();
   const ttlMs = Math.max(1000, envelope.expiresInSeconds * 1000);
-  const { confirmationId, waitForDecision } = store.register(userId, ttlMs);
+  let registration;
+  try {
+    registration = await store.register(userId, ttlMs);
+  } catch (err) {
+    logger.error(`[MCP][${serverName}][${toolName}] Failed to register confirmation`, err);
+    return { decision: 'unavailable' };
+  }
+  const { confirmationId, waitForDecision } = registration;
 
   const eventData = {
     event: 'mcp_confirmation_required',
@@ -800,7 +814,9 @@ async function awaitConfirmationDecision({
     await emitMCPSSE(res, streamId, eventData);
   } catch (err) {
     logger.error(`[MCP][${serverName}][${toolName}] Failed to emit confirmation SSE event`, err);
-    store.resolve(confirmationId, userId, 'cancel');
+    await store.resolve(confirmationId, userId, 'cancel').catch((cancelErr) => {
+      logger.error(`[MCP][${serverName}][${toolName}] Failed to cancel confirmation`, cancelErr);
+    });
     return { decision: 'cancel' };
   }
 
@@ -809,7 +825,9 @@ async function awaitConfirmationDecision({
     abortListener = () => {
       // If the request is aborted (user navigates away, stops generation), drop
       // the confirmation rather than leaking the deferred until TTL.
-      store.resolve(confirmationId, userId, 'cancel');
+      store.resolve(confirmationId, userId, 'cancel').catch((err) => {
+        logger.error(`[MCP][${serverName}][${toolName}] Failed to cancel confirmation`, err);
+      });
     };
     if (signal.aborted) {
       abortListener();
@@ -974,7 +992,7 @@ function createToolInstance({
           }
         } else {
           const reason =
-            decision === 'timeout' ? 'User did not confirm in time.' : 'User declined.';
+            CONFIRMATION_CANCEL_REASONS[decision] ?? CONFIRMATION_CANCEL_REASONS.cancel;
 
           const clearArgs = {
             ...callToolArgs,
