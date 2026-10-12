@@ -123,7 +123,7 @@ router.get('/tools', requireJwtAuth, configMiddleware, checkMCPUsePermissions, a
  * @route POST /api/mcp/confirm/:confirmationId
  * @body { decision: 'accept' | 'cancel' }
  */
-router.post('/confirm/:confirmationId', requireJwtAuth, (req, res) => {
+router.post('/confirm/:confirmationId', requireJwtAuth, async (req, res) => {
   const { confirmationId } = req.params;
   const { decision } = req.body || {};
   const userId = req.user?.id;
@@ -138,7 +138,13 @@ router.post('/confirm/:confirmationId', requireJwtAuth, (req, res) => {
     return res.status(400).json({ error: 'Invalid confirmationId' });
   }
 
-  const result = getConfirmationStore().resolve(confirmationId, userId, decision);
+  let result;
+  try {
+    result = await getConfirmationStore().resolve(confirmationId, userId, decision);
+  } catch (error) {
+    logger.error(`[MCP Confirm] Failed to resolve confirmation ${confirmationId}`, error);
+    return res.status(500).json({ error: 'Failed to resolve confirmation' });
+  }
   if (result.ok) {
     return res.status(204).end();
   }

@@ -9,6 +9,7 @@ import {
   OGDialogFooter,
   OGDialogHeader,
   OGDialogTitle,
+  useToastContext,
 } from '@librechat/client';
 import {
   pendingMCPConfirmationsAtom,
@@ -17,6 +18,7 @@ import {
 } from '~/store/mcpConfirmation';
 import MarkdownLite from '~/components/Chat/Messages/Content/MarkdownLite';
 import { useAuthContext } from '~/hooks/AuthContext';
+import { useLocalize } from '~/hooks';
 
 type Decision = 'accept' | 'cancel';
 
@@ -151,25 +153,41 @@ function PresentationView({ presentation }: { presentation: MCPConfirmationPrese
   );
 }
 
+/**
+ * `expired` means the server no longer accepts a decision for this confirmation
+ * (it timed out, was already decided, or is not this user's); `failed` is
+ * transient and safe to retry.
+ */
+type DecisionDelivery = 'delivered' | 'expired' | 'failed';
+
 async function postDecision(
   confirmationId: string,
   decision: Decision,
   token: string | null | undefined,
-): Promise<void> {
-  await fetch(`/api/mcp/confirm/${encodeURIComponent(confirmationId)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ decision }),
-  });
+): Promise<DecisionDelivery> {
+  try {
+    const res = await fetch(`/api/mcp/confirm/${encodeURIComponent(confirmationId)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ decision }),
+    });
+    if (res.ok) return 'delivered';
+    return res.status === 404 || res.status === 403 ? 'expired' : 'failed';
+  } catch (err) {
+    console.error('Failed to submit MCP confirmation decision', err);
+    return 'failed';
+  }
 }
 
 export default function MCPConfirmationDialog() {
   const [queue, setQueue] = useRecoilState(pendingMCPConfirmationsAtom);
   const head = queue[0];
+  const localize = useLocalize();
   const { token } = useAuthContext();
+  const { showToast } = useToastContext();
   const [submitting, setSubmitting] = useState(false);
   const [remaining, setRemaining] = useState<number>(0);
 
@@ -213,9 +231,8 @@ export default function MCPConfirmationDialog() {
       if (ms <= 0 && !submittingRef.current) {
         if (autoCanceledRef.current !== head.confirmationId) {
           autoCanceledRef.current = head.confirmationId;
-          void postDecision(head.confirmationId, 'cancel', token).catch(() => {
-            // Server may have already resolved via its own TTL — fine.
-          });
+          // Server may have already resolved via its own TTL — fine.
+          void postDecision(head.confirmationId, 'cancel', token);
           popHead();
         }
       }
@@ -233,16 +250,18 @@ export default function MCPConfirmationDialog() {
   const handleDecision = async (decision: Decision) => {
     if (submitting) return;
     setSubmitting(true);
-    try {
-      await postDecision(head.confirmationId, decision, token);
-    } catch (err) {
-      // Network error — the server's TTL will eventually resolve as timeout.
-      // Surface to console so a developer sees it; don't block the UI.
-      console.error('Failed to submit MCP confirmation decision', err);
-    } finally {
-      setSubmitting(false);
-      popHead();
+    const delivery = await postDecision(head.confirmationId, decision, token);
+    setSubmitting(false);
+    // Keep the entry on a transient failure so the user can retry; the
+    // countdown still auto-cancels it at the deadline.
+    if (delivery === 'failed') {
+      showToast({ message: localize('com_ui_mcp_confirmation_send_failed'), status: 'error' });
+      return;
     }
+    if (delivery === 'expired' && decision === 'accept') {
+      showToast({ message: localize('com_ui_mcp_confirmation_expired'), status: 'error' });
+    }
+    popHead();
   };
 
   return (
@@ -261,7 +280,7 @@ export default function MCPConfirmationDialog() {
       >
         <OGDialogHeader
           data-testid="dialog-header"
-          className="flex-shrink-0 border-b border-border-light px-6 py-4 my-0"
+          className="my-0 flex-shrink-0 border-b border-border-light px-6 py-4"
         >
           <OGDialogTitle>
             {head.presentation?.title ?? `Confirm action: ${head.toolName}`}
@@ -279,7 +298,7 @@ export default function MCPConfirmationDialog() {
           )}
         </OGDialogHeader>
 
-        <div data-testid="dialog-body" className="flex-1 overflow-y-auto px-6 py-0 my-0">
+        <div data-testid="dialog-body" className="my-0 flex-1 overflow-y-auto px-6 py-0">
           <p className="mb-3 text-sm text-text-secondary">
             The model is requesting to run a tool that requires your approval. Review the call below
             before continuing.
