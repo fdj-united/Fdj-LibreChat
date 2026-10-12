@@ -22,6 +22,12 @@ jest.mock('~/hooks/AuthContext', () => ({
   useAuthContext: () => ({ token: 'test-token' }),
 }));
 
+jest.mock('~/hooks', () => ({
+  useLocalize: () => (key: string) => key,
+}));
+
+const mockShowToast = jest.fn();
+
 jest.mock('~/components/Chat/Messages/Content/MarkdownLite', () => ({
   __esModule: true,
   default: ({ content }: { content: string }) => <div data-testid="markdown-lite">{content}</div>,
@@ -34,6 +40,7 @@ jest.mock('@librechat/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react');
   return {
+    useToastContext: () => ({ showToast: mockShowToast }),
     OGDialog: ({ children, open }: any) => (open ? <div>{children}</div> : null),
     OGDialogContent: ({ children, className, ...props }: any) => (
       <div data-testid="dialog-root" className={className} {...props}>
@@ -78,6 +85,7 @@ jest.mock('lucide-react', () => ({
 
 // Stable global fetch mock — we never want a test to hit the real network.
 beforeEach(() => {
+  mockShowToast.mockClear();
   (global as any).fetch = jest.fn(() => Promise.resolve({ ok: true, status: 204 } as Response));
 });
 
@@ -163,6 +171,60 @@ describe('MCPConfirmationDialog queue mechanics', () => {
     expect(screen.getByText(/Confirm action: tool-B/)).toBeInTheDocument();
     // Badge hides because length is now 1.
     expect(screen.queryByText(/of \d+ pending/)).toBeNull();
+  });
+
+  test('an Accept for an expired confirmation pops the head and explains why', async () => {
+    (global as any).fetch = jest.fn(() => Promise.resolve({ ok: false, status: 404 } as Response));
+    renderWithQueue([makePending({ confirmationId: 'cid-A', toolName: 'tool-A' })]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Accept'));
+    });
+
+    expect(screen.queryByText(/Confirm action: tool-A/)).toBeNull();
+    expect(mockShowToast).toHaveBeenCalledWith({
+      message: 'com_ui_mcp_confirmation_expired',
+      status: 'error',
+    });
+  });
+
+  test.each([
+    ['a server error', () => Promise.resolve({ ok: false, status: 500 } as Response)],
+    ['a network error', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ])('an Accept that fails with %s stays open and can be retried', async (_label, failure) => {
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    (global as any).fetch = jest.fn(failure);
+    renderWithQueue([makePending({ confirmationId: 'cid-A', toolName: 'tool-A' })]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Accept'));
+    });
+
+    expect(screen.getByText(/Confirm action: tool-A/)).toBeInTheDocument();
+    expect(screen.getByText('Accept')).not.toBeDisabled();
+    expect(mockShowToast).toHaveBeenCalledWith({
+      message: 'com_ui_mcp_confirmation_send_failed',
+      status: 'error',
+    });
+
+    (global as any).fetch = jest.fn(() => Promise.resolve({ ok: true, status: 204 } as Response));
+    await act(async () => {
+      fireEvent.click(screen.getByText('Accept'));
+    });
+
+    expect(screen.queryByText(/Confirm action: tool-A/)).toBeNull();
+  });
+
+  test('a Cancel for an expired confirmation pops the head silently', async () => {
+    (global as any).fetch = jest.fn(() => Promise.resolve({ ok: false, status: 404 } as Response));
+    renderWithQueue([makePending({ confirmationId: 'cid-A', toolName: 'tool-A' })]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Cancel'));
+    });
+
+    expect(screen.queryByText(/Confirm action: tool-A/)).toBeNull();
+    expect(mockShowToast).not.toHaveBeenCalled();
   });
 
   test('clicking Cancel pops the head', async () => {
@@ -257,6 +319,27 @@ describe('MCPConfirmationDialog queue mechanics', () => {
     expect(screen.queryByText(/Confirm action: tool-A/)).toBeNull();
     expect(screen.getByText(/Confirm action: tool-B/)).toBeInTheDocument();
 
+    jest.useRealTimers();
+  });
+
+  test('a no-expiry confirmation shows no countdown and is never auto-canceled', async () => {
+    jest.useFakeTimers();
+    renderWithQueue([
+      makePending({
+        confirmationId: 'cid-A',
+        toolName: 'tool-A',
+        expiresInSeconds: 0,
+        deadline: null,
+      }),
+    ]);
+    expect(screen.queryByText(/Auto-cancels in/)).toBeNull();
+
+    await act(async () => {
+      jest.advanceTimersByTime(25 * 60 * 60 * 1_000);
+    });
+
+    expect(screen.getByText(/Confirm action: tool-A/)).toBeInTheDocument();
+    expect((global as any).fetch).not.toHaveBeenCalled();
     jest.useRealTimers();
   });
 

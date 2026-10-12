@@ -1,6 +1,13 @@
+import type {
+  ConfirmationRelay,
+  ConfirmationDecision,
+  ConfirmationResolution,
+} from '~/mcp/ConfirmationStore';
 import {
   ConfirmationStore,
+  confirmationWaitMs,
   parseConfirmationEnvelope,
+  NO_EXPIRY_CONFIRMATION_WAIT_MS,
 } from '~/mcp/ConfirmationStore';
 
 jest.mock('@librechat/data-schemas', () => ({
@@ -16,12 +23,12 @@ describe('ConfirmationStore', () => {
   describe('register / resolve', () => {
     it('resolves with the decision posted by the originating user', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
       expect(store.has(confirmationId)).toBe(true);
       expect(store.size()).toBe(1);
 
-      const result = store.resolve(confirmationId, 'user-1', 'accept');
+      const result = await store.resolve(confirmationId, 'user-1', 'accept');
       expect(result).toEqual({ ok: true });
 
       const outcome = await waitForDecision;
@@ -32,9 +39,9 @@ describe('ConfirmationStore', () => {
 
     it('cancel decisions are surfaced to the awaiting promise', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
-      store.resolve(confirmationId, 'user-1', 'cancel');
+      await store.resolve(confirmationId, 'user-1', 'cancel');
       const outcome = await waitForDecision;
       expect(outcome).toEqual({ decision: 'cancel' });
     });
@@ -50,7 +57,7 @@ describe('ConfirmationStore', () => {
 
     it('resolves with timeout when ttl elapses without a decision', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 1_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 1_000);
       expect(store.has(confirmationId)).toBe(true);
 
       jest.advanceTimersByTime(1_000);
@@ -62,20 +69,20 @@ describe('ConfirmationStore', () => {
 
     it('resolve called after timeout returns not_found', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 1_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 1_000);
 
       jest.advanceTimersByTime(1_000);
       await waitForDecision;
 
-      const result = store.resolve(confirmationId, 'user-1', 'accept');
+      const result = await store.resolve(confirmationId, 'user-1', 'accept');
       expect(result).toEqual({ ok: false, reason: 'not_found' });
     });
 
     it('does not invoke the timeout if resolved first', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 1_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 1_000);
 
-      store.resolve(confirmationId, 'user-1', 'accept');
+      await store.resolve(confirmationId, 'user-1', 'accept');
       jest.advanceTimersByTime(5_000);
 
       const outcome = await waitForDecision;
@@ -86,9 +93,9 @@ describe('ConfirmationStore', () => {
   describe('cross-user isolation', () => {
     it('rejects resolution attempts from a different userId without resolving', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
-      const result = store.resolve(confirmationId, 'user-2', 'accept');
+      const result = await store.resolve(confirmationId, 'user-2', 'accept');
       expect(result).toEqual({ ok: false, reason: 'forbidden' });
 
       // Promise must remain unresolved — confirm by racing it.
@@ -101,22 +108,22 @@ describe('ConfirmationStore', () => {
       expect(settled).toBe(false);
 
       // Originating user can still resolve.
-      store.resolve(confirmationId, 'user-1', 'accept');
+      await store.resolve(confirmationId, 'user-1', 'accept');
       await waitForDecision;
     });
 
-    it('returns not_found for unknown confirmationId', () => {
+    it('returns not_found for unknown confirmationId', async () => {
       const store = new ConfirmationStore();
-      const result = store.resolve('does-not-exist', 'user-1', 'accept');
+      const result = await store.resolve('does-not-exist', 'user-1', 'accept');
       expect(result).toEqual({ ok: false, reason: 'not_found' });
     });
 
     it('double-resolve is idempotent (second call returns not_found)', async () => {
       const store = new ConfirmationStore();
-      const { confirmationId, waitForDecision } = store.register('user-1', 5_000);
+      const { confirmationId, waitForDecision } = await store.register('user-1', 5_000);
 
-      const first = store.resolve(confirmationId, 'user-1', 'accept');
-      const second = store.resolve(confirmationId, 'user-1', 'cancel');
+      const first = await store.resolve(confirmationId, 'user-1', 'accept');
+      const second = await store.resolve(confirmationId, 'user-1', 'cancel');
       expect(first).toEqual({ ok: true });
       expect(second).toEqual({ ok: false, reason: 'not_found' });
 
@@ -126,22 +133,234 @@ describe('ConfirmationStore', () => {
   });
 
   describe('input validation', () => {
-    it('throws when userId is empty', () => {
+    it('rejects when userId is empty', async () => {
       const store = new ConfirmationStore();
-      expect(() => store.register('', 1_000)).toThrow(/userId/);
+      await expect(store.register('', 1_000)).rejects.toThrow(/userId/);
     });
 
-    it('throws on non-positive ttl', () => {
+    it('rejects on non-positive ttl', async () => {
       const store = new ConfirmationStore();
-      expect(() => store.register('u', 0)).toThrow(/ttlMs/);
-      expect(() => store.register('u', -1)).toThrow(/ttlMs/);
+      await expect(store.register('u', 0)).rejects.toThrow(/ttlMs/);
+      await expect(store.register('u', -1)).rejects.toThrow(/ttlMs/);
     });
 
-    it('produces unique confirmationIds across calls', () => {
+    it('produces unique confirmationIds across calls', async () => {
       const store = new ConfirmationStore();
-      const a = store.register('user-1', 5_000);
-      const b = store.register('user-1', 5_000);
+      const a = await store.register('user-1', 5_000);
+      const b = await store.register('user-1', 5_000);
       expect(a.confirmationId).not.toEqual(b.confirmationId);
+    });
+  });
+
+  describe('with a relay', () => {
+    interface SharedRecord {
+      owner: string;
+      decision?: ConfirmationDecision;
+    }
+
+    /** Stores sharing one in-process hub behave like replicas sharing Redis. */
+    function createRelayHub() {
+      const records = new Map<string, SharedRecord>();
+      const listeners = new Set<(id?: string) => void>();
+      const createRelay = (): ConfirmationRelay => ({
+        claim: async (id, userId) => {
+          records.set(id, { owner: userId });
+        },
+        decide: async (id, userId, decision): Promise<ConfirmationResolution> => {
+          const record = records.get(id);
+          if (!record) return { ok: false, reason: 'not_found' };
+          if (record.owner !== userId) return { ok: false, reason: 'forbidden' };
+          if (record.decision) return { ok: false, reason: 'not_found' };
+          record.decision = decision;
+          return { ok: true };
+        },
+        read: async (id) => records.get(id)?.decision ?? null,
+        notify: async (id) => {
+          listeners.forEach((listener) => listener(id));
+        },
+        listen: async (onNotify) => {
+          listeners.add(onNotify);
+        },
+        discard: async (id) => {
+          records.delete(id);
+        },
+        close: async () => undefined,
+      });
+      return { records, createRelay };
+    }
+
+    it('settles a confirmation registered on another replica', async () => {
+      const hub = createRelayHub();
+      const replicaA = new ConfirmationStore(hub.createRelay());
+      const replicaB = new ConfirmationStore(hub.createRelay());
+
+      const { confirmationId, waitForDecision } = await replicaA.register('user-1', 5_000);
+      const result = await replicaB.resolve(confirmationId, 'user-1', 'accept');
+
+      expect(result).toEqual({ ok: true });
+      await expect(waitForDecision).resolves.toEqual({ decision: 'accept' });
+      expect(replicaA.has(confirmationId)).toBe(false);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(hub.records.has(confirmationId)).toBe(false);
+    });
+
+    it('picks up a recorded decision by polling when the notification is lost', async () => {
+      const hub = createRelayHub();
+      const replicaA = new ConfirmationStore(hub.createRelay(), { pollIntervalMs: 10 });
+      const deaf: ConfirmationRelay = { ...hub.createRelay(), notify: async () => undefined };
+      const replicaB = new ConfirmationStore(deaf);
+
+      const { confirmationId, waitForDecision } = await replicaA.register('user-1', 5_000);
+      expect(await replicaB.resolve(confirmationId, 'user-1', 'accept')).toEqual({ ok: true });
+
+      await expect(waitForDecision).resolves.toEqual({ decision: 'accept' });
+    });
+
+    it('acknowledges only the first of a local and a remote decision', async () => {
+      const hub = createRelayHub();
+      const replicaA = new ConfirmationStore(hub.createRelay());
+      const replicaB = new ConfirmationStore(hub.createRelay());
+
+      const { confirmationId, waitForDecision } = await replicaA.register('user-1', 5_000);
+      const [remote, local] = await Promise.all([
+        replicaB.resolve(confirmationId, 'user-1', 'accept'),
+        replicaA.resolve(confirmationId, 'user-1', 'cancel'),
+      ]);
+
+      expect([remote, local].filter((result) => result.ok)).toHaveLength(1);
+      const outcome = await waitForDecision;
+      expect(outcome.decision).toBe(remote.ok ? 'accept' : 'cancel');
+    });
+
+    it('settles with a decision recorded before the deadline instead of timing out', async () => {
+      const hub = createRelayHub();
+      const replicaA = new ConfirmationStore(hub.createRelay(), { pollIntervalMs: 60_000 });
+      const deaf: ConfirmationRelay = { ...hub.createRelay(), notify: async () => undefined };
+      const replicaB = new ConfirmationStore(deaf);
+
+      const { confirmationId, waitForDecision } = await replicaA.register('user-1', 50);
+      await replicaB.resolve(confirmationId, 'user-1', 'accept');
+
+      await expect(waitForDecision).resolves.toEqual({ decision: 'accept' });
+    });
+
+    it('rejects decisions that arrive after the timeout was recorded', async () => {
+      const hub = createRelayHub();
+      const replicaA = new ConfirmationStore(hub.createRelay());
+      const replicaB = new ConfirmationStore(hub.createRelay());
+
+      const { confirmationId, waitForDecision } = await replicaA.register('user-1', 20);
+      await expect(waitForDecision).resolves.toEqual({ decision: 'timeout' });
+
+      expect(await replicaB.resolve(confirmationId, 'user-1', 'accept')).toEqual({
+        ok: false,
+        reason: 'not_found',
+      });
+    });
+
+    it('starts the TTL only after the confirmation is shared', async () => {
+      const hub = createRelayHub();
+      const relay = hub.createRelay();
+      const slowRelay: ConfirmationRelay = {
+        ...relay,
+        claim: async (...args) => {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          await relay.claim(...args);
+        },
+      };
+      const store = new ConfirmationStore(slowRelay);
+
+      const { confirmationId } = await store.register('user-1', 40);
+
+      expect(store.has(confirmationId)).toBe(true);
+      expect(await store.resolve(confirmationId, 'user-1', 'accept')).toEqual({ ok: true });
+    });
+
+    it('enforces ownership across replicas', async () => {
+      const hub = createRelayHub();
+      const replicaA = new ConfirmationStore(hub.createRelay());
+      const replicaB = new ConfirmationStore(hub.createRelay());
+
+      const { confirmationId } = await replicaA.register('user-1', 5_000);
+
+      expect(await replicaB.resolve(confirmationId, 'user-2', 'accept')).toEqual({
+        ok: false,
+        reason: 'forbidden',
+      });
+      expect(replicaA.has(confirmationId)).toBe(true);
+      await replicaA.resolve(confirmationId, 'user-1', 'cancel');
+    });
+
+    it('releases the shared record when resolved locally', async () => {
+      const hub = createRelayHub();
+      const replicaA = new ConfirmationStore(hub.createRelay());
+      const replicaB = new ConfirmationStore(hub.createRelay());
+
+      const { confirmationId } = await replicaA.register('user-1', 5_000);
+      await replicaA.resolve(confirmationId, 'user-1', 'accept');
+      await Promise.resolve();
+
+      expect(await replicaB.resolve(confirmationId, 'user-1', 'cancel')).toEqual({
+        ok: false,
+        reason: 'not_found',
+      });
+    });
+
+    it('fails closed when the claim fails, even if Redis applied it', async () => {
+      const hub = createRelayHub();
+      const relay = hub.createRelay();
+      const lostReply: ConfirmationRelay = {
+        ...relay,
+        claim: async (...args) => {
+          await relay.claim(...args);
+          throw new Error('Connection lost before the reply');
+        },
+      };
+      const store = new ConfirmationStore(lostReply);
+
+      await expect(store.register('user-1', 5_000)).rejects.toThrow(/Connection lost/);
+      expect(store.size()).toBe(0);
+    });
+
+    it('relies on polling when the notification subscription fails', async () => {
+      const hub = createRelayHub();
+      const relay: ConfirmationRelay = {
+        ...hub.createRelay(),
+        listen: async () => {
+          throw new Error('subscribe failed');
+        },
+      };
+      const replicaA = new ConfirmationStore(relay, { pollIntervalMs: 10 });
+      const replicaB = new ConfirmationStore(hub.createRelay());
+
+      const { confirmationId, waitForDecision } = await replicaA.register('user-1', 5_000);
+      expect(await replicaB.resolve(confirmationId, 'user-1', 'accept')).toEqual({ ok: true });
+
+      await expect(waitForDecision).resolves.toEqual({ decision: 'accept' });
+    });
+
+    it('keeps a timed-out entry pending while the shared record is unreachable', async () => {
+      const hub = createRelayHub();
+      const relay = hub.createRelay();
+      let failedTimeouts = 0;
+      const flaky: ConfirmationRelay = {
+        ...relay,
+        decide: async (id, userId, decision) => {
+          if (decision === 'timeout' && failedTimeouts++ === 0) {
+            throw new Error('Connection lost before the reply');
+          }
+          return relay.decide(id, userId, decision);
+        },
+      };
+      const deaf: ConfirmationRelay = { ...hub.createRelay(), notify: async () => undefined };
+      const replicaA = new ConfirmationStore(flaky, { pollIntervalMs: 60_000 });
+      const replicaB = new ConfirmationStore(deaf);
+
+      const { confirmationId, waitForDecision } = await replicaA.register('user-1', 20);
+      await replicaB.resolve(confirmationId, 'user-1', 'accept');
+
+      await expect(waitForDecision).resolves.toEqual({ decision: 'accept' });
+      expect(failedTimeouts).toBe(2);
     });
   });
 });
@@ -199,6 +418,17 @@ describe('parseConfirmationEnvelope', () => {
     expect(parseConfirmationEnvelope(undefined)).toBeNull();
     expect(parseConfirmationEnvelope([])).toBeNull();
     expect(parseConfirmationEnvelope([null, undefined])).toBeNull();
+  });
+
+  it('keeps expiresInSeconds 0 as "no expiry"', () => {
+    const text = JSON.stringify({ confirmationRequired: true, preview: 'p', expiresInSeconds: 0 });
+    expect(parseConfirmationEnvelope([text, undefined])?.expiresInSeconds).toBe(0);
+  });
+
+  it('maps envelope expiry to a server-side wait, capping "no expiry"', () => {
+    expect(confirmationWaitMs(0)).toBe(NO_EXPIRY_CONFIRMATION_WAIT_MS);
+    expect(confirmationWaitMs(90)).toBe(90_000);
+    expect(confirmationWaitMs(0.05)).toBe(1_000);
   });
 
   it('clamps invalid expiresInSeconds to a sane default', () => {
@@ -269,12 +499,8 @@ describe('parseConfirmationEnvelope', () => {
     });
 
     it('drops the whole presentation when fields is missing or empty', () => {
-      expect(
-        parseConfirmationEnvelope(envelopeWith({ title: 't' }))?.presentation,
-      ).toBeUndefined();
-      expect(
-        parseConfirmationEnvelope(envelopeWith({ fields: [] }))?.presentation,
-      ).toBeUndefined();
+      expect(parseConfirmationEnvelope(envelopeWith({ title: 't' }))?.presentation).toBeUndefined();
+      expect(parseConfirmationEnvelope(envelopeWith({ fields: [] }))?.presentation).toBeUndefined();
     });
 
     it('rejects unknown format / importance enum values', () => {

@@ -71,4 +71,12 @@ describe('enqueueMCPConfirmation', () => {
     expect(result[0].deadline).toBeGreaterThanOrEqual(before + 60_000);
     expect(result[0].deadline).toBeLessThanOrEqual(after + 60_000);
   });
+
+  test('has no deadline when the gateway disabled expiry', () => {
+    const result = enqueueMCPConfirmation(
+      [],
+      makeIncoming({ confirmationId: 'cid-A', expiresInSeconds: 0 }),
+    );
+    expect(result[0].deadline).toBeNull();
+  });
 });

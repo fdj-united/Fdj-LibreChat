@@ -94,7 +94,7 @@ jest.mock('~/server/middleware', () => ({
 // ---------------------------------------------------------------------------
 
 const { createToolInstance } = require('~/server/services/MCP');
-const { getConfirmationStore } = require('@librechat/api');
+const { getConfirmationStore, NO_EXPIRY_CONFIRMATION_WAIT_MS } = require('@librechat/api');
 const mcpRoutes = require('~/server/routes/mcp');
 
 // ---------------------------------------------------------------------------
@@ -310,6 +310,87 @@ describe('MCP confirmation flow (integration)', () => {
     expect(contentArr[0].text).not.toContain('confirmationRequired');
   });
 
+  it('registration failure → fails closed without prompting or re-issuing the call', async () => {
+    mockCallTool.mockResolvedValueOnce(buildEnvelopeResult(provider)).mockResolvedValue([]);
+    jest
+      .spyOn(getConfirmationStore(), 'register')
+      .mockRejectedValueOnce(new Error('Connection lost before the reply'));
+
+    const res = makeFakeRes();
+    const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
+      res,
+      toolName: 'send_chat_message',
+      serverName: 'ms365',
+      provider,
+      toolDefinition: {
+        description: 'd',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+    });
+
+    const config = makeToolCallConfig({ user: { id: 'user-1' }, provider });
+    const result = await tool.func(
+      { chatId: '19:x', body: 'hi' },
+      { getChild: () => undefined },
+      config,
+    );
+
+    expect(res.parseEvents().find((e) => e.event === 'mcp_confirmation_required')).toBeUndefined();
+    expect(mockCallTool).toHaveBeenCalledTimes(2);
+    expect(mockCallTool.mock.calls[1][0].toolArguments).toMatchObject({
+      __mcp_clear_pending__: true,
+    });
+    expect(result[0][0].text).toContain('Confirmation could not be requested');
+  });
+
+  it('no-expiry envelope → waits under the safety cap and still accepts', async () => {
+    const envelope = JSON.stringify({
+      confirmationRequired: true,
+      preview: 'Tool: send-chat-message',
+      expiresInSeconds: 0,
+    });
+    mockCallTool
+      .mockResolvedValueOnce([[{ type: 'text', text: envelope }], undefined])
+      .mockResolvedValueOnce(buildRealResult(provider));
+    const registerSpy = jest.spyOn(getConfirmationStore(), 'register');
+
+    const res = makeFakeRes();
+    const tool = createToolInstance({
+      mcpPermissionContext: { canUseServers: () => true },
+      res,
+      toolName: 'send_chat_message',
+      serverName: 'ms365',
+      provider,
+      toolDefinition: {
+        description: 'd',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+    });
+
+    const args = { chatId: '19:x', body: 'hi' };
+    const config = makeToolCallConfig({ user: { id: 'user-1' }, provider });
+    const callPromise = tool.func(args, { getChild: () => undefined }, config);
+
+    let event = null;
+    for (let i = 0; i < 50 && !event; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      event = res.parseEvents().find((e) => e.event === 'mcp_confirmation_required');
+    }
+    expect(event?.data.expiresInSeconds).toBe(0);
+    expect(registerSpy).toHaveBeenCalledWith('user-1', NO_EXPIRY_CONFIRMATION_WAIT_MS);
+
+    const httpRes = await request(buildApp())
+      .post(`/api/mcp/confirm/${event.data.confirmationId}`)
+      .send({ decision: 'accept' });
+    expect(httpRes.status).toBe(204);
+
+    const result = await callPromise;
+    expect(mockCallTool).toHaveBeenCalledTimes(2);
+    expect(result[0][0].text).toContain('"success":true');
+    registerSpy.mockRestore();
+  });
+
   it('TTL expiry → wrapper synthesizes canceled stub', async () => {
     // Override expiresInSeconds via a minimal envelope so we don't wait minutes.
     const envelope = JSON.stringify({
@@ -377,7 +458,7 @@ describe('MCP confirmation flow (integration)', () => {
 
   it('REST endpoint rejects resolution attempts from a different user', async () => {
     const store = getConfirmationStore();
-    const { confirmationId } = store.register('user-1', 5_000);
+    const { confirmationId } = await store.register('user-1', 5_000);
 
     const app = express();
     app.use(express.json());
@@ -394,7 +475,7 @@ describe('MCP confirmation flow (integration)', () => {
 
     // Confirmation must still exist for the legitimate owner.
     expect(store.has(confirmationId)).toBe(true);
-    store.resolve(confirmationId, 'user-1', 'cancel');
+    await store.resolve(confirmationId, 'user-1', 'cancel');
   });
 
   it('REST endpoint validates body and confirmationId', async () => {
