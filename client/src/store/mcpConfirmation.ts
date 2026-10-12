@@ -21,6 +21,7 @@ export interface MCPPendingConfirmation {
   serverName: string;
   toolName: string;
   preview: string;
+  /** `0` when the gateway disabled expiry for this tool. */
   expiresInSeconds: number;
   /** Server-supplied; informational only. Use `deadline` for the countdown — server clocks may drift. */
   expiresAt: number;
@@ -35,9 +36,9 @@ export interface MCPPendingConfirmation {
    * Client-computed epoch-ms deadline, set on SSE arrival. Used by the dialog
    * so an entry queued for N seconds before becoming the head still has the
    * correct remaining time when it surfaces. Replaces the previous in-dialog
-   * `deadlineRef` mechanism.
+   * `deadlineRef` mechanism. `null` means no countdown and no auto-cancel.
    */
-  deadline: number;
+  deadline: number | null;
 }
 
 /**
