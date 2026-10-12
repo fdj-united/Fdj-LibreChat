@@ -40,6 +40,7 @@ import {
   streamStatusQueryKey,
 } from '~/data-provider';
 import useEventHandlers, { buildCreatedInitialResponse } from './useEventHandlers';
+import { enqueueMCPConfirmation } from './enqueueMCPConfirmation';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useUsageHandler from './useUsageHandler';
 import store, { pendingMCPConfirmationsAtom } from '~/store';
@@ -600,17 +601,7 @@ export default function useResumableSSE(
           }
 
           if (data.event === 'mcp_confirmation_required') {
-            setPendingMCPConfirmations((prev) =>
-              prev.some((p) => p.confirmationId === data.data.confirmationId)
-                ? prev
-                : [
-                    ...prev,
-                    {
-                      ...data.data,
-                      deadline: Date.now() + data.data.expiresInSeconds * 1000,
-                    },
-                  ],
-            );
+            setPendingMCPConfirmations((prev) => enqueueMCPConfirmation(prev, data.data));
             return;
           }
 
@@ -794,15 +785,7 @@ export default function useResumableSSE(
               for (const pendingEvent of data.pendingEvents) {
                 if (pendingEvent.event === 'mcp_confirmation_required') {
                   setPendingMCPConfirmations((prev) =>
-                    prev.some((p) => p.confirmationId === pendingEvent.data.confirmationId)
-                      ? prev
-                      : [
-                          ...prev,
-                          {
-                            ...pendingEvent.data,
-                            deadline: Date.now() + pendingEvent.data.expiresInSeconds * 1000,
-                          },
-                        ],
+                    enqueueMCPConfirmation(prev, pendingEvent.data),
                   );
                 } else if (pendingEvent.event === 'title') {
                   titleHandler(pendingEvent);
@@ -1145,6 +1128,7 @@ export default function useResumableSSE(
       finalizeUsage,
       backfillUsage,
       resetLive,
+      setPendingMCPConfirmations,
       seedLive,
     ],
   );

@@ -322,6 +322,27 @@ describe('MCPConfirmationDialog queue mechanics', () => {
     jest.useRealTimers();
   });
 
+  test('a no-expiry confirmation shows no countdown and is never auto-canceled', async () => {
+    jest.useFakeTimers();
+    renderWithQueue([
+      makePending({
+        confirmationId: 'cid-A',
+        toolName: 'tool-A',
+        expiresInSeconds: 0,
+        deadline: null,
+      }),
+    ]);
+    expect(screen.queryByText(/Auto-cancels in/)).toBeNull();
+
+    await act(async () => {
+      jest.advanceTimersByTime(25 * 60 * 60 * 1_000);
+    });
+
+    expect(screen.getByText(/Confirm action: tool-A/)).toBeInTheDocument();
+    expect((global as any).fetch).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
   test('renders markdown-format field content via MarkdownLite (not <pre>)', () => {
     const head = makePending({
       confirmationId: 'cid-md',
