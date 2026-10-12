@@ -26,7 +26,8 @@ export function enqueueMCPConfirmation(
     ...prev,
     {
       ...incoming,
-      deadline: Date.now() + incoming.expiresInSeconds * 1000,
+      deadline:
+        incoming.expiresInSeconds > 0 ? Date.now() + incoming.expiresInSeconds * 1000 : null,
     },
   ];
 }

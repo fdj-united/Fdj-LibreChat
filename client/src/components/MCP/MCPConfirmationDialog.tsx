@@ -214,14 +214,15 @@ export default function MCPConfirmationDialog() {
   };
 
   useEffect(() => {
-    if (!head) {
+    const deadline = head?.deadline ?? null;
+    if (!head || deadline === null) {
       setRemaining(0);
       return;
     }
     autoCanceledRef.current = null;
 
     const tick = () => {
-      const ms = head.deadline - Date.now();
+      const ms = deadline - Date.now();
       setRemaining(Math.max(0, Math.ceil(ms / 1000)));
       // Skip auto-cancel while a user-initiated decision is in flight —
       // the in-flight handleDecision will pop the head when it resolves,
@@ -346,7 +347,9 @@ export default function MCPConfirmationDialog() {
           data-testid="dialog-footer"
           className="flex flex-shrink-0 items-center border-t border-border-light px-6 py-3"
         >
-          <p className="mr-auto text-xs text-text-secondary">Auto-cancels in {remaining}s</p>
+          <p className="mr-auto text-xs text-text-secondary">
+            {head.deadline !== null && `Auto-cancels in ${remaining}s`}
+          </p>
           <div className="flex gap-2">
             <Button
               variant="outline"
