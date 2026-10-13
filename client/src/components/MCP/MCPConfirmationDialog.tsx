@@ -7,6 +7,7 @@ import {
   OGDialogFooter,
   OGDialogHeader,
   OGDialogTitle,
+  useToastContext,
 } from '@librechat/client';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuthContext } from '~/hooks/AuthContext';
@@ -16,6 +17,7 @@ import {
   type MCPConfirmationPresentation,
   type PresentationField,
 } from '~/store/mcpConfirmation';
+import { useLocalize } from '~/hooks';
 
 type Decision = 'accept' | 'cancel';
 
@@ -150,25 +152,41 @@ function PresentationView({ presentation }: { presentation: MCPConfirmationPrese
   );
 }
 
+/**
+ * `expired` means the server no longer accepts a decision for this confirmation
+ * (it timed out, was already decided, or is not this user's); `failed` is
+ * transient and safe to retry.
+ */
+type DecisionDelivery = 'delivered' | 'expired' | 'failed';
+
 async function postDecision(
   confirmationId: string,
   decision: Decision,
   token: string | null | undefined,
-): Promise<void> {
-  await fetch(`/api/mcp/confirm/${encodeURIComponent(confirmationId)}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ decision }),
-  });
+): Promise<DecisionDelivery> {
+  try {
+    const res = await fetch(`/api/mcp/confirm/${encodeURIComponent(confirmationId)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ decision }),
+    });
+    if (res.ok) return 'delivered';
+    return res.status === 404 || res.status === 403 ? 'expired' : 'failed';
+  } catch (err) {
+    console.error('Failed to submit MCP confirmation decision', err);
+    return 'failed';
+  }
 }
 
 export default function MCPConfirmationDialog() {
   const [queue, setQueue] = useRecoilState(pendingMCPConfirmationsAtom);
   const head = queue[0];
+  const localize = useLocalize();
   const { token } = useAuthContext();
+  const { showToast } = useToastContext();
   const [submitting, setSubmitting] = useState(false);
   const [remaining, setRemaining] = useState<number>(0);
 
@@ -195,14 +213,15 @@ export default function MCPConfirmationDialog() {
   };
 
   useEffect(() => {
-    if (!head) {
+    const deadline = head?.deadline ?? null;
+    if (!head || deadline === null) {
       setRemaining(0);
       return;
     }
     autoCanceledRef.current = null;
 
     const tick = () => {
-      const ms = head.deadline - Date.now();
+      const ms = deadline - Date.now();
       setRemaining(Math.max(0, Math.ceil(ms / 1000)));
       // Skip auto-cancel while a user-initiated decision is in flight —
       // the in-flight handleDecision will pop the head when it resolves,
@@ -212,9 +231,8 @@ export default function MCPConfirmationDialog() {
       if (ms <= 0 && !submittingRef.current) {
         if (autoCanceledRef.current !== head.confirmationId) {
           autoCanceledRef.current = head.confirmationId;
-          void postDecision(head.confirmationId, 'cancel', token).catch(() => {
-            // Server may have already resolved via its own TTL — fine.
-          });
+          // Server may have already resolved via its own TTL — fine.
+          void postDecision(head.confirmationId, 'cancel', token);
           popHead();
         }
       }
@@ -232,16 +250,18 @@ export default function MCPConfirmationDialog() {
   const handleDecision = async (decision: Decision) => {
     if (submitting) return;
     setSubmitting(true);
-    try {
-      await postDecision(head.confirmationId, decision, token);
-    } catch (err) {
-      // Network error — the server's TTL will eventually resolve as timeout.
-      // Surface to console so a developer sees it; don't block the UI.
-      console.error('Failed to submit MCP confirmation decision', err);
-    } finally {
-      setSubmitting(false);
-      popHead();
+    const delivery = await postDecision(head.confirmationId, decision, token);
+    setSubmitting(false);
+    // Keep the entry on a transient failure so the user can retry; the
+    // countdown still auto-cancels it at the deadline.
+    if (delivery === 'failed') {
+      showToast({ message: localize('com_ui_mcp_confirmation_send_failed'), status: 'error' });
+      return;
     }
+    if (delivery === 'expired' && decision === 'accept') {
+      showToast({ message: localize('com_ui_mcp_confirmation_expired'), status: 'error' });
+    }
+    popHead();
   };
 
   return (
@@ -326,7 +346,9 @@ export default function MCPConfirmationDialog() {
           data-testid="dialog-footer"
           className="flex flex-shrink-0 items-center border-t border-border-light px-6 py-3"
         >
-          <p className="mr-auto text-xs text-text-secondary">Auto-cancels in {remaining}s</p>
+          <p className="mr-auto text-xs text-text-secondary">
+            {head.deadline !== null && `Auto-cancels in ${remaining}s`}
+          </p>
           <div className="flex gap-2">
             <Button
               variant="outline"
