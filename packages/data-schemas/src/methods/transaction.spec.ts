@@ -47,6 +47,7 @@ let findBalancesByUsers: ReturnType<typeof createTransactionMethods>['findBalanc
 let createAutoRefillTransaction: ReturnType<
   typeof createTransactionMethods
 >['createAutoRefillTransaction'];
+let maybeApplyAutoRefill: ReturnType<typeof createTransactionMethods>['maybeApplyAutoRefill'];
 let getMultiplier: ReturnType<typeof createTxMethods>['getMultiplier'];
 let getCacheMultiplier: ReturnType<typeof createTxMethods>['getCacheMultiplier'];
 let balanceRequestMethods: ReturnType<typeof createBalanceRequestMethods>;
@@ -93,6 +94,7 @@ beforeAll(async () => {
   ensureTransactionIdempotencyIndex = transactionMethods.ensureTransactionIdempotencyIndex;
   findBalancesByUsers = transactionMethods.findBalancesByUsers;
   createAutoRefillTransaction = transactionMethods.createAutoRefillTransaction;
+  maybeApplyAutoRefill = transactionMethods.maybeApplyAutoRefill;
 
   const spendMethods = createSpendTokensMethods(mongoose, {
     createTransaction: transactionMethods.createTransaction,
@@ -2387,5 +2389,93 @@ describe('createAutoRefillTransaction', () => {
     // 1000 on top of it.
     const finalBalance = await Balance.findOne({ user }).lean();
     expect(finalBalance?.tokenCredits).toBe(500);
+  });
+});
+
+describe('maybeApplyAutoRefill', () => {
+  test('returns the current balance unchanged when it is already positive, without reading the balance record', async () => {
+    const user = new mongoose.Types.ObjectId();
+    // Deliberately no Balance document for this user — if this read the
+    // record at all it would see `null` and this assertion would still
+    // pass by accident, so the real signal is `createAutoRefillTransaction`
+    // never getting a chance to run at all (verified below by balance
+    // staying absent).
+    const result = await maybeApplyAutoRefill(user.toString(), 500);
+
+    expect(result).toBe(500);
+    const balance = await Balance.findOne({ user }).lean();
+    expect(balance).toBeNull();
+  });
+
+  test('returns the authoritative stored balance, not the stale caller-supplied one, when a concurrent refill already landed', async () => {
+    // The exact race the review flagged: this call started believing the
+    // balance was still 0, but by the time it reads the record, a
+    // concurrent caller (another tab's balance poll, a message send) has
+    // already refilled it — `lastRefill` is now `now`, which correctly
+    // makes *this* call ineligible for a second refill of the same window.
+    // That verdict is about whether to refill again, not about what the
+    // balance actually is — it must not echo back the stale `0` the caller
+    // passed in.
+    const user = new mongoose.Types.ObjectId();
+    await Balance.create({
+      user,
+      tokenCredits: 1000,
+      autoRefillEnabled: true,
+      refillAmount: 1000,
+      refillIntervalValue: 1,
+      refillIntervalUnit: 'days',
+      lastRefill: new Date(),
+    });
+
+    const result = await maybeApplyAutoRefill(user.toString(), 0);
+
+    expect(result).toBe(1000);
+  });
+
+  test('returns the authoritative stored balance when auto-refill is disabled on the record, not the stale caller-supplied one', async () => {
+    const user = new mongoose.Types.ObjectId();
+    await Balance.create({ user, tokenCredits: 750, autoRefillEnabled: false });
+
+    const result = await maybeApplyAutoRefill(user.toString(), 0);
+
+    expect(result).toBe(750);
+  });
+
+  test('still returns the stale caller-supplied balance unchanged in the ordinary (non-racy) ineligible case', async () => {
+    const user = new mongoose.Types.ObjectId();
+    const lastRefill = new Date();
+    await Balance.create({
+      user,
+      tokenCredits: 0,
+      autoRefillEnabled: true,
+      refillAmount: 1000,
+      refillIntervalValue: 1,
+      refillIntervalUnit: 'days',
+      lastRefill,
+    });
+
+    const result = await maybeApplyAutoRefill(user.toString(), 0);
+
+    expect(result).toBe(0);
+  });
+
+  test('applies and returns the refill normally when eligible', async () => {
+    const user = new mongoose.Types.ObjectId();
+    const overdueLastRefill = new Date('2020-01-01T00:00:00.000Z');
+    await Balance.create({
+      user,
+      tokenCredits: 0,
+      autoRefillEnabled: true,
+      refillAmount: 1000,
+      refillIntervalValue: 1,
+      refillIntervalUnit: 'days',
+      lastRefill: overdueLastRefill,
+    });
+
+    const result = await maybeApplyAutoRefill(user.toString(), 0);
+
+    expect(result).toBe(1000);
+    const balance = await Balance.findOne({ user }).lean();
+    expect(balance?.tokenCredits).toBe(1000);
   });
 });

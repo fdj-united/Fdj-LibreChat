@@ -4,6 +4,7 @@ const {
   findBalanceByUser,
   findPendingBalanceRequestByUser,
   createBalanceRequest,
+  maybeApplyAutoRefill,
 } = require('~/models');
 
 const handlers = createBalanceHandlers({
@@ -11,6 +12,7 @@ const handlers = createBalanceHandlers({
   findPendingBalanceRequestByUser,
   createBalanceRequest,
   getAppConfig,
+  maybeApplyAutoRefill,
 });
 
 module.exports = handlers;

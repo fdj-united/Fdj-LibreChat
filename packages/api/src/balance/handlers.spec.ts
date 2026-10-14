@@ -55,6 +55,7 @@ function createDeps(overrides: Partial<BalanceDeps> = {}): BalanceDeps {
     findPendingBalanceRequestByUser: jest.fn().mockResolvedValue(null),
     createBalanceRequest: jest.fn().mockResolvedValue(mockPendingRequest()),
     getAppConfig: jest.fn().mockResolvedValue({ balance: { enabled: true } }),
+    maybeApplyAutoRefill: jest.fn().mockImplementation((_user, currentBalance) => currentBalance),
     ...overrides,
   };
 }
@@ -210,6 +211,126 @@ describe('createBalanceHandlers', () => {
           'tokenCredits',
         ].sort(),
       );
+    });
+
+    describe('auto-refill', () => {
+      it('checks eligibility on every read, passing the user id and current balance through', async () => {
+        const deps = createDeps({
+          findBalanceByUser: jest
+            .fn()
+            .mockResolvedValue(mockBalance({ tokenCredits: 0, autoRefillEnabled: true })),
+        });
+        const handlers = createBalanceHandlers(deps);
+        const { req, res } = createReqRes({
+          user: { id: 'user-1' },
+          locals: { balanceConfigEnabled: true },
+        });
+
+        await handlers.getBalance(req, res);
+
+        expect(deps.maybeApplyAutoRefill).toHaveBeenCalledWith('user-1', 0);
+      });
+
+      it('re-reads the balance when a refill was applied, returning the refreshed value instead of the stale read', async () => {
+        // Simulates the overdue-refill race this fix closes: the first read
+        // is a stale zero, `maybeApplyAutoRefill` applies the refill behind
+        // the scenes, and the response must reflect the post-refill state —
+        // not the balance this handler happened to read a moment earlier.
+        const staleBalance = mockBalance({
+          tokenCredits: 0,
+          autoRefillEnabled: true,
+          lastRefill: new Date('2020-01-01'),
+        });
+        const refreshedBalance = mockBalance({
+          tokenCredits: 1000,
+          autoRefillEnabled: true,
+          lastRefill: new Date('2026-10-13'),
+        });
+        const findBalanceByUser = jest
+          .fn()
+          .mockResolvedValueOnce(staleBalance)
+          .mockResolvedValueOnce(refreshedBalance);
+        const deps = createDeps({
+          findBalanceByUser,
+          maybeApplyAutoRefill: jest.fn().mockResolvedValue(1000),
+        });
+        const handlers = createBalanceHandlers(deps);
+        const { req, res, json } = createReqRes({ locals: { balanceConfigEnabled: true } });
+
+        await handlers.getBalance(req, res);
+
+        expect(findBalanceByUser).toHaveBeenCalledTimes(2);
+        const response = json.mock.calls[0][0];
+        expect(response.tokenCredits).toBe(1000);
+        expect(response.lastRefill).toEqual(new Date('2026-10-13'));
+      });
+
+      it('does not re-read the balance when no refill was applied', async () => {
+        const deps = createDeps();
+        const handlers = createBalanceHandlers(deps);
+        const balanceData = mockBalance({ tokenCredits: 1000, autoRefillEnabled: true });
+        const { req, res } = createReqRes({
+          locals: { balanceConfigEnabled: true, balanceData },
+        });
+
+        await handlers.getBalance(req, res);
+
+        expect(deps.findBalanceByUser).not.toHaveBeenCalled();
+      });
+
+      it('still checks eligibility even when balance data came from middleware locals', async () => {
+        const deps = createDeps();
+        const handlers = createBalanceHandlers(deps);
+        const balanceData = mockBalance({ tokenCredits: 0, autoRefillEnabled: true });
+        const { req, res } = createReqRes({
+          user: { id: 'user-1' },
+          locals: { balanceConfigEnabled: true, balanceData },
+        });
+
+        await handlers.getBalance(req, res);
+
+        expect(deps.maybeApplyAutoRefill).toHaveBeenCalledWith('user-1', 0);
+      });
+
+      it('never attempts a refill when the live config has disabled it, even if the stored document still says enabled', async () => {
+        // The exact gap this closes: `createSetBalanceConfig` only ever
+        // fills a missing `autoRefillEnabled` in — it never clears a
+        // previously-stored `true` back to `false` once an admin disables
+        // auto-refill live. Without checking the live config first, merely
+        // loading this page would still apply an unauthorized refill.
+        const deps = createDeps({
+          getAppConfig: jest.fn().mockResolvedValue({
+            balance: { enabled: true, autoRefillEnabled: false },
+          }),
+        });
+        const handlers = createBalanceHandlers(deps);
+        const balanceData = mockBalance({ tokenCredits: 0, autoRefillEnabled: true });
+        const { req, res, json } = createReqRes({
+          locals: { balanceConfigEnabled: true, balanceData },
+        });
+
+        await handlers.getBalance(req, res);
+
+        expect(deps.maybeApplyAutoRefill).not.toHaveBeenCalled();
+        const response = json.mock.calls[0][0];
+        expect(response.autoRefillEnabled).toBe(false);
+      });
+
+      it('still refills when the live config is silent on autoRefillEnabled, falling back to the stored value', async () => {
+        const deps = createDeps({
+          getAppConfig: jest.fn().mockResolvedValue({ balance: { enabled: true } }),
+        });
+        const handlers = createBalanceHandlers(deps);
+        const balanceData = mockBalance({ tokenCredits: 0, autoRefillEnabled: true });
+        const { req, res } = createReqRes({
+          user: { id: 'user-1' },
+          locals: { balanceConfigEnabled: true, balanceData },
+        });
+
+        await handlers.getBalance(req, res);
+
+        expect(deps.maybeApplyAutoRefill).toHaveBeenCalledWith('user-1', 0);
+      });
     });
   });
 

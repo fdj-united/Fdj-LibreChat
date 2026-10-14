@@ -1001,14 +1001,44 @@ export function createTransactionMethods(
     };
   }
 
-  /** Applies a due auto-refill after a real spend exhausts the balance. */
+  /**
+   * If `currentBalance` is exhausted (`<= 0`) and the user's auto-refill is
+   * configured and due, applies it and returns the refilled balance;
+   * otherwise returns the authoritative current balance unchanged.
+   *
+   * This exists because the balance-check gate (`checkBalanceRecord` in
+   * `packages/api`) only ever re-checks refill eligibility against the
+   * *prompt*-token cost, before generation starts — never against the
+   * *completion*-token cost, which is what actually lands a user at zero.
+   * `spendTokens`/`spendStructuredTokens` call this after applying the real
+   * completion deduction specifically to close that gap: without it, a
+   * refill that becomes due at the exact moment a message's completion
+   * tokens exhaust the balance is silently skipped until the user's *next*
+   * message happens to trigger the pre-flight check again.
+   *
+   * Every bail-out path *after* the initial read below returns
+   * `record.tokenCredits`, not the caller-supplied `currentBalance` — a
+   * concurrent caller (another tab's balance poll, a message send) can
+   * complete the refill between the caller's own read and this function's
+   * read of `record`. When that happens, `record.lastRefill` already
+   * reflects the just-applied refill, which makes *this* call correctly see
+   * itself as "not eligible" (it would be a second refill for the same
+   * window) — but that's a verdict about whether to refill *again*, not
+   * about what the balance actually is right now. Echoing back the
+   * caller's stale parameter in that case would silently discard the
+   * now-fresher `record.tokenCredits` a caller like `getBalanceHandler`
+   * relies on to decide whether its own response needs re-reading.
+   */
   async function maybeApplyAutoRefill(user: string, currentBalance: number): Promise<number> {
     if (currentBalance > 0) {
       return currentBalance;
     }
     const record = await findBalanceByUser(user);
-    if (!record || !isAutoRefillDue(record, new Date())) {
+    if (!record) {
       return currentBalance;
+    }
+    if (!isAutoRefillDue(record, new Date())) {
+      return record.tokenCredits;
     }
     try {
       const result = await createAutoRefillTransaction(
@@ -1024,10 +1054,10 @@ export function createTransactionMethods(
         return result.balance;
       }
       const fresh = await findBalanceByUser(user);
-      return fresh?.tokenCredits ?? currentBalance;
+      return fresh?.tokenCredits ?? record.tokenCredits;
     } catch (error) {
       logger.error('[Balance.check] Failed to auto-refill after balance exhausted', error);
-      return currentBalance;
+      return record.tokenCredits;
     }
   }
 
