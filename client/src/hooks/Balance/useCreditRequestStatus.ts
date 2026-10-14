@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useToastContext } from '@librechat/client';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -8,6 +9,18 @@ import {
 } from 'librechat-data-provider';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { useAuthContext, useLocalize } from '~/hooks';
+
+/** Below the ~24.8-day signed-32-bit `setTimeout` delay limit — a monthly
+ *  refill interval would otherwise silently fire almost immediately instead
+ *  of overflowing, so long waits are broken into re-checks capped at this. */
+const MAX_SCHEDULE_DELAY_MS = 24 * 60 * 60 * 1000;
+/** Backoff schedule for retrying a deadline that fired but didn't move
+ *  `lastRefill` — lease contention with an admin, a concurrent refill still
+ *  completing, or a caught DB error inside `maybeApplyAutoRefill` can all
+ *  return the balance unchanged. Bounded, not indefinite: a persistently
+ *  non-refillable account (e.g. a misconfigured zero `refillAmount`) must
+ *  not be polled forever. */
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000];
 
 /**
  * Single source of truth for "does the current user have a pending
@@ -50,6 +63,7 @@ export default function useCreditRequestStatus(): {
   const balanceQuery = useGetUserBalance({ enabled });
 
   const balanceData = balanceQuery.data;
+  const tokenCredits = balanceData?.tokenCredits ?? 0;
   const nextRefillAt =
     balanceData?.autoRefillEnabled &&
     balanceData.lastRefill != null &&
@@ -61,6 +75,53 @@ export default function useCreditRequestStatus(): {
           balanceData.refillIntervalUnit,
         )
       : undefined;
+
+  // `useGetUserBalance` only refetches on window focus/reconnect/mount —
+  // a tab left open and idle past the refill moment would otherwise show
+  // a stale "0 min" countdown indefinitely instead of ever picking up the
+  // (now eligible) refill. Invalidating re-triggers `GET /api/balance`,
+  // which applies the refill atomically before responding — this never
+  // flips the UI ahead of an actually-confirmed credit.
+  //
+  // Gated on `tokenCredits <= 0`: `maybeApplyAutoRefill` (server-side)
+  // short-circuits whenever the balance is still positive, leaving
+  // `lastRefill` — and so `nextRefillAt` — untouched on purpose. Without
+  // this gate, every auto-refill user with credit still left would run
+  // the full retry chain on every mount once their interval merely
+  // elapses, for a refill the backend was never going to apply.
+  useEffect(() => {
+    if (!nextRefillAt || tokenCredits > 0) {
+      return;
+    }
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let retryAttempt = 0;
+    const checkDeadline = () => {
+      const msRemaining = nextRefillAt.getTime() - Date.now();
+      if (msRemaining > 0) {
+        timeoutId = setTimeout(checkDeadline, Math.min(msRemaining, MAX_SCHEDULE_DELAY_MS));
+        return;
+      }
+
+      queryClient.invalidateQueries([QueryKeys.balance]);
+
+      // The refetch above may resolve without moving `lastRefill` at all
+      // (see `RETRY_DELAYS_MS`'s doc comment) — `nextRefillAt`'s own
+      // identity wouldn't change in that case, so nothing would otherwise
+      // re-trigger this effect. Retry with backoff instead of leaving a
+      // confirmed-overdue banner stuck until some unrelated refetch
+      // (window focus, mount, a message send) happens to come along. If
+      // the refill does land, `nextRefillAt` moves to a future date, this
+      // effect re-runs for that new deadline, and this retry chain is
+      // abandoned by the cleanup below.
+      if (retryAttempt < RETRY_DELAYS_MS.length) {
+        timeoutId = setTimeout(checkDeadline, RETRY_DELAYS_MS[retryAttempt]);
+        retryAttempt += 1;
+      }
+    };
+    checkDeadline();
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextRefillAt?.getTime(), tokenCredits, queryClient]);
 
   const mutation = useMutation([MutationKeys.requestCredits], {
     mutationFn: (reason?: string) => dataService.requestBalanceTopUp({ reason }),
@@ -82,7 +143,7 @@ export default function useCreditRequestStatus(): {
   return {
     enabled,
     isLoading: enabled && balanceQuery.data == null,
-    tokenCredits: balanceQuery.data?.tokenCredits ?? 0,
+    tokenCredits,
     refillAmount: balanceData?.refillAmount,
     nextRefillAt,
     pendingCreditRequest: balanceQuery.data?.pendingCreditRequest,
