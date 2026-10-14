@@ -20,14 +20,24 @@ export interface BalanceDeps {
   findPendingBalanceRequestByUser: (userId: string) => Promise<IBalanceRequest | null>;
   createBalanceRequest: (userId: string, reason?: string) => Promise<IBalanceRequest>;
   getAppConfig: (options?: GetAppConfigOptions) => Promise<AppConfig>;
+  /** Applies an overdue auto-refill if one is due, atomically — same CAS-based
+   *  transaction the message-send path and admin-resolution path already
+   *  share, so a balance poll can never double-refill alongside either of
+   *  those. See `packages/data-schemas/src/methods/transaction.ts`. */
+  maybeApplyAutoRefill: (user: string, currentBalance: number) => Promise<number>;
 }
 
 export function createBalanceHandlers(deps: BalanceDeps): {
   getBalance: (req: ServerRequest, res: Response) => Promise<Response>;
   requestTopUp: (req: ServerRequest, res: Response) => Promise<Response>;
 } {
-  const { findBalanceByUser, findPendingBalanceRequestByUser, createBalanceRequest, getAppConfig } =
-    deps;
+  const {
+    findBalanceByUser,
+    findPendingBalanceRequestByUser,
+    createBalanceRequest,
+    getAppConfig,
+    maybeApplyAutoRefill,
+  } = deps;
 
   async function getBalanceHandler(req: ServerRequest, res: Response) {
     const balanceLocals = (res.locals ?? {}) as BalanceLocals;
@@ -37,19 +47,26 @@ export function createBalanceHandlers(deps: BalanceDeps): {
     }
 
     const userId = req.user?.id as string;
-    const balanceData = balanceLocals.balanceData ?? (await findBalanceByUser(userId));
+    let balanceData = balanceLocals.balanceData ?? (await findBalanceByUser(userId));
 
     if (!balanceData) {
       return res.status(404).json({ error: 'Balance not found' });
     }
 
-    // Resolve the live effective config, same as `requestTopUpHandler` —
-    // `autoRefillEnabled`/`refillAmount`/interval fields stored on the
+    // Resolve the live effective config first — same as `requestTopUpHandler`
+    // — `autoRefillEnabled`/`refillAmount`/interval fields stored on the
     // Balance document are only ever backfilled once, the first time it was
     // lazily created while auto-refill happened to already be on in config.
-    // An admin changing these afterward never retroactively updates an
-    // existing document, so the live config must take priority (same
-    // bug/fix as the admin Balance list's `resolveBalanceConfig`).
+    // `createSetBalanceConfig` (middleware/balance.ts) only ever fills gaps
+    // in on the stored document — it never retracts a previously-stored
+    // `autoRefillEnabled: true` back to `false` once an admin disables it
+    // live. The live config must take priority (same bug/fix as the admin
+    // Balance list's `resolveBalanceConfig`) and — critically — must be
+    // resolved *before* `maybeApplyAutoRefill` below, which only ever
+    // consults the persisted document: checking it after would still let a
+    // stale `autoRefillEnabled: true` apply an unauthorized refill just from
+    // loading this page, even though the response correctly reports refill
+    // as off.
     const appConfig = await getAppConfig({
       role: req.user?.role,
       userId,
@@ -59,6 +76,22 @@ export function createBalanceHandlers(deps: BalanceDeps): {
     const autoRefillEnabled =
       balanceConfig?.autoRefillEnabled ?? balanceData.autoRefillEnabled ?? false;
     const refillAmount = balanceConfig?.refillAmount ?? balanceData.refillAmount;
+
+    // The stored balance is only ever refreshed lazily, as a side effect of
+    // the next message send (`checkBalance` middleware) — a user who goes
+    // idle right as their refill becomes due would otherwise see a stale
+    // zero balance here indefinitely, with the countdown banner implying a
+    // refresh that never actually happens until they send another message.
+    // Re-checking eligibility on every balance read closes that gap; the
+    // underlying transaction is the same atomic claim, so concurrent reads,
+    // sends, and admin resolutions can't double-refill each other. Gated on
+    // the live-resolved `autoRefillEnabled` above, not the raw document.
+    if (autoRefillEnabled) {
+      const refreshedBalance = await maybeApplyAutoRefill(userId, balanceData.tokenCredits);
+      if (refreshedBalance !== balanceData.tokenCredits) {
+        balanceData = (await findBalanceByUser(userId)) ?? balanceData;
+      }
+    }
 
     // Explicit public-field whitelist — never spread `balanceData` directly.
     // It's a raw Balance document, which also carries internal-only fields
