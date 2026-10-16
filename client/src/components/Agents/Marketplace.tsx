@@ -3,14 +3,20 @@ import { useMediaQuery } from '@librechat/client';
 import { PermissionTypes, Permissions } from 'librechat-data-provider';
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import type t from 'librechat-data-provider';
-import { useDocumentTitle, useHasAccess, useLocalize, useVerifiedFilter, TranslationKeys } from '~/hooks';
+import {
+  useDocumentTitle,
+  useHasAccess,
+  useLocalize,
+  useVerifiedFilter,
+  TranslationKeys,
+} from '~/hooks';
 import { useGetEndpointsQuery, useGetAgentCategoriesQuery } from '~/data-provider';
 import MarketplaceAdminSettings from './MarketplaceAdminSettings';
+import VerificationFilterToggle from './VerificationFilterToggle';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { SidePanelGroup } from '~/components/SidePanel';
 import CategoryTabs from './CategoryTabs';
 import SearchBar from './SearchBar';
-import VerificationFilterToggle from './VerificationFilterToggle';
 import AgentGrid from './AgentGrid';
 import { cn } from '~/utils';
 

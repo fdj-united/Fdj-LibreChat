@@ -13,8 +13,7 @@ const rootPkg = require('../../package.json');
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.resolve(dirname, 'src');
 
-const isExternal = (id) =>
-  !id.startsWith('.') && !path.isAbsolute(id) && !id.startsWith('src/');
+const isExternal = (id) => !id.startsWith('.') && !path.isAbsolute(id) && !id.startsWith('src/');
 
 const plugins = [
   replace({
