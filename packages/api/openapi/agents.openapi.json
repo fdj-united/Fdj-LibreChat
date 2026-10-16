@@ -2162,11 +2162,20 @@
               "email"
             ]
           },
+          "disable_provider_upload": {
+            "type": "boolean"
+          },
+          "disable_context_upload": {
+            "type": "boolean"
+          },
           "artifacts": {
             "type": "string"
           },
           "recursion_limit": {
             "type": "number"
+          },
+          "eager_execution": {
+            "type": "boolean"
           },
           "conversation_starters": {
             "type": "array",
@@ -2601,11 +2610,20 @@
               "email"
             ]
           },
+          "disable_provider_upload": {
+            "type": "boolean"
+          },
+          "disable_context_upload": {
+            "type": "boolean"
+          },
           "artifacts": {
             "type": "string"
           },
           "recursion_limit": {
             "type": "number"
+          },
+          "eager_execution": {
+            "type": "boolean"
           },
           "conversation_starters": {
             "type": "array",
@@ -3064,11 +3082,20 @@
               "email"
             ]
           },
+          "disable_provider_upload": {
+            "type": "boolean"
+          },
+          "disable_context_upload": {
+            "type": "boolean"
+          },
           "artifacts": {
             "type": "string"
           },
           "recursion_limit": {
             "type": "number"
+          },
+          "eager_execution": {
+            "type": "boolean"
           },
           "conversation_starters": {
             "type": "array",

@@ -2018,6 +2018,43 @@ describe('Azure deployment alias', () => {
       expect((agents[0].clientOptions as OpenAIConfiguration)?.apiKey).toBe('test-azure-key');
     },
   );
+
+  it('routes Azure Luna summarization through modelGroupMap for a non-Azure conversation', async () => {
+    const appConfig = makeAppConfig([]);
+    appConfig.endpoints![EModelEndpoint.azureOpenAI] = {
+      isValid: true,
+      errors: [],
+      modelNames: ['gpt-5.6-luna'],
+      modelGroupMap: { 'gpt-5.6-luna': { group: 'summary' } },
+      groupMap: {
+        summary: {
+          apiKey: 'luna-summary-key',
+          instanceName: 'luna-summary-instance',
+          version: '2025-04-01-preview',
+          models: { 'gpt-5.6-luna': { deploymentName: 'luna-summary-deployment' } },
+        },
+      },
+    };
+    const agents = await callAndCapture({
+      agents: [makeAgent()],
+      appConfig,
+      summarizeOnly: true,
+      summarizationConfig: {
+        provider: EModelEndpoint.azureOpenAI,
+        model: 'gpt-5.6-luna',
+        parameters: { streaming: false },
+      },
+    });
+
+    const { requests } = await compactSummary(agents);
+    expect(requests).toHaveLength(1);
+    const { url, headers, body } = requests[0];
+    expect(url.origin + url.pathname).toBe(
+      'https://luna-summary-instance.openai.azure.com/openai/deployments/luna-summary-deployment/chat/completions',
+    );
+    expect(headers.get('api-key')).toBe('luna-summary-key');
+    expect(body.model).toBe('luna-summary-deployment');
+  });
 });
 
 // ---------------------------------------------------------------------------
