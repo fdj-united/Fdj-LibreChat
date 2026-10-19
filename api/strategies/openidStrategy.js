@@ -3,25 +3,32 @@ const { get } = require('lodash');
 const passport = require('passport');
 const client = require('openid-client');
 const jwtDecode = require('jsonwebtoken/decode');
-const { hashToken, logger } = require('@librechat/data-schemas');
+const { hashToken, logger, tenantStorage } = require('@librechat/data-schemas');
 const { Strategy: OpenIDStrategy } = require('openid-client/passport');
 const { CacheKeys, ErrorTypes, SystemRoles } = require('librechat-data-provider');
 const {
   isEnabled,
   logHeaders,
-  safeStringify,
+  logOpenIdRequestBody,
   findOpenIDUser,
   getOpenIdEmail,
   getOpenIdIssuer,
   getBalanceConfig,
+  selectOpenIdRole,
+  getTokenCacheTtlMs,
+  getAvatarSaveParams,
   isEmailDomainAllowed,
   getAvatarFileStrategy,
-  getAvatarSaveParams,
   resolveAppConfigForUser,
+  getOpenIdProxyDispatcher,
+  getOpenIdRoleSyncOptions,
+  getOpenIdRolesForOpenIdSync,
+  getLibreChatRolesForOpenIdSync,
+  DEFAULT_OAUTH_TOKEN_TTL_SECONDS,
 } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { resizeAvatar } = require('~/server/services/Files/images/avatar');
-const { findUser, createUser, updateUser } = require('~/models');
+const { findUser, createUser, updateUser, findRolesByNames } = require('~/models');
 const { getAppConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
 
@@ -42,26 +49,19 @@ async function customFetch(url, options) {
     logger.debug(`[openidStrategy] Request method: ${options.method || 'GET'}`);
     logger.debug(`[openidStrategy] Request headers: ${logHeaders(options.headers)}`);
     if (options.body) {
-      let bodyForLogging = '';
-      if (options.body instanceof URLSearchParams) {
-        bodyForLogging = options.body.toString();
-      } else if (typeof options.body === 'string') {
-        bodyForLogging = options.body;
-      } else {
-        bodyForLogging = safeStringify(options.body);
-      }
-      logger.debug(`[openidStrategy] Request body: ${bodyForLogging}`);
+      logger.debug(`[openidStrategy] Request body: ${logOpenIdRequestBody(options.body)}`);
     }
   }
 
   try {
     /** @type {undici.RequestInit} */
     let fetchOptions = options;
-    if (process.env.PROXY) {
-      logger.info(`[openidStrategy] proxy agent configured: ${process.env.PROXY}`);
+    const dispatcher = getOpenIdProxyDispatcher();
+    if (dispatcher) {
+      logger.info('[openidStrategy] proxy dispatcher configured');
       fetchOptions = {
         ...options,
-        dispatcher: new undici.ProxyAgent(process.env.PROXY),
+        dispatcher,
       };
     }
 
@@ -103,6 +103,12 @@ This violates RFC 7235 and may cause issues with strict OAuth clients. Removing 
 /** @typedef {Configuration | null}  */
 let openidConfig = null;
 
+const getOpenIdAuthorizationAudience = () =>
+  (process.env.OPENID_AUDIENCE ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .find(Boolean);
+
 /**
  * Custom OpenID Strategy
  *
@@ -123,10 +129,11 @@ class CustomOpenIDStrategy extends OpenIDStrategy {
       params.set('state', options.state);
     }
 
-    if (process.env.OPENID_AUDIENCE) {
-      params.set('audience', process.env.OPENID_AUDIENCE);
+    const authorizationAudience = getOpenIdAuthorizationAudience();
+    if (authorizationAudience) {
+      params.set('audience', authorizationAudience);
       logger.debug(
-        `[openidStrategy] Adding audience to authorization request: ${process.env.OPENID_AUDIENCE}`,
+        `[openidStrategy] Adding audience to authorization request: ${authorizationAudience}`,
       );
     }
 
@@ -175,7 +182,7 @@ const exchangeAccessTokenIfNeeded = async (config, accessToken, sub, fromCache =
       {
         access_token: grantResponse.access_token,
       },
-      grantResponse.expires_in * 1000,
+      getTokenCacheTtlMs(grantResponse.expires_in, DEFAULT_OAUTH_TOKEN_TTL_SECONDS),
     );
     return grantResponse.access_token;
   }
@@ -357,12 +364,11 @@ async function exchangeTokenForOverage(accessToken, sub) {
     );
   }
 
-  const ttlMs =
-    Number.isFinite(grantResponse.expires_in) && grantResponse.expires_in > 0
-      ? grantResponse.expires_in * 1000
-      : 3600 * 1000;
-
-  await tokensCache.set(cacheKey, { access_token: grantResponse.access_token }, ttlMs);
+  await tokensCache.set(
+    cacheKey,
+    { access_token: grantResponse.access_token },
+    getTokenCacheTtlMs(grantResponse.expires_in, DEFAULT_OAUTH_TOKEN_TTL_SECONDS),
+  );
 
   return grantResponse.access_token;
 }
@@ -408,9 +414,9 @@ async function resolveGroupsFromOverage(accessToken, sub) {
       body: JSON.stringify({ securityEnabledOnly: false }),
     };
 
-    if (process.env.PROXY) {
-      const { ProxyAgent } = undici;
-      fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
+    const dispatcher = getOpenIdProxyDispatcher();
+    if (dispatcher) {
+      fetchOptions.dispatcher = dispatcher;
     }
 
     const response = await undici.fetch(url, fetchOptions);
@@ -469,6 +475,78 @@ function getRoleSource(kind, label, tokenset, userinfo) {
     `[openidStrategy] Invalid ${label} token kind: ${kind}. Must be one of 'access', 'id', or 'userinfo'.`,
   );
   throw new Error(`Invalid ${label} token kind`);
+}
+
+/**
+ * Applies generic OpenID role sync to the request-local user before the existing final update.
+ */
+async function applyOpenIdRoleSync({
+  user,
+  username,
+  tokenset,
+  claims,
+  userinfo,
+  resolvedOverageGroups,
+}) {
+  const options = getOpenIdRoleSyncOptions();
+  if (!options.enabled) {
+    return;
+  }
+
+  if (user.role === SystemRoles.ADMIN) {
+    logger.info(
+      `[openidStrategy] OpenID role sync skipped for ${username}; existing ADMIN role is not managed by generic role sync`,
+    );
+    return;
+  }
+
+  const resolveGroupOverage = async () =>
+    resolvedOverageGroups || (await resolveGroupsFromOverage(tokenset.access_token, claims.sub));
+
+  const openIdRoleValues = await getOpenIdRolesForOpenIdSync({
+    options,
+    accessToken: tokenset.access_token,
+    idToken: tokenset.id_token,
+    claims,
+    userinfo,
+    decodeToken: jwtDecode,
+    resolveGroupOverage,
+  });
+  if (openIdRoleValues === undefined) {
+    logger.warn(
+      `[openidStrategy] OpenID role sync skipped; claim '${options.claim}' was not found, invalid, or unresolved`,
+    );
+    return;
+  }
+
+  const libreChatRoles = {
+    getRolesByNames: findRolesByNames,
+    rolePriority: options.rolePriority,
+    fallbackRole: options.fallbackRole,
+    logPrefix: '[openidStrategy]',
+  };
+
+  /** Role definitions are tenant-scoped, so validate configured roles in the matched user's tenant. */
+  const { rolePriority, fallbackRole } = user?.tenantId
+    ? await tenantStorage.run({ tenantId: user.tenantId }, async () =>
+        getLibreChatRolesForOpenIdSync(libreChatRoles),
+      )
+    : await getLibreChatRolesForOpenIdSync(libreChatRoles);
+  const result = selectOpenIdRole({
+    currentRole: user.role,
+    openIdRoleValues,
+    rolePriority,
+    fallbackRole,
+  });
+
+  if (!result.selectedRole || result.selectedRole === user.role) {
+    return;
+  }
+
+  logger.info(
+    `[openidStrategy] OpenID role sync updated role for ${username}: ${user.role || 'unset'} -> ${result.selectedRole}`,
+  );
+  user.role = result.selectedRole;
 }
 
 /**
@@ -630,6 +708,7 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   const adminRole = process.env.OPENID_ADMIN_ROLE;
   const adminRoleParameterPath = process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH;
   const adminRoleTokenKind = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND;
+  let adminRoleGranted = false;
 
   if (adminRole && adminRoleParameterPath && adminRoleTokenKind) {
     const adminRoleObject = getRoleSource(adminRoleTokenKind, 'admin role', tokenset, userinfo);
@@ -662,12 +741,40 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
 
     if (adminRoles && (adminRoles === true || adminRoleValues.includes(adminRole))) {
       user.role = SystemRoles.ADMIN;
+      adminRoleGranted = true;
       logger.info(`[openidStrategy] User ${username} is an admin based on role: ${adminRole}`);
     } else if (user.role === SystemRoles.ADMIN) {
       user.role = SystemRoles.USER;
       logger.info(
         `[openidStrategy] User ${username} demoted from admin - role no longer present in token`,
       );
+    }
+  }
+
+  if (!adminRoleGranted) {
+    const roleBeforeSync = user.role;
+    await applyOpenIdRoleSync({
+      user,
+      username,
+      tokenset,
+      claims,
+      userinfo,
+      resolvedOverageGroups,
+    });
+    /**
+     * The earlier login-policy check ran with the pre-sync role. If role sync moved a
+     * tenant user into a different role, re-resolve the tenant config and re-enforce
+     * `allowedDomains` so role-scoped overrides for the new role are honored and a token
+     * cannot complete login under the previous role's looser policy.
+     */
+    if (user?.tenantId && user.role !== roleBeforeSync) {
+      const postSyncConfig = await resolveAppConfigForUser(getAppConfig, user);
+      if (!isEmailDomainAllowed(email, postSyncConfig?.registration?.allowedDomains)) {
+        logger.error(
+          `[OpenID Strategy] Authentication blocked after role sync - email domain not allowed [Identifier: ${email}]`,
+        );
+        throw new Error('Email domain not allowed');
+      }
     }
   }
 
