@@ -104,6 +104,8 @@ const cacheConfig: {
   REDIS_READONLY_RECOVERY_INTERVAL: number;
   /** Queue commands when disconnected */
   REDIS_ENABLE_OFFLINE_QUEUE: boolean;
+  /** Queue cache (Keyv) commands when disconnected; ioredis keeps REDIS_ENABLE_OFFLINE_QUEUE */
+  REDIS_KEYV_ENABLE_OFFLINE_QUEUE: boolean;
   /** flag to modify redis connection by adding dnsLookup this is required when connecting to elasticache for ioredis
    * see "Special Note: Aws Elasticache Clusters with TLS" on this webpage:  https://www.npmjs.com/package/ioredis **/
   REDIS_USE_ALTERNATIVE_DNS_LOOKUP: boolean;
@@ -189,6 +191,12 @@ const cacheConfig: {
   REDIS_READONLY_RECOVERY_INTERVAL: math(process.env.REDIS_READONLY_RECOVERY_INTERVAL, 5000),
   /** Queue commands when disconnected */
   REDIS_ENABLE_OFFLINE_QUEUE: isEnabled(process.env.REDIS_ENABLE_OFFLINE_QUEUE ?? 'true'),
+  /** Queue cache (Keyv) commands when disconnected. Defaults to REDIS_ENABLE_OFFLINE_QUEUE. Set it
+   * to false so cache reads (user principals, roles) fail fast during a Redis outage instead of
+   * hanging, while ioredis (rate limiters, job store, pub/sub) still queues until it is ready. */
+  REDIS_KEYV_ENABLE_OFFLINE_QUEUE: isEnabled(
+    process.env.REDIS_KEYV_ENABLE_OFFLINE_QUEUE ?? process.env.REDIS_ENABLE_OFFLINE_QUEUE ?? 'true',
+  ),
   /** flag to modify redis connection by adding dnsLookup this is required when connecting to elasticache for ioredis
    * see "Special Note: Aws Elasticache Clusters with TLS" on this webpage:  https://www.npmjs.com/package/ioredis **/
   REDIS_USE_ALTERNATIVE_DNS_LOOKUP: isEnabled(process.env.REDIS_USE_ALTERNATIVE_DNS_LOOKUP),
