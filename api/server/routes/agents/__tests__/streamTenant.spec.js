@@ -533,6 +533,92 @@ describe('SSE stream tenant isolation', () => {
       }
     });
 
+    describe('generation check while the stream is open', () => {
+      const runningJob = { metadata: { userId: 'user-123' }, status: 'running', createdAt: 1000 };
+
+      /** Opens a stream, waits for its subscription, then lets `ms` of fake time pass. */
+      async function openStreamAndWait(ms, query = '') {
+        let finish;
+        const unsubscribe = jest.fn();
+        mockGenerationJobManager.subscribe.mockImplementation(
+          async (_streamId, _writeEvent, onDone) => {
+            finish = onDone;
+            return { unsubscribe };
+          },
+        );
+        const pending = request(app)
+          .get(`/agents/chat/stream/stream-123${query}`)
+          .then((res) => res);
+        await jest.advanceTimersByTimeAsync(0);
+        for (let turn = 0; turn < 50 && finish == null; turn++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        await jest.advanceTimersByTimeAsync(ms);
+        return { pending, finish: () => finish, unsubscribe };
+      }
+
+      it.each([
+        ['v2', 2, '?generationProtocolVersion=2', '"reconcileReason":"terminal_payload_missing"'],
+        ['v1', 1, '', 'Generation state changed; reconnect to load the saved response.'],
+      ])(
+        'ends a %s stream once its job leaves the store',
+        async (_protocol, version, query, expected) => {
+          jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+          try {
+            mockGenerationJobManager.getJob
+              .mockResolvedValueOnce({
+                ...runningJob,
+                metadata: { ...runningJob.metadata, generationProtocolVersion: version },
+              })
+              .mockResolvedValue(null);
+
+            const { pending, unsubscribe } = await openStreamAndWait(31_000, query);
+            const res = await pending;
+
+            expect(unsubscribe).toHaveBeenCalled();
+            expect(res.text).toContain(expected);
+          } finally {
+            jest.useRealTimers();
+          }
+        },
+      );
+
+      it('keeps the stream open while the job store cannot be read', async () => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        try {
+          mockGenerationJobManager.getJob
+            .mockResolvedValueOnce(runningJob)
+            .mockRejectedValue(new Error('Redis unavailable'));
+
+          const { pending, finish, unsubscribe } = await openStreamAndWait(95_000);
+
+          expect(unsubscribe).not.toHaveBeenCalled();
+          finish()({ final: true });
+          const res = await pending;
+          expect(res.text).not.toContain('"reconcile":true');
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+
+      it('keeps the stream open while its generation is still in the store', async () => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        try {
+          mockGenerationJobManager.getJob.mockResolvedValue(runningJob);
+
+          const { pending, finish, unsubscribe } = await openStreamAndWait(95_000);
+
+          expect(unsubscribe).not.toHaveBeenCalled();
+          finish()({ final: true });
+          const res = await pending;
+          expect(res.text).toContain('"final":true');
+          expect(res.text).not.toContain('"reconcile":true');
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+    });
+
     it('detaches a paused resume subscription when the response ends before activation', async () => {
       mockGenerationJobManager.getJob.mockResolvedValue({
         metadata: { userId: 'user-123' },

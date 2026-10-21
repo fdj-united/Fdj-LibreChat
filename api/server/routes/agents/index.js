@@ -116,6 +116,9 @@ async function sendJoblessStatus(req, res, conversationId) {
   });
 }
 
+/** How often an open stream checks that its generation is still in the job store. */
+const STREAM_GENERATION_CHECK_MS = 30_000;
+
 const router = express.Router();
 
 /**
@@ -424,6 +427,44 @@ router.get('/chat/stream/:streamId', async (req, res) => {
     onError('Failed to subscribe to stream');
     return;
   }
+
+  /** The keepalive stops idle proxies from closing the stream, so a stream whose generation
+   * left the job store (Redis lost its state, or the job was reaped) would stay open without
+   * ever finishing. Check the job while the stream is open and send the same reconciliation
+   * frame as a missed attach, so the client loads the saved state instead of waiting. */
+  const subscription = result;
+  const generationCheck = setInterval(async () => {
+    if (res.writableEnded || attachmentAbortController.signal.aborted) {
+      clearInterval(generationCheck);
+      return;
+    }
+    let currentJob;
+    try {
+      currentJob = await GenerationJobManager.getJob(streamId);
+    } catch {
+      /** An unreachable store is not proof that the generation is gone. */
+      return;
+    }
+    if (currentJob?.createdAt === authorizedGenerationCreatedAt || res.writableEnded) {
+      return;
+    }
+    clearInterval(generationCheck);
+    logger.warn(
+      `[AgentStream] Generation for ${streamId} is no longer in the job store; ending the stream`,
+    );
+    subscription.unsubscribe();
+    onDone({
+      final: true,
+      reconcile: true,
+      reconcileReason: currentJob ? 'generation_replaced' : 'terminal_payload_missing',
+      generationCreatedAt: authorizedGenerationCreatedAt,
+      conversation: {
+        conversationId: currentJob?.conversationId ?? job.conversationId ?? streamId,
+      },
+    });
+  }, STREAM_GENERATION_CHECK_MS);
+  generationCheck.unref?.();
+  res.once('close', () => clearInterval(generationCheck));
 });
 
 /**
