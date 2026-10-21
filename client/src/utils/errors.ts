@@ -23,6 +23,20 @@ export const getResponseStatus = (error: unknown): number | undefined => {
 
 export const isNotFoundError = (error: unknown): boolean => getResponseStatus(error) === 404;
 
+/**
+ * Whether a request failed for a reason that says nothing about the session: the connection
+ * dropped before a response arrived (proxy reset, pod restart) or the server answered 5xx.
+ * A 401/403 or any other 4xx is a real answer and is not transient.
+ */
+export const isTransientRequestError = (error: unknown): boolean => {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
+    return status == null || status >= 500;
+  }
+  const status = getResponseStatus(error);
+  return status != null && status >= 500;
+};
+
 export const codeWorkspaceErrorKeys: Record<CodeWorkspaceSelectionErrorReason, TranslationKeys> = {
   required: 'com_error_code_workspace_required',
   invalid: 'com_error_code_workspace_invalid',

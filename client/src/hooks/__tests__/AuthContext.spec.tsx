@@ -716,3 +716,120 @@ describe('AuthContextProvider — custom role detection and fetching', () => {
     jest.useRealTimers();
   });
 });
+
+describe('AuthContextProvider — transient failures keep the session', () => {
+  const mockUseGetUserQuery = jest.requireMock('~/data-provider').useGetUserQuery;
+  const networkError = Object.assign(new Error('Network Error'), {
+    isAxiosError: true,
+    code: 'ERR_NETWORK',
+  });
+  const httpError = (status: number) =>
+    Object.assign(new Error(`Request failed with status code ${status}`), {
+      isAxiosError: true,
+      response: { status },
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    mockUseGetUserQuery.mockImplementation(() => ({
+      data: undefined,
+      isError: false,
+      error: null,
+    }));
+    window.history.replaceState({}, '', '/');
+  });
+
+  it('retries the silent refresh after a dropped connection instead of going to login', () => {
+    renderProviderLive();
+
+    const [, firstOptions] = mockRefreshMutate.mock.calls[0] as [
+      unknown,
+      { onError: (error: unknown) => void },
+    ];
+    act(() => {
+      firstOptions.onError(networkError);
+    });
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(mockRefreshMutate).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[data-testid="consumer"]')).toHaveAttribute(
+      'data-auth-ready',
+      'false',
+    );
+  });
+
+  it('goes to login once the silent refresh keeps failing with a 5xx', () => {
+    renderProviderLive();
+
+    for (let attempt = 0; attempt <= 3; attempt++) {
+      const [, options] = mockRefreshMutate.mock.calls[attempt] as [
+        unknown,
+        { onError: (error: unknown) => void },
+      ];
+      act(() => {
+        options.onError(httpError(503));
+      });
+      act(() => {
+        jest.advanceTimersByTime(1000 * 2 ** attempt);
+      });
+    }
+
+    expect(mockRefreshMutate).toHaveBeenCalledTimes(4);
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes to login at once when the refresh is rejected with a 401', () => {
+    renderProviderLive();
+
+    const [, options] = mockRefreshMutate.mock.calls[0] as [
+      unknown,
+      { onError: (error: unknown) => void },
+    ];
+    act(() => {
+      options.onError(httpError(401));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    expect(mockRefreshMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the user signed in and asks again when the user query fails without a response', () => {
+    const refetch = jest.fn();
+    mockUseGetUserQuery.mockImplementation(() => ({
+      data: undefined,
+      isError: true,
+      error: networkError,
+      refetch,
+    }));
+
+    renderProviderLive();
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+    expect(refetch).toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('ends the session when the user query is rejected with a 401', () => {
+    mockUseGetUserQuery.mockImplementation(() => ({
+      data: undefined,
+      isError: true,
+      error: httpError(401),
+      refetch: jest.fn(),
+    }));
+
+    renderProviderLive();
+
+    expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining('/login'), { replace: true });
+  });
+});
