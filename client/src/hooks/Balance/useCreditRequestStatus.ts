@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useToastContext } from '@librechat/client';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -47,6 +47,11 @@ export default function useCreditRequestStatus(): {
   /** When auto-refill is on and enough data is present to compute it, the
    *  next moment this user becomes eligible for an automatic refill. */
   nextRefillAt: Date | undefined;
+  /** True once an exhausted balance has reached its automatic-refill
+   *  deadline. The chat notice uses this to disappear immediately rather
+   *  than briefly offering an unnecessary manual reset while the confirmed
+   *  balance refresh is in flight. */
+  isAutoRefillDue: boolean;
   pendingCreditRequest:
     | { requestId: string; requestedAt: Date | string; reason?: string }
     | undefined;
@@ -75,13 +80,20 @@ export default function useCreditRequestStatus(): {
           balanceData.refillIntervalUnit,
         )
       : undefined;
+  const nextRefillAtMs = nextRefillAt?.getTime();
+  const [reachedRefillDeadline, setReachedRefillDeadline] = useState<number>();
+  const isAutoRefillDue =
+    tokenCredits <= 0 &&
+    nextRefillAtMs != null &&
+    (nextRefillAtMs <= Date.now() || reachedRefillDeadline === nextRefillAtMs);
 
   // `useGetUserBalance` only refetches on window focus/reconnect/mount —
   // a tab left open and idle past the refill moment would otherwise show
   // a stale "0 min" countdown indefinitely instead of ever picking up the
   // (now eligible) refill. Invalidating re-triggers `GET /api/balance`,
-  // which applies the refill atomically before responding — this never
-  // flips the UI ahead of an actually-confirmed credit.
+  // which applies the refill atomically before responding. The deadline
+  // state also suppresses the now-obsolete manual-reset notice immediately;
+  // the balance itself remains unchanged until the server confirms credit.
   //
   // Gated on `tokenCredits <= 0`: `maybeApplyAutoRefill` (server-side)
   // short-circuits whenever the balance is still positive, leaving
@@ -102,6 +114,7 @@ export default function useCreditRequestStatus(): {
         return;
       }
 
+      setReachedRefillDeadline(nextRefillAt.getTime());
       queryClient.invalidateQueries([QueryKeys.balance]);
 
       // The refetch above may resolve without moving `lastRefill` at all
@@ -146,6 +159,7 @@ export default function useCreditRequestStatus(): {
     tokenCredits,
     refillAmount: balanceData?.refillAmount,
     nextRefillAt,
+    isAutoRefillDue,
     pendingCreditRequest: balanceQuery.data?.pendingCreditRequest,
     submit: (reason?: string) => mutation.mutate(reason),
     isSubmitting: mutation.isLoading,

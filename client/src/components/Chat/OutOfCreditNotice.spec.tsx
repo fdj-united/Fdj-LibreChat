@@ -33,6 +33,7 @@ function baseStatus(overrides: Record<string, unknown> = {}) {
     tokenCredits: 5000,
     refillAmount: undefined,
     nextRefillAt: undefined,
+    isAutoRefillDue: false,
     pendingCreditRequest: undefined,
     submit: jest.fn(),
     isSubmitting: false,
@@ -72,6 +73,37 @@ describe('OutOfCreditNotice', () => {
 
     expect(screen.getByText('com_nav_balance_out_of_credit_title')).toBeInTheDocument();
     expect(screen.getByText('com_nav_balance_request_reset_button')).toBeInTheDocument();
+  });
+
+  it('renders no banner once an exhausted balance is due for automatic refill', () => {
+    mockUseCreditRequestStatus.mockReturnValue(
+      baseStatus({
+        tokenCredits: 0,
+        nextRefillAt: new Date(Date.now() - 1),
+        isAutoRefillDue: true,
+      }),
+    );
+
+    const { container } = renderNotice();
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText('com_nav_balance_request_reset_button')).not.toBeInTheDocument();
+  });
+
+  it('renders no pending-request banner once automatic refill is due', () => {
+    mockUseCreditRequestStatus.mockReturnValue(
+      baseStatus({
+        tokenCredits: 0,
+        nextRefillAt: new Date(Date.now() - 1),
+        isAutoRefillDue: true,
+        pendingCreditRequest: { requestId: 'req-1', requestedAt: new Date().toISOString() },
+      }),
+    );
+
+    const { container } = renderNotice();
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText('com_nav_balance_pending_pill')).not.toBeInTheDocument();
   });
 
   it('shows the "Reset requested" state (clock icon, new title/subtitle, Pending pill) when a request is pending', () => {

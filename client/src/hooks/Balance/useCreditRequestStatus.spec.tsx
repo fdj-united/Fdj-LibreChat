@@ -55,13 +55,16 @@ describe('useCreditRequestStatus — scheduled refetch on refill eligibility', (
       },
     });
 
-    const { invalidateSpy } = renderUseCreditRequestStatus();
+    const { invalidateSpy, result } = renderUseCreditRequestStatus();
+
+    expect(result.current.isAutoRefillDue).toBe(false);
 
     act(() => {
       jest.advanceTimersByTime(6_000);
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith([QueryKeys.balance]);
+    expect(result.current.isAutoRefillDue).toBe(true);
   });
 
   it('invalidates immediately when the refill is already overdue at mount, not just future ones', () => {
@@ -75,7 +78,11 @@ describe('useCreditRequestStatus — scheduled refetch on refill eligibility', (
       },
     });
 
-    const { invalidateSpy } = renderUseCreditRequestStatus();
+    const { invalidateSpy, result } = renderUseCreditRequestStatus();
+
+    // This is true on the initial render, before the invalidating effect
+    // runs, so the obsolete request banner never flashes on screen.
+    expect(result.current.isAutoRefillDue).toBe(true);
 
     act(() => {
       jest.advanceTimersByTime(0);
