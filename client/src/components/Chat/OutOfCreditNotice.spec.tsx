@@ -174,6 +174,14 @@ describe('OutOfCreditNotice', () => {
 
     expect(screen.getByText('com_nav_balance_reset_dialog_title')).toBeInTheDocument();
     expect(screen.getByText('com_nav_balance_reset_dialog_description')).toBeInTheDocument();
+    const createIssueLink = screen.getByRole('link', {
+      name: 'com_nav_balance_request_reason_create_link',
+    });
+    expect(createIssueLink).toHaveAttribute(
+      'href',
+      'https://obgbu.atlassian.net/secure/CreateIssueDetails!init.jspa?pid=10572&issuetype=10859',
+    );
+    expect(createIssueLink).toHaveAttribute('target', '_blank');
     const textarea = screen.getByPlaceholderText('com_nav_balance_reset_reason_placeholder');
     fireEvent.change(textarea, { target: { value: '  finishing a report  ' } });
     fireEvent.click(screen.getByText('com_nav_balance_send_request_button'));

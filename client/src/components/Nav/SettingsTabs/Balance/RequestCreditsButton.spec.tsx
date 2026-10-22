@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import RequestCreditsButton from './RequestCreditsButton';
 
 const mockUseCreditRequestStatus = jest.fn();
@@ -40,5 +40,14 @@ describe('RequestCreditsButton', () => {
 
     const button = screen.getByText('com_nav_balance_request_button');
     expect(button).not.toBeDisabled();
+    fireEvent.click(button);
+
+    expect(screen.getByText('com_nav_balance_request_reason_guidance')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'com_nav_balance_request_reason_create_link' }),
+    ).toHaveAttribute(
+      'href',
+      'https://obgbu.atlassian.net/secure/CreateIssueDetails!init.jspa?pid=10572&issuetype=10859',
+    );
   });
 });
