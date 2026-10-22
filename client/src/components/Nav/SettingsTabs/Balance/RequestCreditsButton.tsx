@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button, OGDialog, OGDialogTrigger, OGDialogTemplate } from '@librechat/client';
 import { useCreditRequestStatus, useLocalize } from '~/hooks';
+import Reason from '~/components/Balance/Reason';
 
 export default function RequestCreditsButton() {
   const localize = useLocalize();
@@ -27,19 +28,10 @@ export default function RequestCreditsButton() {
         className="max-w-[450px]"
         main={
           <div className="flex w-full flex-col gap-2">
-            <label
-              htmlFor="request-credits-reason"
-              className="text-left text-sm font-medium text-text-primary"
-            >
-              {localize('com_nav_balance_request_reason_label')}
-            </label>
-            <textarea
+            <Reason
               id="request-credits-reason"
-              className="w-full rounded-xl border border-border-light bg-transparent p-2 text-text-primary"
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={4}
-              maxLength={500}
+              onChange={setReason}
               placeholder={localize('com_nav_balance_request_reason_placeholder')}
             />
           </div>
