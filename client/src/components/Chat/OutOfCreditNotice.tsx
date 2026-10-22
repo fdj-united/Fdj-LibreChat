@@ -75,6 +75,7 @@ export default function OutOfCreditNotice() {
     tokenCredits,
     refillAmount,
     nextRefillAt,
+    isAutoRefillDue,
     pendingCreditRequest,
     submit,
     isSubmitting,
@@ -93,7 +94,7 @@ export default function OutOfCreditNotice() {
   // deployment with balance disabled, or a query that simply hasn't resolved
   // yet, both leave `tokenCredits` at its 0 default, which is indistinguishable
   // from a genuinely exhausted balance unless checked explicitly.
-  if (!enabled || isLoading || (!isOutOfCredits && !isLowBalance)) {
+  if (!enabled || isLoading || isAutoRefillDue || (!isOutOfCredits && !isLowBalance)) {
     return null;
   }
 
