@@ -53,13 +53,13 @@ function useCountdownTick(active: boolean): void {
 
 function useFormattedCountdown(nextRefillAt: Date | undefined): string | undefined {
   const localize = useLocalize();
-  useCountdownTick(nextRefillAt != null);
+  const msRemaining = nextRefillAt ? nextRefillAt.getTime() - Date.now() : undefined;
+  useCountdownTick(msRemaining != null && msRemaining > 0);
 
-  if (!nextRefillAt) {
+  if (msRemaining == null || msRemaining <= 0) {
     return undefined;
   }
-  const msRemaining = nextRefillAt.getTime() - Date.now();
-  const totalMinutes = Math.max(0, Math.round(msRemaining / 60_000));
+  const totalMinutes = Math.ceil(msRemaining / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   if (hours > 0) {
