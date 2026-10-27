@@ -1,3 +1,4 @@
+import { hostname } from 'os';
 import { randomUUID } from 'crypto';
 import { logger, getTenantId, SYSTEM_TENANT_ID } from '@librechat/data-schemas';
 import {
@@ -34,6 +35,8 @@ import type {
   PreemptMessage,
   SteerQueueItem,
   DetachedAgentEventActionStoreMode,
+  GenerationOwnerLeaseConfig,
+  ProviderLeaseOptions,
 } from './interfaces/IJobStore';
 import type {
   EarlyBufferOverflowState,
@@ -185,6 +188,47 @@ const APPEND_RETRY_MAX_ENTRIES = 5_000;
  * window of the runtime's last confirmed write, an absent epoch can only mean
  * the store lost its state; after it, the epoch may simply have expired. */
 const STORE_LOST_EPOCH_EVIDENCE_WINDOW_MS = 300_000;
+
+/** Owner lease defaults (GENERATION_OWNER_LEASE_*). 20 s keeps a successor's worst-case
+ * wait for a dead owner inside the 30 s provider-drain budget. */
+const DEFAULT_OWNER_LEASE: GenerationOwnerLeaseConfig = {
+  enabled: true,
+  ttlMs: 20_000,
+  refreshMs: 5_000,
+  selfFence: true,
+};
+/** How often a waiter re-reads a provider's lease state. */
+const OWNER_LEASE_POLL_MS = 500;
+/** Bound for the pre-create salvage of an orphaned predecessor. On timeout the
+ * replacement falls through to the receipt handoff, which recovers the drain itself. */
+const ORPHAN_SALVAGE_TIMEOUT_MS = 5_000;
+
+type PresumedDrainPath = 'abort_ack' | 'drain' | 'salvage';
+
+function resolveOwnerLeaseConfig(
+  config: Partial<GenerationOwnerLeaseConfig> | undefined,
+): GenerationOwnerLeaseConfig {
+  const ttlMs =
+    config?.ttlMs != null && Number.isFinite(config.ttlMs) && config.ttlMs > 0
+      ? Math.floor(config.ttlMs)
+      : DEFAULT_OWNER_LEASE.ttlMs;
+  const requestedRefreshMs =
+    config?.refreshMs != null && Number.isFinite(config.refreshMs) && config.refreshMs > 0
+      ? Math.floor(config.refreshMs)
+      : DEFAULT_OWNER_LEASE.refreshMs;
+  const maxRefreshMs = Math.max(1, Math.floor(ttlMs / 3));
+  if (requestedRefreshMs > maxRefreshMs) {
+    logger.warn(
+      `[GenerationJobManager] Owner lease refresh ${requestedRefreshMs}ms exceeds TTL/3 (TTL ${ttlMs}ms); using ${maxRefreshMs}ms`,
+    );
+  }
+  return {
+    enabled: config?.enabled ?? DEFAULT_OWNER_LEASE.enabled,
+    ttlMs,
+    refreshMs: Math.min(requestedRefreshMs, maxRefreshMs),
+    selfFence: config?.selfFence ?? DEFAULT_OWNER_LEASE.selfFence,
+  };
+}
 
 function isStoreLostPresence(
   presence: GenerationPresence,
@@ -637,6 +681,28 @@ export type TerminalHostActionHandler = (
   content: Agents.MessageContentComplex[],
 ) => void | Promise<void>;
 
+/** Host hook that persists the partial output of a generation whose owner died,
+ * before its replacement deletes the chunk log. Runs as the `beforePublish` of
+ * the manager's own abort, without a request: the job data carries the user,
+ * tenant and retention context. Must be idempotent (an upsert by messageId). */
+export type OrphanedGenerationHandler = (
+  streamId: string,
+  result: AbortResult,
+) => void | Promise<void>;
+
+/** A provider execution this process has begun and not yet drained. */
+interface OpenProviderExecution {
+  promise: Promise<void>;
+  settle: () => void;
+  streamId: string;
+  createdAt: number;
+  providerExecutionId: string;
+  /** A lease-carrying begin was sent for it; only these are renewed. */
+  leased: boolean;
+  lastRenewOkAt: number;
+  selfFenced: boolean;
+}
+
 export interface CreateGenerationJobOptions {
   startupTelemetry?: AgentStartupTelemetry;
   initialMetadata?: Partial<t.GenerationJobMetadata>;
@@ -948,10 +1014,14 @@ class GenerationJobManagerClass {
    * every entry point (interactive, resume, remote API) already passes through — so no caller
    * has to remember to register, and a new entry point cannot silently opt out.
    */
-  private readonly openProviderExecutions = new Map<
-    string,
-    { promise: Promise<void>; settle: () => void }
-  >();
+  private readonly openProviderExecutions = new Map<string, OpenProviderExecution>();
+
+  /** Owner lease settings and the single manager-level renewal timer. */
+  private _ownerLease: GenerationOwnerLeaseConfig = { ...DEFAULT_OWNER_LEASE };
+  private _orphanSalvage = true;
+  private ownerLeaseTimer: NodeJS.Timeout | null = null;
+  private ownerLeaseRenewing = false;
+  private readonly ownerLeaseId = `${hostname()}:${process.pid}`;
 
   /** Whether we're using Redis stores */
   private _isRedis = false;
@@ -979,6 +1049,7 @@ class GenerationJobManagerClass {
    * durable work (scheduled chats, webhooks, etc.) a generation represents. */
   private approvalExpiredHandler: ApprovalExpiredHandler | undefined;
   private terminalHostActionHandler: TerminalHostActionHandler | undefined;
+  private orphanedGenerationHandler: OrphanedGenerationHandler | undefined;
 
   constructor(options?: GenerationJobManagerOptions) {
     const jobStore =
@@ -1037,6 +1108,10 @@ class GenerationJobManagerClass {
     storeLostTerminalGraceMs?: number;
     /** `true` restores fencing a generation when a durable append throws. */
     fenceOnAppendError?: boolean;
+    /** Owner lease; `enabled: false` restores strict successor handoffs. */
+    ownerLease?: Partial<GenerationOwnerLeaseConfig>;
+    /** `false` skips the pre-create salvage of an orphaned predecessor. */
+    orphanSalvage?: boolean;
   }): void {
     assertJobStoreV2(services.jobStore);
     this.cancelFencedRuntimeRetirements();
@@ -1111,6 +1186,8 @@ class GenerationJobManagerClass {
         ? Math.max(MIN_STORE_LOST_TERMINAL_GRACE_MS, services.storeLostTerminalGraceMs)
         : DEFAULT_STORE_LOST_TERMINAL_GRACE_MS;
     this._fenceOnAppendError = services.fenceOnAppendError ?? false;
+    this._ownerLease = resolveOwnerLeaseConfig(services.ownerLease);
+    this._orphanSalvage = services.orphanSalvage ?? true;
     this.shuttingDown = false;
     this.syncRunningJobMetrics();
 
@@ -1148,6 +1225,11 @@ class GenerationJobManagerClass {
   /** Installs a durable, generation-fenced terminal lifecycle adapter. */
   setTerminalHostActionHandler(handler?: TerminalHostActionHandler): void {
     this.terminalHostActionHandler = handler;
+  }
+
+  /** Installs the host persistence hook for a dead owner's partial output. */
+  setOrphanedGenerationHandler(handler?: OrphanedGenerationHandler): void {
+    this.orphanedGenerationHandler = handler;
   }
 
   /**
@@ -1957,6 +2039,7 @@ class GenerationJobManagerClass {
     fallbackConversationId?: string,
     replacementCreationAttemptId?: string,
     stopProvider = true,
+    providerExecutionId?: string,
   ): Promise<boolean> {
     const reconcileEvent: t.ServerSentEvent = {
       final: true,
@@ -2001,10 +2084,14 @@ class GenerationJobManagerClass {
           // manager; only Redis handoffs require the durable owner proof below.
           this.eventTransport.emitAbort?.(streamId, predecessorCreatedAt);
         } else if (this.eventTransport.emitAbortConfirmed != null) {
-          const ownerAcknowledged = await this.eventTransport.emitAbortConfirmed(
-            streamId,
-            predecessorCreatedAt,
-          );
+          const ownerAcknowledged =
+            (await this.eventTransport.emitAbortConfirmed(streamId, predecessorCreatedAt)) ||
+            (providerExecutionId != null &&
+              (await this.confirmOrphanedOwnerAbort(
+                streamId,
+                predecessorCreatedAt,
+                providerExecutionId,
+              )));
           if (!ownerAcknowledged) {
             throw new Error('Generation owner did not acknowledge the replacement abort');
           }
@@ -2112,6 +2199,7 @@ class GenerationJobManagerClass {
         fallbackConversationId,
         job.creationAttemptId,
         hadRunningProvider,
+        receipt.providerExecutionId,
       );
       if (delivered && receipt.providerDrained === false) {
         if (!receipt.providerExecutionId) {
@@ -2570,7 +2658,16 @@ class GenerationJobManagerClass {
     // Capture the active epoch before the store atomically replaces it. A
     // subscriber attached to that predecessor filters events by generation,
     // so replacement must explicitly close/handoff that old attachment.
-    const observedPredecessorJob = await this.jobStore.getJob(streamId);
+    let observedPredecessorJob = await this.jobStore.getJob(streamId);
+    if (
+      observedPredecessorJob?.providerDrained === false &&
+      this._ownerLease.enabled &&
+      this._orphanSalvage
+    ) {
+      /** Must run before the create: the replacement deletes the predecessor's chunk log. */
+      await this.salvageOrphanedPredecessor(streamId, observedPredecessorJob);
+      observedPredecessorJob = await this.jobStore.getJob(streamId);
+    }
     let jobData: CreatedJobData;
     try {
       jobData = await this.jobStore.createJob(
@@ -8655,11 +8752,26 @@ class GenerationJobManagerClass {
     providerExecutionId: string,
   ): Promise<boolean> {
     try {
-      return await this.recordProviderExecutionDrain(
+      const marked = await this.recordProviderExecutionDrain(
         streamId,
         expectedCreatedAt,
         providerExecutionId,
       );
+      const entry = this.openProviderExecutions.get(
+        this.providerExecutionKey(streamId, expectedCreatedAt, providerExecutionId),
+      );
+      if (entry?.leased === true && this.jobStore.releaseProviderLease != null) {
+        /** Not needed for correctness: waiters check the drain proof before the lease. */
+        await this.jobStore
+          .releaseProviderLease(streamId, expectedCreatedAt, providerExecutionId)
+          .catch((error) => {
+            logger.debug(
+              `[GenerationJobManager] Failed to release owner lease for ${streamId}@${expectedCreatedAt}:`,
+              error,
+            );
+          });
+      }
+      return marked;
     } finally {
       /** Settles the shutdown wait whether or not the record succeeded: a drain that failed
        *  to write has nothing further to wait for, and holding shutdown open on it would only
@@ -8751,17 +8863,145 @@ class GenerationJobManagerClass {
      *  caller treats it that way, running or cleaning up and recording the drain either way.
      *  Leaving the tracker open makes shutdown wait for that record instead of tearing the
      *  transport down underneath it; the deadline still bounds the wait if it never comes. */
-    this.openProviderExecution(streamId, expectedCreatedAt, providerExecutionId);
-    const started =
-      (await this.jobStore.beginProviderExecution?.(
-        streamId,
-        expectedCreatedAt,
-        providerExecutionId,
-      )) ?? false;
+    const entry = this.openProviderExecution(streamId, expectedCreatedAt, providerExecutionId);
+    const lease = this.providerLeaseOptions();
+    let started: boolean;
+    try {
+      started =
+        (await (lease != null
+          ? this.jobStore.beginProviderExecution?.(
+              streamId,
+              expectedCreatedAt,
+              providerExecutionId,
+              lease,
+            )
+          : this.jobStore.beginProviderExecution?.(
+              streamId,
+              expectedCreatedAt,
+              providerExecutionId,
+            ))) ?? false;
+    } catch (error) {
+      /** Ambiguous: the begin and its lease may have committed. Keep renewing so a
+       *  provider that does run is never presumed dead; a renewal without the
+       *  capability marker means nothing to a successor. */
+      if (lease != null) {
+        this.trackProviderLease(entry);
+      }
+      throw error;
+    }
     if (!started) {
       this.closeProviderExecution(streamId, expectedCreatedAt, providerExecutionId);
+    } else if (lease != null) {
+      this.trackProviderLease(entry);
     }
     return started;
+  }
+
+  /** Lease arguments for a provider begin, or undefined when leases are off or the
+   * store cannot renew them (a lease nobody renews would read as a dead owner). */
+  private providerLeaseOptions(): ProviderLeaseOptions | undefined {
+    if (!this._ownerLease.enabled || this.jobStore.renewProviderLeases == null) {
+      return undefined;
+    }
+    return { ttlMs: this._ownerLease.ttlMs, ownerId: this.ownerLeaseId };
+  }
+
+  private trackProviderLease(entry: OpenProviderExecution): void {
+    if (
+      this.openProviderExecutions.get(
+        this.providerExecutionKey(entry.streamId, entry.createdAt, entry.providerExecutionId),
+      ) !== entry
+    ) {
+      return;
+    }
+    entry.leased = true;
+    entry.lastRenewOkAt = Date.now();
+    this.ensureOwnerLeaseTimer();
+  }
+
+  private ensureOwnerLeaseTimer(): void {
+    if (this.ownerLeaseTimer != null) {
+      return;
+    }
+    this.ownerLeaseTimer = setInterval(() => {
+      void this.renewOwnerLeases();
+    }, this._ownerLease.refreshMs);
+    this.ownerLeaseTimer.unref?.();
+  }
+
+  private stopOwnerLeaseTimer(): void {
+    if (this.ownerLeaseTimer != null) {
+      clearInterval(this.ownerLeaseTimer);
+      this.ownerLeaseTimer = null;
+    }
+  }
+
+  /** One pipelined renewal per tick for every leased execution. The timer is
+   * independent of generation work, so only an event-loop stall longer than the
+   * TTL can let a live owner's lease lapse. */
+  private async renewOwnerLeases(): Promise<void> {
+    if (this.ownerLeaseRenewing) {
+      return;
+    }
+    const entries = [...this.openProviderExecutions.values()].filter((entry) => entry.leased);
+    if (entries.length === 0) {
+      this.stopOwnerLeaseTimer();
+      return;
+    }
+    const renew = this.jobStore.renewProviderLeases;
+    if (renew == null) {
+      return;
+    }
+    this.ownerLeaseRenewing = true;
+    /** The lease TTL starts when Redis applies the SET, never before this send. */
+    const sentAt = Date.now();
+    let results: boolean[] = [];
+    try {
+      results = await renew.call(
+        this.jobStore,
+        entries.map(({ streamId, createdAt, providerExecutionId }) => ({
+          streamId,
+          createdAt,
+          providerExecutionId,
+        })),
+        { ttlMs: this._ownerLease.ttlMs, ownerId: this.ownerLeaseId },
+      );
+    } catch (error) {
+      logger.warn('[GenerationJobManager] Owner lease renewal failed:', error);
+    } finally {
+      this.ownerLeaseRenewing = false;
+    }
+    const now = Date.now();
+    /** Fence on the first tick at TTL - refresh. Half a refresh absorbs timer jitter,
+     *  which would otherwise push the fence one tick later, past the lease expiry. */
+    const selfFenceAfterMs =
+      this._ownerLease.ttlMs - this._ownerLease.refreshMs - this._ownerLease.refreshMs / 2;
+    entries.forEach((entry, index) => {
+      if (results[index] === true) {
+        entry.lastRenewOkAt = sentAt;
+        return;
+      }
+      const failingForMs = now - entry.lastRenewOkAt;
+      if (!this._ownerLease.selfFence || entry.selfFenced || failingForMs < selfFenceAfterMs) {
+        return;
+      }
+      /** A successor may already read the lapsed lease as a dead owner. Stop this
+       *  provider so that inference stays true across an owner-only partition. */
+      entry.selfFenced = true;
+      logger.error(
+        `[GenerationJobManager] Owner lease renewal failing for ${failingForMs}ms; self-fencing ${entry.streamId}@${entry.createdAt}`,
+      );
+      const runtime = this.runtimeState.get(entry.streamId);
+      if (runtime?.createdAt === entry.createdAt) {
+        /** Through the durable-fence path, not a bare abort: the fence is classified
+         *  (store lost vs. unknown/replaced) so the controller's registered store-lost
+         *  save still runs. The abort also ends this runtime's append-retry queue, so
+         *  no queued chunk is written after the lease may have lapsed; those chunks
+         *  remain in the local content the store-lost save reads. */
+        this.retireRuntimeAfterDurableFence(entry.streamId, runtime);
+        runtime.abortController.abort();
+      }
+    });
   }
 
   private providerExecutionKey(
@@ -8776,16 +9016,28 @@ class GenerationJobManagerClass {
     streamId: string,
     createdAt: number,
     providerExecutionId: string,
-  ): void {
+  ): OpenProviderExecution {
     const key = this.providerExecutionKey(streamId, createdAt, providerExecutionId);
-    if (this.openProviderExecutions.has(key)) {
-      return;
+    const existing = this.openProviderExecutions.get(key);
+    if (existing != null) {
+      return existing;
     }
     let settle: () => void = () => undefined;
     const promise = new Promise<void>((resolve) => {
       settle = resolve;
     });
-    this.openProviderExecutions.set(key, { promise, settle });
+    const entry: OpenProviderExecution = {
+      promise,
+      settle,
+      streamId,
+      createdAt,
+      providerExecutionId,
+      leased: false,
+      lastRenewOkAt: Date.now(),
+      selfFenced: false,
+    };
+    this.openProviderExecutions.set(key, entry);
+    return entry;
   }
 
   private closeProviderExecution(
@@ -8800,15 +9052,33 @@ class GenerationJobManagerClass {
     }
     this.openProviderExecutions.delete(key);
     entry.settle();
+    if (![...this.openProviderExecutions.values()].some((open) => open.leased)) {
+      this.stopOwnerLeaseTimer();
+    }
   }
 
   /**
    * Release the tracker for an execution whose owner will never record its drain — a run
    * that settled its provider work but failed terminalization and deliberately publishes no
-   * marker. Nothing is written: shutdown simply stops waiting on it, and the absent marker
-   * keeps telling a successor the truth.
+   * marker. Shutdown simply stops waiting on it, and the absent marker keeps telling a
+   * successor the truth. A leased execution also gets a hold marker: without it, the lease
+   * lapsing would turn this deliberate fail-closed into a presumed drain.
    */
   abandonProviderExecution(streamId: string, createdAt: number, providerExecutionId: string): void {
+    const entry = this.openProviderExecutions.get(
+      this.providerExecutionKey(streamId, createdAt, providerExecutionId),
+    );
+    const mayHoldLease = entry != null ? entry.leased : this._ownerLease.enabled;
+    if (mayHoldLease && this.jobStore.holdProviderExecution != null) {
+      void this.jobStore
+        .holdProviderExecution(streamId, createdAt, providerExecutionId)
+        .catch((error) => {
+          logger.error(
+            `[GenerationJobManager] Failed to hold abandoned provider execution ${streamId}@${createdAt}:`,
+            error,
+          );
+        });
+    }
     this.closeProviderExecution(streamId, createdAt, providerExecutionId);
   }
 
@@ -8818,6 +9088,7 @@ class GenerationJobManagerClass {
       entry.settle();
     }
     this.openProviderExecutions.clear();
+    this.stopOwnerLeaseTimer();
   }
 
   private async waitForProviderExecutionDrain(
@@ -8825,7 +9096,9 @@ class GenerationJobManagerClass {
     expectedCreatedAt: number,
     providerExecutionId: string,
   ): Promise<void> {
-    const deadline = Date.now() + PROVIDER_DRAIN_TIMEOUT_MS;
+    const startedAt = Date.now();
+    let deadline = startedAt + PROVIDER_DRAIN_TIMEOUT_MS;
+    let nextLeaseCheckAt = startedAt;
     for (;;) {
       if (
         (await this.eventTransport
@@ -8842,12 +9115,253 @@ class GenerationJobManagerClass {
       ) {
         return;
       }
+      if (this._ownerLease.enabled && Date.now() >= nextLeaseCheckAt) {
+        nextLeaseCheckAt = Date.now() + OWNER_LEASE_POLL_MS;
+        const lease = await this.presumeOrphanedProviderDrained(
+          streamId,
+          expectedCreatedAt,
+          providerExecutionId,
+          'drain',
+        );
+        if (lease === 'drained') {
+          return;
+        }
+        if (lease === 'leased') {
+          /** A capable owner killed just before this wait still holds its lease for
+           *  up to one TTL; wait for it to lapse instead of failing first. */
+          deadline = Math.max(
+            deadline,
+            startedAt + this._ownerLease.ttlMs + 2 * this._ownerLease.refreshMs,
+          );
+        }
+      }
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting for provider execution to drain: ${streamId}`);
       }
       await new Promise<void>((resolve) => {
         setTimeout(resolve, PROVIDER_DRAIN_POLL_MS);
       });
+    }
+  }
+
+  /**
+   * Presume a provider drained when its owner is gone: the execution was begun by a
+   * lease-aware owner (capability marker), its lease lapsed, and no hold was written.
+   * The store re-checks all three atomically with the drain flip, then the transport
+   * drain proof is published so every other waiter unblocks too.
+   *
+   * - `strict`: no capability marker or a hold; only the owner's own proofs count.
+   * - `leased`: the owner's lease is still live (or a renewal won the race).
+   * - `drained`: the drain was recorded on the owner's behalf.
+   */
+  private async presumeOrphanedProviderDrained(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+    path: PresumedDrainPath,
+  ): Promise<'strict' | 'leased' | 'drained'> {
+    const getState = this.jobStore.getProviderLeaseState;
+    const recover = this.jobStore.recoverOrphanedProviderExecution;
+    if (!this._ownerLease.enabled || getState == null || recover == null) {
+      return 'strict';
+    }
+    try {
+      const state = await getState.call(this.jobStore, streamId, createdAt, providerExecutionId);
+      if (!state.capable || state.held) {
+        return 'strict';
+      }
+      if (state.leased) {
+        return 'leased';
+      }
+      const recovered = await recover.call(
+        this.jobStore,
+        streamId,
+        createdAt,
+        providerExecutionId,
+        Date.now(),
+      );
+      if (recovered === 0) {
+        return 'leased';
+      }
+      const recorded =
+        (await this.eventTransport
+          .recordProviderDrain?.(streamId, createdAt, providerExecutionId)
+          .catch(() => false)) === true;
+      if (recovered !== 1 && !recorded) {
+        return 'leased';
+      }
+      logger.warn(
+        `[GenerationJobManager] Presumed provider drained for ${streamId}@${createdAt}/${providerExecutionId}: owner lease expired (path=${path})`,
+      );
+      return 'drained';
+    } catch (error) {
+      logger.warn(
+        `[GenerationJobManager] Failed to inspect owner lease for ${streamId}@${createdAt}:`,
+        error,
+      );
+      return 'strict';
+    }
+  }
+
+  /** Wait up to one lease TTL for a capable owner's lease to lapse, then record the
+   * abort acknowledgement it can no longer write. False keeps today's strict
+   * failure: an owner that is not lease-aware, held, or still renewing. */
+  private async confirmOrphanedOwnerAbort(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<boolean> {
+    const getState = this.jobStore.getProviderLeaseState;
+    if (!this._ownerLease.enabled || getState == null) {
+      return false;
+    }
+    const deadline = Date.now() + this._ownerLease.ttlMs + this._ownerLease.refreshMs;
+    for (;;) {
+      let state;
+      try {
+        state = await getState.call(this.jobStore, streamId, createdAt, providerExecutionId);
+      } catch (error) {
+        logger.warn(
+          `[GenerationJobManager] Failed to inspect owner lease for ${streamId}@${createdAt}:`,
+          error,
+        );
+        return false;
+      }
+      if (!state.capable || state.held) {
+        return false;
+      }
+      if (!state.leased) {
+        await this.eventTransport.recordAbortAcknowledgement?.(streamId, createdAt);
+        logger.warn(
+          `[GenerationJobManager] Presumed provider stopped for ${streamId}@${createdAt}/${providerExecutionId}: owner lease expired (path=abort_ack)`,
+        );
+        return true;
+      }
+      if (Date.now() >= deadline) {
+        return false;
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, OWNER_LEASE_POLL_MS);
+      });
+    }
+  }
+
+  /**
+   * Before a replacement deletes the predecessor's chunk log, finish a generation
+   * whose lease-aware owner died: record its drain on the owner's behalf and, while
+   * it still looks running, abort it through the normal abort path so the host hook
+   * saves the partial output and subscribers get a terminal frame. A predecessor
+   * already stopped (Stop, then the owner died) only needs its drain recovered.
+   *
+   * A live owner renews every refresh interval, so its lease never runs below
+   * `ttl - refresh`. A lease below that has missed a renewal: wait for it to lapse
+   * (at most one TTL) rather than replace the generation and lose its partial. A
+   * freshly renewed lease returns at once, so live replacements are not delayed.
+   * The salvage itself is bounded; on timeout or error the replacement falls
+   * through to the receipt handoff, which recovers the drain on its own.
+   */
+  private async salvageOrphanedPredecessor(
+    streamId: string,
+    observed: SerializableJobData | null,
+  ): Promise<void> {
+    const getState = this.jobStore.getProviderLeaseState;
+    if (
+      !this._ownerLease.enabled ||
+      !this._orphanSalvage ||
+      getState == null ||
+      observed == null ||
+      observed.providerDrained !== false ||
+      !observed.providerExecutionId ||
+      this.ownedJobs.get(streamId) === observed.createdAt
+    ) {
+      return;
+    }
+    const providerExecutionId = observed.providerExecutionId;
+    const { ttlMs, refreshMs } = this._ownerLease;
+    const missedRenewalBelowMs = ttlMs - refreshMs - refreshMs / 2;
+    const lapseDeadline = Date.now() + ttlMs + refreshMs;
+    try {
+      for (;;) {
+        const state = await getState.call(
+          this.jobStore,
+          streamId,
+          observed.createdAt,
+          providerExecutionId,
+        );
+        if (!state.capable || state.held) {
+          return;
+        }
+        if (!state.leased) {
+          break;
+        }
+        if (
+          (state.leaseTtlMs != null && state.leaseTtlMs >= missedRenewalBelowMs) ||
+          Date.now() >= lapseDeadline
+        ) {
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, Math.min(OWNER_LEASE_POLL_MS, (state.leaseTtlMs ?? 0) + 10));
+        });
+      }
+    } catch (error) {
+      logger.warn(
+        `[GenerationJobManager] Failed to inspect owner lease before replacing ${streamId}@${observed.createdAt}:`,
+        error,
+      );
+      return;
+    }
+
+    let timer: NodeJS.Timeout | undefined;
+    const salvage = (async () => {
+      const presumed = await this.presumeOrphanedProviderDrained(
+        streamId,
+        observed.createdAt,
+        providerExecutionId,
+        'salvage',
+      );
+      if (presumed !== 'drained') {
+        return;
+      }
+      if (observed.status !== 'running') {
+        logger.warn(
+          `[GenerationJobManager] Recovered orphaned generation drain ${streamId}@${observed.createdAt} before replacement (status=${observed.status})`,
+        );
+        return;
+      }
+      await this.eventTransport.recordAbortAcknowledgement?.(streamId, observed.createdAt);
+      const handler = this.orphanedGenerationHandler;
+      const result = await this.abortJob(streamId, {
+        expectedCreatedAt: observed.createdAt,
+        ...(handler != null && {
+          beforePublish: (pending: AbortResult) => handler(streamId, pending),
+        }),
+      });
+      logger.warn(
+        `[GenerationJobManager] Salvaged orphaned generation ${streamId}@${observed.createdAt} before replacement (status=${observed.status}, parts=${result.content.length}, aborted=${result.success})`,
+      );
+    })();
+    try {
+      await Promise.race([
+        salvage,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            logger.warn(
+              `[GenerationJobManager] Orphaned generation salvage for ${streamId}@${observed.createdAt} exceeded ${ORPHAN_SALVAGE_TIMEOUT_MS}ms; continuing with the replacement`,
+            );
+            resolve();
+          }, ORPHAN_SALVAGE_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (error) {
+      logger.error(
+        `[GenerationJobManager] Failed to salvage orphaned generation ${streamId}@${observed.createdAt}:`,
+        error,
+      );
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -10216,6 +10730,9 @@ class GenerationJobManagerClass {
 
     await this.drainSubscriberCleanups();
     await this.awaitGenerationSettlements(Math.max(0, settlementDeadline - Date.now()));
+    /** Executions still open past the settlement budget are left to lapse: the
+     *  store is about to close, so no renewal could succeed anyway. */
+    this.stopOwnerLeaseTimer();
     await this.finalizeOwnedJobsForShutdown();
     await this.jobStore.destroy();
     this.eventTransport.destroy();

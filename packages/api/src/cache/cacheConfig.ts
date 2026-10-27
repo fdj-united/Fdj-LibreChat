@@ -187,6 +187,36 @@ const cacheConfig: {
    * @default false
    */
   GENERATION_FENCE_ON_APPEND_ERROR: boolean;
+  /**
+   * Owner lease for running providers. The owner refreshes a short-TTL lease while its
+   * provider runs and marks the execution as lease-aware, so a successor can treat an
+   * expired lease as a dead owner instead of waiting for proofs it will never write.
+   * `false` writes no capability marker, so every successor stays strict.
+   * @default true
+   */
+  GENERATION_OWNER_LEASE_ENABLED: boolean;
+  /**
+   * Owner lease TTL in ms. Must be at least 3x the refresh interval.
+   * @default 20000 (20 seconds)
+   */
+  GENERATION_OWNER_LEASE_TTL_MS: number;
+  /**
+   * Owner lease refresh interval in ms. Clamped to TTL / 3.
+   * @default 5000 (5 seconds)
+   */
+  GENERATION_OWNER_LEASE_REFRESH_MS: number;
+  /**
+   * Abort the owner's own provider when no lease renewal has succeeded for TTL - refresh,
+   * so a successor's "lease absent" inference holds across an owner-only partition.
+   * @default true
+   */
+  GENERATION_OWNER_LEASE_SELF_FENCE: boolean;
+  /**
+   * Before replacing a generation whose owner lease expired, save its partial output from
+   * the durable chunk log and record the dead owner's drain.
+   * @default true
+   */
+  GENERATION_ORPHAN_SALVAGE_ENABLED: boolean;
 } = {
   FORCED_IN_MEMORY_CACHE_NAMESPACES,
   USE_REDIS,
@@ -284,6 +314,16 @@ const cacheConfig: {
     15000,
   ),
   GENERATION_FENCE_ON_APPEND_ERROR: isEnabled(process.env.GENERATION_FENCE_ON_APPEND_ERROR),
+
+  GENERATION_OWNER_LEASE_ENABLED: isEnabled(process.env.GENERATION_OWNER_LEASE_ENABLED ?? 'true'),
+  GENERATION_OWNER_LEASE_TTL_MS: math(process.env.GENERATION_OWNER_LEASE_TTL_MS, 20000),
+  GENERATION_OWNER_LEASE_REFRESH_MS: math(process.env.GENERATION_OWNER_LEASE_REFRESH_MS, 5000),
+  GENERATION_OWNER_LEASE_SELF_FENCE: isEnabled(
+    process.env.GENERATION_OWNER_LEASE_SELF_FENCE ?? 'true',
+  ),
+  GENERATION_ORPHAN_SALVAGE_ENABLED: isEnabled(
+    process.env.GENERATION_ORPHAN_SALVAGE_ENABLED ?? 'true',
+  ),
 };
 
 export { cacheConfig };

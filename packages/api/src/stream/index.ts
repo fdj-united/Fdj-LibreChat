@@ -12,6 +12,7 @@ export {
   TERMINAL_PUBLICATION_RECONNECT_ERROR,
   type GenerationFenceOutcome,
   type StoreLostPersistence,
+  type OrphanedGenerationHandler,
 } from './GenerationJobManager';
 
 export type {
@@ -25,6 +26,8 @@ export type {
   GenerationProtocolVersion,
   GenerationPredecessorState,
   GenerationPresence,
+  GenerationOwnerLeaseConfig,
+  ProviderLeaseState,
   ParkedSteerClaim,
   IJobStore,
   IJobStoreV2,
