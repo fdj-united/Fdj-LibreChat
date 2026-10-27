@@ -173,10 +173,20 @@ const cacheConfig: {
   GENERATION_STORE_LOST_DETECTION: boolean;
   /**
    * Backstop in ms: when the request controller has not finalized a store-lost generation
-   * within this window, the manager publishes the error frame and cleans up on its own.
+   * within this window, the manager saves the partial response (through the controller's
+   * registered save), publishes the error frame and cleans up on its own. It also bounds how
+   * long an unreachable store is probed and how long failed appends are retried.
+   * Values below 1000 are raised to 1000.
    * @default 15000
    */
   GENERATION_STORE_LOST_TERMINAL_GRACE_MS: number;
+  /**
+   * `true` restores fencing (stopping) a generation as soon as a durable chunk append throws.
+   * The default retries thrown appends in order, because an unreachable store is not proof
+   * that another generation took over; an append the store rejects still fences.
+   * @default false
+   */
+  GENERATION_FENCE_ON_APPEND_ERROR: boolean;
 } = {
   FORCED_IN_MEMORY_CACHE_NAMESPACES,
   USE_REDIS,
@@ -273,6 +283,7 @@ const cacheConfig: {
     process.env.GENERATION_STORE_LOST_TERMINAL_GRACE_MS,
     15000,
   ),
+  GENERATION_FENCE_ON_APPEND_ERROR: isEnabled(process.env.GENERATION_FENCE_ON_APPEND_ERROR),
 };
 
 export { cacheConfig };

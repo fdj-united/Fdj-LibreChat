@@ -935,7 +935,7 @@ describe('GenerationJobManager start-generation claim', () => {
     }
   });
 
-  it('self-fences an ordinary provider when its Redis append rejects', async () => {
+  it('retries a rejected Redis append without stopping the provider', async () => {
     await manager.destroy();
     store = new InMemoryJobStore({ ttlAfterComplete: 0 });
     manager = new GenerationJobManagerClass();
@@ -943,6 +943,52 @@ describe('GenerationJobManager start-generation claim', () => {
       jobStore: store,
       eventTransport: new InMemoryEventTransport(),
       isRedis: true,
+    });
+    manager.initialize();
+
+    const streamId = 'stream-append-rejection-retry';
+    const job = await manager.createJob(streamId, 'user-1', streamId, {
+      initialMetadata: { generationProtocolVersion: 2 },
+    });
+    const onError = jest.fn();
+    expect(await manager.subscribe(streamId, jest.fn(), jest.fn(), onError)).not.toBeNull();
+    const append = jest
+      .spyOn(store, 'appendChunk')
+      .mockRejectedValueOnce(new Error('simulated Redis outage'))
+      .mockRejectedValueOnce(new Error('simulated Redis outage'));
+    const event = {
+      event: 'on_message_delta',
+      data: { delta: 'output during an outage' },
+    };
+
+    jest.useFakeTimers();
+    try {
+      await manager.emitChunk(streamId, event);
+      await jest.advanceTimersByTimeAsync(2_000);
+
+      expect(job.abortController.signal.aborted).toBe(false);
+      expect(onError).not.toHaveBeenCalled();
+      const attempts = append.mock.calls.filter(
+        ([, chunk]) => (chunk as { data?: unknown }).data === event.data,
+      );
+      /** First attempt and one retry rejected; the second retry reached the store. */
+      expect(attempts).toHaveLength(3);
+      await expect(append.mock.results[2].value).resolves.toBe(true);
+      expect(manager.getRuntimeStats().runtimeStateSize).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('self-fences an ordinary provider when its Redis append rejects (GENERATION_FENCE_ON_APPEND_ERROR)', async () => {
+    await manager.destroy();
+    store = new InMemoryJobStore({ ttlAfterComplete: 0 });
+    manager = new GenerationJobManagerClass();
+    manager.configure({
+      jobStore: store,
+      eventTransport: new InMemoryEventTransport(),
+      isRedis: true,
+      fenceOnAppendError: true,
     });
     manager.initialize();
 

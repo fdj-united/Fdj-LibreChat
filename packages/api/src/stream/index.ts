@@ -8,8 +8,10 @@ export {
   type GenerationSettledListener,
   GENERATION_RECOVERY_FAILED_ERROR,
   GENERATION_STORE_LOST_ERROR,
+  GENERATION_STORE_LOST_UNSAVED_ERROR,
   TERMINAL_PUBLICATION_RECONNECT_ERROR,
   type GenerationFenceOutcome,
+  type StoreLostPersistence,
 } from './GenerationJobManager';
 
 export type {

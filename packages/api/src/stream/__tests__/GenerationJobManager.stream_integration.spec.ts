@@ -6,6 +6,7 @@ import {
   GenerationJobManagerClass,
   GENERATION_RECOVERY_FAILED_ERROR,
   GENERATION_STORE_LOST_ERROR,
+  GENERATION_STORE_LOST_UNSAVED_ERROR,
   TERMINAL_PUBLICATION_RECONNECT_ERROR,
 } from '~/stream/GenerationJobManager';
 import {
@@ -4124,7 +4125,7 @@ describe('GenerationJobManager Integration Tests', () => {
       await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
       expect(errors).not.toContain(TERMINAL_PUBLICATION_RECONNECT_ERROR);
 
-      const beforePublish = jest.fn(async () => undefined);
+      const beforePublish = jest.fn(async () => true);
       await expect(
         owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish }),
       ).resolves.toBe(true);
@@ -4193,7 +4194,8 @@ describe('GenerationJobManager Integration Tests', () => {
 
       /** The wipe reset the sequence counter; the frame must not be dropped as a duplicate. */
       await waitUntil(() => remoteErrors.length > 0, 'remote store-lost error');
-      expect(remoteErrors).toEqual([GENERATION_STORE_LOST_ERROR]);
+      /** No save was registered, so the frame must not claim one. */
+      expect(remoteErrors).toEqual([GENERATION_STORE_LOST_UNSAVED_ERROR]);
       remoteSub?.unsubscribe();
     }, 30000);
 
@@ -4269,10 +4271,12 @@ describe('GenerationJobManager Integration Tests', () => {
       });
     }, 40000);
 
-    test('the backstop ends an unfinalized store-lost generation on its own', async () => {
-      const owner = createReplica({ storeLostTerminalGraceMs: 200 });
+    test('the backstop saves through the registered persistence and ends the generation', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 1000 });
       const streamId = `${testPrefix}-store-lost-backstop-${Date.now()}`;
       const job = await owner.createJob(streamId, 'user-1', streamId);
+      const save = jest.fn(async () => true);
+      owner.setStoreLostPersistence(streamId, job.createdAt, save);
       const errors: string[] = [];
       await owner.subscribe(
         streamId,
@@ -4287,6 +4291,7 @@ describe('GenerationJobManager Integration Tests', () => {
 
       await waitUntil(() => errors.length > 0, 'backstop store-lost error');
       expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+      expect(save).toHaveBeenCalledTimes(1);
       await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
         jobCreatedAt: null,
         epoch: job.createdAt,
@@ -4297,6 +4302,31 @@ describe('GenerationJobManager Integration Tests', () => {
         owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish }),
       ).resolves.toBe(false);
       expect(beforePublish).not.toHaveBeenCalled();
+    }, 30000);
+
+    test('clamps a zero grace so the backstop cannot beat the controller', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 0 });
+      const streamId = `${testPrefix}-store-lost-zero-grace-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(errors).toEqual([]);
+      const beforePublish = jest.fn(async () => true);
+      await expect(
+        owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish }),
+      ).resolves.toBe(true);
+      expect(beforePublish).toHaveBeenCalledTimes(1);
     }, 30000);
 
     test('detects a wipe after the last append when the terminal claim fails', async () => {
@@ -4324,7 +4354,196 @@ describe('GenerationJobManager Integration Tests', () => {
       await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
       await expect(owner.finalizeStoreLostGeneration(streamId, job.createdAt)).resolves.toBe(true);
       await waitUntil(() => errors.length > 0, 'store-lost error');
+      expect(errors).toEqual([GENERATION_STORE_LOST_UNSAVED_ERROR]);
+    }, 30000);
+
+    /** Simulates a Redis restart: commands fail while `down`, then the store answers empty. */
+    function makeStoreUnreachable(manager: GenerationJobManagerClass) {
+      const store = manager.getJobStore() as RedisJobStore;
+      const state = { down: true, presenceCalls: 0, appendCalls: 0 };
+      const realPresence = store.getGenerationPresence.bind(store);
+      const realAppend = store.appendChunk.bind(store);
+      jest.spyOn(store, 'getGenerationPresence').mockImplementation(async (id: string) => {
+        state.presenceCalls++;
+        if (state.down) {
+          throw new Error('connect ECONNREFUSED (simulated restart)');
+        }
+        return realPresence(id);
+      });
+      jest
+        .spyOn(store, 'appendChunk')
+        .mockImplementation(async (...args: Parameters<RedisJobStore['appendChunk']>) => {
+          state.appendCalls++;
+          if (state.down) {
+            throw new Error('connect ECONNREFUSED (simulated restart)');
+          }
+          return realAppend(...args);
+        });
+      return state;
+    }
+
+    test('keeps a generation alive through an outage, then saves once when the store comes back empty', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 10_000 });
+      const streamId = `${testPrefix}-store-lost-outage-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      const outage = makeStoreUnreachable(owner);
+      await owner.emitChunk(streamId, {
+        event: 'on_message_delta',
+        data: { id: 'step-1', delta: { content: { type: 'text', text: 'during outage ' } } },
+      });
+      const durable = owner.emitChunk(streamId, durableEvent, { durable: true });
+      const durableSettled = durable.then(
+        () => 'appended',
+        () => 'fenced',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      /** A thrown append is retried, not a fence: the provider keeps running. */
+      expect(job.abortController.signal.aborted).toBe(false);
+      expect(outage.appendCalls).toBeGreaterThan(2);
+
+      await wipeStream(streamId);
+      outage.down = false;
+      await expect(durableSettled).resolves.toBe('fenced');
+      expect(job.abortController.signal.aborted).toBe(true);
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      const save = jest.fn(async () => true);
+      await owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish: save });
+      await owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish: save });
+      await waitUntil(() => errors.length > 0, 'store-lost error');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).toHaveBeenCalledTimes(1);
       expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+    }, 40000);
+
+    test('keeps probing an unreachable store instead of settling on unknown', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 10_000 });
+      const streamId = `${testPrefix}-store-lost-probe-retry-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      /** The append itself answers (job gone); only presence reads fail for a while. */
+      const store = owner.getJobStore() as RedisJobStore;
+      const realPresence = store.getGenerationPresence.bind(store);
+      let presenceDown = true;
+      const presence = jest
+        .spyOn(store, 'getGenerationPresence')
+        .mockImplementation(async (id: string) => {
+          if (presenceDown) {
+            throw new Error('connect ECONNREFUSED (simulated restart)');
+          }
+          return realPresence(id);
+        });
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+      setTimeout(() => {
+        presenceDown = false;
+      }, 1500);
+
+      const save = jest.fn(async () => true);
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      expect(presence.mock.calls.length).toBeGreaterThan(2);
+      await owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish: save });
+      await waitUntil(() => errors.length > 0, 'store-lost error');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+    }, 40000);
+
+    test('saves through the registered persistence when the store answers after the controller left', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 1000 });
+      const streamId = `${testPrefix}-store-lost-late-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const save = jest.fn(async () => true);
+      owner.setStoreLostPersistence(streamId, job.createdAt, save);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      const store = owner.getJobStore() as RedisJobStore;
+      const realPresence = store.getGenerationPresence.bind(store);
+      let presenceDown = true;
+      jest.spyOn(store, 'getGenerationPresence').mockImplementation(async (id: string) => {
+        if (presenceDown) {
+          throw new Error('connect ECONNREFUSED (simulated restart)');
+        }
+        return realPresence(id);
+      });
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      /** The controller asks while the store is still down and leaves without saving. */
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('unknown');
+      expect(save).not.toHaveBeenCalled();
+
+      presenceDown = false;
+      await waitUntil(() => errors.length > 0, 'late store-lost error', 20000);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+    }, 40000);
+
+    test('treats a deleted job that kept its own epoch as a replacement', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-own-epoch-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId);
+
+      /** A cross-replica Stop + delete, or the reaper, leaves the epoch at this generation. */
+      await ioredisClient!.del(`stream:{${streamId}}:job`);
+      await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: job.createdAt,
+      });
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('replaced');
+      await expect(owner.finalizeStoreLostGeneration(streamId, job.createdAt)).resolves.toBe(false);
+    }, 30000);
+
+    test('does not trust a missing epoch after it could have expired', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-stale-epoch-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId);
+
+      /** Last confirmed write longer ago than the epoch retention: a successor's
+       * epoch could have expired, so absence is no longer proof of a wipe. */
+      const runtime = (
+        owner as unknown as { runtimeState: Map<string, { lastDurableWriteAt?: number }> }
+      ).runtimeState.get(streamId)!;
+      runtime.lastDurableWriteAt = Date.now() - 301_000;
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('replaced');
+      await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: null,
+      });
     }, 30000);
 
     test('reports nothing for a generation stopped by the user', async () => {

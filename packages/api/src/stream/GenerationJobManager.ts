@@ -162,18 +162,58 @@ export const GENERATION_RECOVERY_FAILED_ERROR = 'generation_recovery_failed';
  * so subscribers receive it as an ordinary error frame. */
 export const GENERATION_STORE_LOST_ERROR =
   'Generation interrupted: the server lost its stream state. The partial response was saved; you can continue.';
+/** Same terminal as GENERATION_STORE_LOST_ERROR when no partial response could be saved. */
+export const GENERATION_STORE_LOST_UNSAVED_ERROR =
+  'Generation interrupted: the server lost its stream state, and the partial response could not be saved.';
 /** How a generation fence was explained after the fact. `replaced` keeps the
  * successor handoff; `store_lost` means the job and its epoch are both gone;
  * `unknown` means the store could not be read and handoff handling applies. */
 export type GenerationFenceOutcome = 'replaced' | 'store_lost' | 'unknown';
-/** Presence probe attempts after a fence, spread over about two seconds so a
- * restarting Redis can answer before the fence falls back to `unknown`. */
-const STORE_LOST_PROBE_ATTEMPTS = 3;
-const STORE_LOST_PROBE_RETRY_MS = 1_000;
+/** Interval between presence probes while the store is unreachable. Probing
+ * continues for up to the store-lost terminal grace before `unknown`. */
+const STORE_LOST_PROBE_RETRY_MS = 500;
 const DEFAULT_STORE_LOST_TERMINAL_GRACE_MS = 15_000;
+/** A grace shorter than this would let the backstop beat the request controller. */
+const MIN_STORE_LOST_TERMINAL_GRACE_MS = 1_000;
+/** Interval between retries of a durable append that failed operationally. */
+const APPEND_RETRY_INTERVAL_MS = 500;
+/** Bound on chunks held for retry while the store is unreachable. */
+const APPEND_RETRY_MAX_ENTRIES = 5_000;
+/** Every successful append refreshes the generation epoch for at least the
+ * store's epoch grace (GENERATION_EPOCH_GRACE_TTL_S = 300 s in RedisJobStore),
+ * and any successor writes a newer one with the same retention. Within this
+ * window of the runtime's last confirmed write, an absent epoch can only mean
+ * the store lost its state; after it, the epoch may simply have expired. */
+const STORE_LOST_EPOCH_EVIDENCE_WINDOW_MS = 300_000;
 
-function isStoreLostPresence(presence: GenerationPresence, createdAt: number): boolean {
-  return presence.jobCreatedAt == null && (presence.epoch == null || presence.epoch < createdAt);
+function isStoreLostPresence(
+  presence: GenerationPresence,
+  runtime: Pick<RuntimeJobState, 'createdAt' | 'lastDurableWriteAt'>,
+): boolean {
+  if (presence.jobCreatedAt != null) {
+    return false;
+  }
+  if (presence.epoch != null && presence.epoch >= runtime.createdAt) {
+    return false;
+  }
+  const lastWriteAt = runtime.lastDurableWriteAt ?? runtime.createdAt;
+  return Date.now() - lastWriteAt <= STORE_LOST_EPOCH_EVIDENCE_WINDOW_MS;
+}
+
+/** Store-lost persistence registered by the request controller. Resolves true
+ * only when a partial response row was written. */
+export type StoreLostPersistence = () => Promise<boolean | void> | boolean | void;
+
+interface AppendRetryEntry {
+  chunk: { event: string; data: unknown };
+  resolve: (appended: boolean) => void;
+  reject: (error: unknown) => void;
+}
+
+interface AppendRetryState {
+  entries: AppendRetryEntry[];
+  startedAt: number;
+  draining: boolean;
 }
 /** Upper bound for a terminal owner's required persistence barrier. A crashed
  * owner leaves the durable pending bit behind; the next read or subscriber
@@ -791,6 +831,15 @@ interface RuntimeJobState {
   storeLostFinalization?: Promise<void>;
   /** Set once the controller's partial-response save has started. */
   storeLostSaveStarted?: boolean;
+  /** Partial-response save registered by the request controller, so the
+   * backstop and late detection can persist after the controller has left. */
+  storeLostPersistence?: StoreLostPersistence;
+  /** Terminal text chosen by finalization from the save result. */
+  storeLostError?: string;
+  /** Start time of the last append the store confirmed (epoch refreshed). */
+  lastDurableWriteAt?: number;
+  /** Ordered retry queue for appends that failed operationally (store unreachable). */
+  appendRetry?: AppendRetryState;
 }
 
 interface FencedRuntimeRetirementContext {
@@ -923,6 +972,9 @@ class GenerationJobManagerClass {
   /** Backstop timers for store-lost runtimes awaiting controller finalization. */
   private storeLostBackstops = new Map<RuntimeJobState, NodeJS.Timeout>();
 
+  /** `true` restores fencing on a thrown append instead of retrying it. */
+  private _fenceOnAppendError = false;
+
   /** Optional host hook; the generic stream runtime does not know what external
    * durable work (scheduled chats, webhooks, etc.) a generation represents. */
   private approvalExpiredHandler: ApprovalExpiredHandler | undefined;
@@ -983,6 +1035,8 @@ class GenerationJobManagerClass {
     /** `false` restores replacement handling for a fence whose job and epoch are gone. */
     storeLostDetection?: boolean;
     storeLostTerminalGraceMs?: number;
+    /** `true` restores fencing a generation when a durable append throws. */
+    fenceOnAppendError?: boolean;
   }): void {
     assertJobStoreV2(services.jobStore);
     this.cancelFencedRuntimeRetirements();
@@ -1053,10 +1107,10 @@ class GenerationJobManagerClass {
     this._storeLostDetection = services.storeLostDetection ?? true;
     this._storeLostTerminalGraceMs =
       services.storeLostTerminalGraceMs != null &&
-      Number.isFinite(services.storeLostTerminalGraceMs) &&
-      services.storeLostTerminalGraceMs >= 0
-        ? services.storeLostTerminalGraceMs
+      Number.isFinite(services.storeLostTerminalGraceMs)
+        ? Math.max(MIN_STORE_LOST_TERMINAL_GRACE_MS, services.storeLostTerminalGraceMs)
         : DEFAULT_STORE_LOST_TERMINAL_GRACE_MS;
+    this._fenceOnAppendError = services.fenceOnAppendError ?? false;
     this.shuttingDown = false;
     this.syncRunningJobMetrics();
 
@@ -3935,7 +3989,7 @@ class GenerationJobManagerClass {
     let jobData = await this.jobStore.getJob(streamId);
     if (!jobData || (targetCreatedAt != null && jobData.createdAt !== targetCreatedAt)) {
       if (!jobData && targetCreatedAt != null) {
-        this.classifyMissingJobAtClaim(streamId, targetCreatedAt, observedRuntime);
+        this.classifyUnfencedRuntime(streamId, targetCreatedAt, observedRuntime);
       }
       if (targetCreatedAt != null) {
         this.reconcileInactiveGeneration(streamId, targetCreatedAt, jobData, observedRuntime);
@@ -6959,13 +7013,23 @@ class GenerationJobManagerClass {
       if (eventType && eventData !== undefined) {
         runtime.durableEventSequence += 1;
         // Store in format expected by aggregateContent: { event, data }
-        const appendPromise = this.jobStore.appendChunk(
-          streamId,
-          { event: eventType, data: eventData },
-          runtime.createdAt,
-          options?.deliveredSteer,
-          coalescableDelta ? { coalesce: true } : undefined,
-        );
+        const chunk = { event: eventType, data: eventData };
+        /** A thrown append is an operational failure (store unreachable), not
+         * proof of a successor. Unless GENERATION_FENCE_ON_APPEND_ERROR asks
+         * for the old fence, it is retried in order; a `false` from the store
+         * remains the fence. Steer receipts keep their own settlement rules. */
+        const retryAppendErrors = !this._fenceOnAppendError && options?.deliveredSteer == null;
+        const queuedAppend = retryAppendErrors && runtime.appendRetry != null;
+        const appendIssuedAt = Date.now();
+        const appendPromise = queuedAppend
+          ? this.enqueueAppendRetry(streamId, runtime, chunk)
+          : this.jobStore.appendChunk(
+              streamId,
+              chunk,
+              runtime.createdAt,
+              options?.deliveredSteer,
+              coalescableDelta ? { coalesce: true } : undefined,
+            );
 
         /** Before the generation-wide first-subscriber admission, publication
          * is the cross-replica boundary: its durable record must already exist
@@ -6977,10 +7041,24 @@ class GenerationJobManagerClass {
           try {
             appended = await appendPromise;
           } catch (error) {
-            if (options?.deliveredSteer == null) {
-              this.retireRuntimeAfterDurableFence(streamId, runtime);
+            if (!retryAppendErrors) {
+              if (options?.deliveredSteer == null) {
+                this.retireRuntimeAfterDurableFence(streamId, runtime);
+              }
+              throw error;
             }
-            throw error;
+            if (queuedAppend) {
+              /** The retry queue gave up and already fenced the runtime. */
+              throw error;
+            }
+            logger.warn(
+              `[GenerationJobManager] Durable chunk append failed for ${streamId}; retrying:`,
+              error,
+            );
+            appended = await this.enqueueAppendRetry(streamId, runtime, chunk);
+          }
+          if (appended === true) {
+            this.noteDurableWrite(runtime, appendIssuedAt);
           }
           if (appended === false) {
             if (options?.deliveredSteer == null) {
@@ -6994,15 +7072,29 @@ class GenerationJobManagerClass {
         } else {
           void appendPromise
             .then((appended) => {
+              if (appended === true) {
+                this.noteDurableWrite(runtime, appendIssuedAt);
+              }
               if (appended === false && options?.deliveredSteer == null) {
                 this.retireRuntimeAfterDurableFence(streamId, runtime);
               }
             })
             .catch((err) => {
-              logger.error(`[GenerationJobManager] Failed to append chunk:`, err);
-              if (options?.deliveredSteer == null) {
-                this.retireRuntimeAfterDurableFence(streamId, runtime);
+              if (!retryAppendErrors) {
+                logger.error(`[GenerationJobManager] Failed to append chunk:`, err);
+                if (options?.deliveredSteer == null) {
+                  this.retireRuntimeAfterDurableFence(streamId, runtime);
+                }
+                return;
               }
+              if (queuedAppend) {
+                return;
+              }
+              logger.warn(
+                `[GenerationJobManager] Failed to append chunk for ${streamId}; retrying:`,
+                err,
+              );
+              void this.enqueueAppendRetry(streamId, runtime, chunk).catch(() => undefined);
             });
         }
       }
@@ -7173,7 +7265,7 @@ class GenerationJobManagerClass {
   private async getReplacementHandoffState(
     streamId: string,
     predecessorCreatedAt: number,
-    storeLostEligible = false,
+    storeLostRuntime?: RuntimeJobState,
   ): Promise<'none' | 'pending' | 'settled' | 'store_lost'> {
     try {
       const current = (await this.jobStore.getJob(streamId)) as CreatedJobData | null;
@@ -7183,7 +7275,7 @@ class GenerationJobManagerClass {
          * so absence is a settled handoff that still needs delivery grace.
          * The exception is a fence first classified `unknown` (store unreadable):
          * with no epoch at or above this generation, no successor ever ran. */
-        if (storeLostEligible && (await this.probeStoreLost(streamId, predecessorCreatedAt))) {
+        if (storeLostRuntime != null && (await this.probeStoreLost(streamId, storeLostRuntime))) {
           return 'store_lost';
         }
         return 'settled';
@@ -7211,7 +7303,7 @@ class GenerationJobManagerClass {
     predecessorCreatedAt: number,
     deadlineAt: number,
     lifecycleSignal: AbortSignal,
-    storeLostEligible = false,
+    storeLostRuntime?: RuntimeJobState,
   ): Promise<'none' | 'pending' | 'settled' | 'store_lost' | 'deadline' | 'cancelled'> {
     if (lifecycleSignal.aborted) {
       return 'cancelled';
@@ -7238,7 +7330,7 @@ class GenerationJobManagerClass {
         deadlineTimer.unref?.();
       });
       return await Promise.race([
-        this.getReplacementHandoffState(streamId, predecessorCreatedAt, storeLostEligible),
+        this.getReplacementHandoffState(streamId, predecessorCreatedAt, storeLostRuntime),
         deadline,
         cancellation,
       ]);
@@ -7335,16 +7427,17 @@ class GenerationJobManagerClass {
         runtime.createdAt,
         deadlineAt,
         lifecycleSignal,
-        this.isStoreLostEligible(runtime),
+        this.isStoreLostEligible(runtime) ? runtime : undefined,
       );
       if (this.shuttingDown || lifecycleSignal.aborted || handoffState === 'cancelled') {
         return;
       }
       if (handoffState === 'store_lost') {
         if (this.fencedRuntimeRetirements.get(runtime) === retirement) {
-          /** Late detection: the controller already saw `unknown` and left, so
-           * terminalize now rather than waiting out the controller backstop. */
-          this.markStoreLost(streamId, runtime, 0);
+          /** Late detection: the store answered after the fence was classified
+           * `unknown`. The backstop runs the registered save if the controller
+           * does not finalize first. */
+          this.markStoreLost(streamId, runtime);
         }
         return;
       }
@@ -7451,7 +7544,7 @@ class GenerationJobManagerClass {
     // lost store has nothing to reconnect to, so it ends with an error frame.
     const signal =
       runtime.storeLost === true
-        ? GENERATION_STORE_LOST_ERROR
+        ? (runtime.storeLostError ?? GENERATION_STORE_LOST_UNSAVED_ERROR)
         : TERMINAL_PUBLICATION_RECONNECT_ERROR;
     for (const notify of [...runtime.localErrorHandlers]) {
       try {
@@ -7503,7 +7596,11 @@ class GenerationJobManagerClass {
     if (runtime.abortController.signal.aborted) {
       return;
     }
-    runtime.startupTelemetry?.end('replaced');
+    if (!this.isStoreLostDetectionActive()) {
+      runtime.startupTelemetry?.end('replaced');
+      runtime.startupTelemetry = undefined;
+    }
+    const startupTelemetry = runtime.startupTelemetry;
     runtime.startupTelemetry = undefined;
     const ownsExactProvider = this.ownedJobs.get(streamId) === runtime.createdAt;
     runtime.abortController.abort();
@@ -7521,12 +7618,104 @@ class GenerationJobManagerClass {
     const outcome = this.classifyDurableFence(streamId, runtime);
     runtime.fenceOutcome = outcome;
     void outcome.then((result) => {
+      /** Recorded after classification so a lost store is not counted as a replacement. */
+      startupTelemetry?.end(result === 'store_lost' ? 'error' : 'replaced');
       if (result === 'store_lost') {
         this.markStoreLost(streamId, runtime);
         return;
       }
       this.preserveFencedRuntimeUntilHandoff(streamId, runtime);
     });
+  }
+
+  private noteDurableWrite(runtime: RuntimeJobState, issuedAt: number): void {
+    if (runtime.lastDurableWriteAt == null || runtime.lastDurableWriteAt < issuedAt) {
+      runtime.lastDurableWriteAt = issuedAt;
+    }
+  }
+
+  /** Queue a chunk behind earlier failed appends so the durable log keeps
+   * emission order. Resolves with the store's answer (`false` is a fence);
+   * rejects once retrying gives up, after the runtime has been fenced. */
+  private enqueueAppendRetry(
+    streamId: string,
+    runtime: RuntimeJobState,
+    chunk: AppendRetryEntry['chunk'],
+  ): Promise<boolean> {
+    let state = runtime.appendRetry;
+    if (state == null) {
+      state = { entries: [], startedAt: Date.now(), draining: false };
+      runtime.appendRetry = state;
+    }
+    const queue = state;
+    return new Promise<boolean>((resolve, reject) => {
+      queue.entries.push({ chunk, resolve, reject });
+      if (!queue.draining) {
+        void this.drainAppendRetries(streamId, runtime, queue);
+      }
+    });
+  }
+
+  private async drainAppendRetries(
+    streamId: string,
+    runtime: RuntimeJobState,
+    state: AppendRetryState,
+  ): Promise<void> {
+    state.draining = true;
+    const settleAll = (settle: (entry: AppendRetryEntry) => void): void => {
+      const entries = state.entries.splice(0);
+      for (const entry of entries) {
+        settle(entry);
+      }
+    };
+    try {
+      while (state.entries.length > 0) {
+        if (!this.isCurrentRuntime(streamId, runtime)) {
+          settleAll((entry) => entry.resolve(false));
+          return;
+        }
+        const entry = state.entries[0];
+        const issuedAt = Date.now();
+        try {
+          const appended = await this.jobStore.appendChunk(
+            streamId,
+            entry.chunk,
+            runtime.createdAt,
+          );
+          state.entries.shift();
+          if (appended === false) {
+            entry.resolve(false);
+            settleAll((pending) => pending.resolve(false));
+            this.retireRuntimeAfterDurableFence(streamId, runtime);
+            return;
+          }
+          this.noteDurableWrite(runtime, issuedAt);
+          entry.resolve(true);
+        } catch (error) {
+          const expired =
+            Date.now() - state.startedAt >= this._storeLostTerminalGraceMs ||
+            state.entries.length > APPEND_RETRY_MAX_ENTRIES;
+          if (expired || this.shuttingDown) {
+            logger.error(
+              `[GenerationJobManager] Durable appends for ${streamId} kept failing for ${Date.now() - state.startedAt}ms; fencing the generation:`,
+              error,
+            );
+            settleAll((pending) => pending.reject(error));
+            this.retireRuntimeAfterDurableFence(streamId, runtime);
+            return;
+          }
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, APPEND_RETRY_INTERVAL_MS);
+            timer.unref?.();
+          });
+        }
+      }
+    } finally {
+      state.draining = false;
+      if (runtime.appendRetry === state && state.entries.length === 0) {
+        runtime.appendRetry = undefined;
+      }
+    }
   }
 
   private isStoreLostDetectionActive(): boolean {
@@ -7544,10 +7733,10 @@ class GenerationJobManagerClass {
   /** Same-slot presence read: no job and no epoch at or above this generation.
    * A deleted job normally retains its own epoch (JOB_DELETE_LUA), and every
    * successor writes a newer one, so only a wiped store leaves neither. */
-  private async probeStoreLost(streamId: string, createdAt: number): Promise<boolean> {
+  private async probeStoreLost(streamId: string, runtime: RuntimeJobState): Promise<boolean> {
     try {
       const presence = await this.jobStore.getGenerationPresence!(streamId);
-      return isStoreLostPresence(presence, createdAt);
+      return isStoreLostPresence(presence, runtime);
     } catch (error) {
       logger.warn(
         `[GenerationJobManager] Failed to read generation presence for ${streamId}:`,
@@ -7564,10 +7753,14 @@ class GenerationJobManagerClass {
     if (runtime.ownedAtFence !== true) {
       return 'replaced';
     }
-    for (let attempt = 1; attempt <= STORE_LOST_PROBE_ATTEMPTS; attempt++) {
+    /** A restarting Redis refuses commands for seconds; keep probing until it
+     * answers or the terminal grace runs out, so the outcome is decided by
+     * the store's actual state rather than by the outage. */
+    const deadlineAt = Date.now() + this._storeLostTerminalGraceMs;
+    for (let attempt = 1; ; attempt++) {
       try {
         const presence = await this.jobStore.getGenerationPresence!(streamId);
-        if (!isStoreLostPresence(presence, runtime.createdAt)) {
+        if (!isStoreLostPresence(presence, runtime)) {
           return 'replaced';
         }
         logger.warn(
@@ -7576,18 +7769,18 @@ class GenerationJobManagerClass {
         return 'store_lost';
       } catch (error) {
         logger.warn(
-          `[GenerationJobManager] Failed to classify fence for ${streamId}@${runtime.createdAt} (attempt ${attempt}/${STORE_LOST_PROBE_ATTEMPTS}):`,
+          `[GenerationJobManager] Failed to classify fence for ${streamId}@${runtime.createdAt} (attempt ${attempt}):`,
           error,
         );
-        if (attempt < STORE_LOST_PROBE_ATTEMPTS) {
-          await new Promise((resolve) => {
-            const timer = setTimeout(resolve, STORE_LOST_PROBE_RETRY_MS);
-            timer.unref?.();
-          });
+        if (this.shuttingDown || Date.now() + STORE_LOST_PROBE_RETRY_MS > deadlineAt) {
+          return 'unknown';
         }
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, STORE_LOST_PROBE_RETRY_MS);
+          timer.unref?.();
+        });
       }
     }
-    return 'unknown';
   }
 
   /** Switch a fenced runtime to store-lost terminalization: no handoff hold,
@@ -7615,7 +7808,7 @@ class GenerationJobManagerClass {
       this.storeLostBackstops.delete(runtime);
       if (runtime.storeLostFinalization == null) {
         logger.warn(
-          `[GenerationJobManager] Store-lost generation ${streamId}@${runtime.createdAt} was not finalized by its request; ending it without a saved partial`,
+          `[GenerationJobManager] Store-lost generation ${streamId}@${runtime.createdAt} was not finalized by its request; finalizing from the manager`,
         );
       }
       void this.finalizeStoreLostRuntime(streamId, runtime);
@@ -7627,7 +7820,7 @@ class GenerationJobManagerClass {
   /** A live, owned, unfenced runtime whose job vanished before its terminal
    * claim: the store may have been wiped after the last durable append. Start
    * the same classification a fence would, while ownership is still known. */
-  private classifyMissingJobAtClaim(
+  private classifyUnfencedRuntime(
     streamId: string,
     createdAt: number,
     runtime: RuntimeJobState | undefined,
@@ -7639,7 +7832,9 @@ class GenerationJobManagerClass {
       runtime.abortController.signal.aborted ||
       runtime.fenceOutcome != null ||
       !this.isStoreLostDetectionActive() ||
-      this.ownedJobs.get(streamId) !== createdAt
+      /** Ownership, or a registered controller save (a paused generation has
+       * released ownership but its request controller still runs here). */
+      (this.ownedJobs.get(streamId) !== createdAt && runtime.storeLostPersistence == null)
     ) {
       return;
     }
@@ -7677,14 +7872,34 @@ class GenerationJobManagerClass {
       }
       /** The store was unreadable while the fence was classified; it may be back. */
       if (this.runtimeState.get(streamId) === runtime && runtime.storeLost !== true) {
-        if (await this.probeStoreLost(streamId, createdAt)) {
+        if (await this.probeStoreLost(streamId, runtime)) {
           this.markStoreLost(streamId, runtime);
           return 'store_lost';
         }
       }
       return runtime.storeLost === true ? 'store_lost' : 'unknown';
     }
+    /** No fence and no failed claim yet (a resumed turn finalizing, or a
+     * controller whose terminal write failed): classify a live, owned runtime. */
+    this.classifyUnfencedRuntime(streamId, createdAt, runtime);
+    if (runtime.fenceOutcome != null) {
+      return runtime.fenceOutcome;
+    }
     return null;
+  }
+
+  /** Register the request controller's partial-response save for a store-lost
+   * finalization that may run after the controller has returned. */
+  setStoreLostPersistence(
+    streamId: string,
+    createdAt: number,
+    persistence: StoreLostPersistence,
+  ): void {
+    const runtime = this.runtimeState.get(streamId);
+    if (runtime == null || runtime.createdAt !== createdAt) {
+      return;
+    }
+    runtime.storeLostPersistence = persistence;
   }
 
   /**
@@ -7697,7 +7912,7 @@ class GenerationJobManagerClass {
   async finalizeStoreLostGeneration(
     streamId: string,
     createdAt: number,
-    options?: { beforePublish?: () => Promise<unknown> | unknown },
+    options?: { beforePublish?: StoreLostPersistence },
   ): Promise<boolean> {
     const runtime = this.runtimeState.get(streamId);
     if (runtime == null || runtime.createdAt !== createdAt || runtime.storeLost !== true) {
@@ -7709,7 +7924,7 @@ class GenerationJobManagerClass {
   private async finalizeStoreLostRuntime(
     streamId: string,
     runtime: RuntimeJobState,
-    beforePublish?: () => Promise<unknown> | unknown,
+    beforePublish: StoreLostPersistence | undefined = runtime.storeLostPersistence,
   ): Promise<boolean> {
     if (runtime.storeLostFinalization != null) {
       await runtime.storeLostFinalization;
@@ -7725,10 +7940,12 @@ class GenerationJobManagerClass {
         clearTimeout(backstop);
         this.storeLostBackstops.delete(runtime);
       }
-      if (beforePublish != null && runtime.storeLostSaveStarted !== true) {
+      let partialSaved = false;
+      const persistence = beforePublish ?? runtime.storeLostPersistence;
+      if (persistence != null && runtime.storeLostSaveStarted !== true) {
         runtime.storeLostSaveStarted = true;
         try {
-          await beforePublish();
+          partialSaved = (await persistence()) === true;
         } catch (error) {
           logger.error(
             `[GenerationJobManager] Failed to persist store-lost generation ${streamId}@${runtime.createdAt}:`,
@@ -7736,15 +7953,17 @@ class GenerationJobManagerClass {
           );
         }
       }
+      /** Only claim the partial was saved when the save reported writing it. */
+      const terminalError = partialSaved
+        ? GENERATION_STORE_LOST_ERROR
+        : GENERATION_STORE_LOST_UNSAVED_ERROR;
+      runtime.storeLostError = terminalError;
 
-      runtime.errorEvent = GENERATION_STORE_LOST_ERROR;
+      runtime.errorEvent = terminalError;
       try {
-        /** Sequenced publication re-seeds the epoch (SET NX in PUBLISH_SEQ_LUA). */
-        await this.eventTransport.emitError(
-          streamId,
-          GENERATION_STORE_LOST_ERROR,
-          runtime.createdAt,
-        );
+        /** Sequenced publication re-seeds an ABSENT epoch only (SET NX in
+         * PUBLISH_SEQ_LUA); an existing, newer epoch fences it instead. */
+        await this.eventTransport.emitError(streamId, terminalError, runtime.createdAt);
       } catch (error) {
         if (!(error instanceof GenerationPublicationFencedError)) {
           logger.error(
@@ -7760,7 +7979,7 @@ class GenerationJobManagerClass {
       try {
         await this.eventTransport.emitUnsequencedError?.(
           streamId,
-          GENERATION_STORE_LOST_ERROR,
+          terminalError,
           runtime.createdAt,
         );
       } catch (error) {

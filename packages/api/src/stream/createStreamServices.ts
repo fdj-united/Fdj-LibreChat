@@ -50,15 +50,18 @@ export interface StreamServices {
   storeLostDetection: boolean;
   /** GENERATION_STORE_LOST_TERMINAL_GRACE_MS: manager backstop for store-lost terminalization. */
   storeLostTerminalGraceMs: number;
+  /** GENERATION_FENCE_ON_APPEND_ERROR: fence on a thrown append instead of retrying it. */
+  fenceOnAppendError: boolean;
 }
 
 function storeLostOptions(): Pick<
   StreamServices,
-  'storeLostDetection' | 'storeLostTerminalGraceMs'
+  'storeLostDetection' | 'storeLostTerminalGraceMs' | 'fenceOnAppendError'
 > {
   return {
     storeLostDetection: cacheConfig.GENERATION_STORE_LOST_DETECTION,
     storeLostTerminalGraceMs: cacheConfig.GENERATION_STORE_LOST_TERMINAL_GRACE_MS,
+    fenceOnAppendError: cacheConfig.GENERATION_FENCE_ON_APPEND_ERROR,
   };
 }
 
