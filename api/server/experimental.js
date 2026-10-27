@@ -69,6 +69,9 @@ const {
   initializeScheduleErasureSweep,
 } = require('./services/Schedules');
 const { configureSubagentTaskRouting } = require('./services/Endpoints/agents/subagentThreadStore');
+const {
+  createOrphanedGenerationHandler,
+} = require('./services/Endpoints/agents/orphanedGeneration');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
 const { updateInterfacePermissions: updateInterfacePerms } = require('@librechat/api');
 const {
@@ -367,6 +370,13 @@ if (cluster.isMaster) {
   GenerationJobManager.setTerminalHostActionHandler(
     createAgentEventTerminalHandler(agentEventMethods, {
       resumeDetachedAction: resumeAgentEventDetachedAction,
+    }),
+  );
+  GenerationJobManager.setOrphanedGenerationHandler(
+    createOrphanedGenerationHandler({
+      saveMessage: agentEventMethods.saveMessage,
+      getInterfaceConfig: async (tenantId) =>
+        (await getAppConfig(tenantId ? { tenantId } : { baseOnly: true }))?.interfaceConfig,
     }),
   );
   GenerationJobManager.initialize();

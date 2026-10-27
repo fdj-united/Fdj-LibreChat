@@ -180,6 +180,18 @@ describe('Startup readiness wiring', () => {
     expect(streamConfigIndex).toBeLessThan(postListenMcpIndex);
   });
 
+  it('installs the orphaned-generation salvage hook before the manager starts', () => {
+    const configureIndex = source.indexOf('const configureGenerationStreams = () => {');
+    const handlerIndex = source.indexOf('GenerationJobManager.setOrphanedGenerationHandler(');
+    const initializeIndex = source.indexOf('GenerationJobManager.initialize();', configureIndex);
+
+    expect(handlerIndex).toBeGreaterThan(configureIndex);
+    expect(initializeIndex).toBeGreaterThan(handlerIndex);
+    expect(source).toMatch(
+      /setOrphanedGenerationHandler\(\s*createOrphanedGenerationHandler\(\{\s*saveMessage: agentEventMethods\.saveMessage,/,
+    );
+  });
+
   it('configures subagent task routing before the server accepts requests', () => {
     const routingIndex = source.indexOf('await configureSubagentTaskRouting();');
     const listenIndex = source.indexOf('const server = app.listen');

@@ -45,6 +45,14 @@ describe('Experimental server configuration', () => {
     expect(initializeIndex).toBeGreaterThan(handlerIndex);
   });
 
+  it('installs the orphaned-generation salvage hook in each worker before the manager starts', () => {
+    const handlerIndex = source.indexOf('GenerationJobManager.setOrphanedGenerationHandler(');
+    const initializeIndex = source.indexOf('GenerationJobManager.initialize();');
+
+    expect(handlerIndex).toBeGreaterThan(-1);
+    expect(initializeIndex).toBeGreaterThan(handlerIndex);
+  });
+
   it('starts erasure-only schedule maintenance after connecting to Mongo, once per worker', () => {
     const connectIndex = source.indexOf('await connectDb();');
     const sweepIndex = source.indexOf('initializeScheduleErasureSweep();');
