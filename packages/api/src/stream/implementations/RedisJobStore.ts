@@ -22,6 +22,10 @@ import type {
   IdempotencyClaimValue,
   IdempotencyClaimResult,
   GenerationPresence,
+  ProviderLeaseOptions,
+  ProviderLeaseState,
+  ProviderExecutionRef,
+  OrphanedProviderDrainResult,
   SteerArmOutcome,
   SteerArmResult,
   SteerEnqueueReceiptResult,
@@ -59,6 +63,10 @@ import { createToolTimingTracker } from '~/agents/toolTiming';
 import { evalScript } from '~/cache/redisScript';
 
 const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9:_-]{1,128}$/;
+
+/** Lifetime of the lease capability and hold markers. Matches the provider-drain
+ * proof TTL, so neither marker outlives the evidence a successor would check. */
+const PROVIDER_LEASE_MARKER_TTL_SECONDS = 24 * 60 * 60;
 
 type ReasoningLabelOverlay = {
   stepId: string;
@@ -705,6 +713,50 @@ const PROVIDER_BEGIN_LUA =
   'if redis.call("HGET", KEYS[1], "status") ~= "running" then return 0 end ' +
   'if redis.call("HGET", KEYS[1], "providerDrained") ~= "1" then return 0 end ' +
   'redis.call("HSET", KEYS[1], "providerDrained", "0", "providerExecutionStartedId", ARGV[2]) return 1';
+
+/** {@link PROVIDER_BEGIN_LUA} plus the owner lease and its capability marker,
+ * written in the same step so a begun provider is never without a lease. Sent
+ * only while owner leases are enabled; the 1-key form above stays the default.
+ *
+ *   KEYS: [job, providerLease, providerLeaseCapable]
+ *   ARGV: [expectCreatedAt, providerExecutionId, leaseTtlMs, ownerId, capableTtlSeconds]
+ */
+const PROVIDER_BEGIN_WITH_LEASE_LUA =
+  'if redis.call("HGET", KEYS[1], "createdAt") ~= ARGV[1] then return 0 end ' +
+  'if redis.call("HGET", KEYS[1], "providerExecutionId") ~= ARGV[2] then return 0 end ' +
+  'if redis.call("HGET", KEYS[1], "status") ~= "running" then return 0 end ' +
+  'if redis.call("HGET", KEYS[1], "providerDrained") ~= "1" then return 0 end ' +
+  'redis.call("HSET", KEYS[1], "providerDrained", "0", "providerExecutionStartedId", ARGV[2]) ' +
+  'redis.call("SET", KEYS[2], ARGV[4], "PX", ARGV[3]) ' +
+  'redis.call("SET", KEYS[3], "1", "EX", ARGV[5]) return 1';
+
+/** Read-only lease view of one provider execution.
+ *
+ *   KEYS: [providerLease, providerLeaseCapable, providerHold]
+ *   RETURNS: [capable (0|1), lease owner | "", held (0|1), lease PTTL (-2 when absent)]
+ */
+const PROVIDER_LEASE_STATE_LUA =
+  'return { redis.call("EXISTS", KEYS[2]), redis.call("GET", KEYS[1]) or "", ' +
+  'redis.call("EXISTS", KEYS[3]), redis.call("PTTL", KEYS[1]) }';
+
+/** Presume a dead owner's provider drained. The lease, capability and hold
+ * checks and the drain flip are one step, so a renewal cannot slip between the
+ * observation and the write. A hash that already belongs to another generation
+ * is left alone; the caller records the transport drain proof instead.
+ *
+ *   KEYS: [job, providerLease, providerLeaseCapable, providerHold]
+ *   ARGV: [createdAt, providerExecutionId, nowMs]
+ *   RETURNS: 0 not presumable, 1 exact hash marked drained, 2 presumable without a hash write
+ */
+const ORPHAN_PROVIDER_DRAIN_LUA =
+  'if redis.call("EXISTS", KEYS[2]) == 1 then return 0 end ' +
+  'if redis.call("EXISTS", KEYS[3]) == 0 then return 0 end ' +
+  'if redis.call("EXISTS", KEYS[4]) == 1 then return 0 end ' +
+  'if redis.call("HGET", KEYS[1], "createdAt") ~= ARGV[1] then return 2 end ' +
+  'if redis.call("HGET", KEYS[1], "providerExecutionId") ~= ARGV[2] then return 2 end ' +
+  'if redis.call("HGET", KEYS[1], "providerDrained") ~= "0" then return 2 end ' +
+  'redis.call("HSET", KEYS[1], "providerDrained", "1", "providerDrainPresumedAt", ARGV[3]) ' +
+  'return 1';
 
 /** Single-winner promotion from abort-persistence pending to a consumable
  * terminal payload. Owner success/failure and stale-owner recovery share this
@@ -1705,6 +1757,16 @@ const KEYS = {
   /** Lost-ACK steer receipts (hash fields are clientSteerIds). */
   steerReceipts: (streamId: string) => `stream:{${streamId}}:steer-receipts`,
   steerReceiptOrder: (streamId: string) => `stream:{${streamId}}:steer-receipt-order`,
+  /** Owner lease of one provider execution, refreshed while its provider runs. */
+  providerLease: (streamId: string, createdAt: number, providerExecutionId: string) =>
+    `stream:{${streamId}}:provider-lease:${createdAt}:${providerExecutionId}`,
+  /** Marks an execution begun by a lease-aware owner; only then does a missing
+   *  lease mean a dead owner. */
+  providerLeaseCapable: (streamId: string, createdAt: number, providerExecutionId: string) =>
+    `stream:{${streamId}}:provider-lease-capable:${createdAt}:${providerExecutionId}`,
+  /** Keeps successors strict for an execution its owner abandoned on purpose. */
+  providerHold: (streamId: string, createdAt: number, providerExecutionId: string) =>
+    `stream:{${streamId}}:provider-hold:${createdAt}:${providerExecutionId}`,
   /** Latest generation epoch, retained briefly beyond the live job hash. */
   generationEpoch: (streamId: string) => `stream:{${streamId}}:generation-epoch`,
   /** Expiring, generation-scoped subscriber-group leases. */
@@ -2526,7 +2588,26 @@ export class RedisJobStore implements IJobStoreV2 {
     streamId: string,
     expectedCreatedAt: number,
     providerExecutionId: string,
+    lease?: ProviderLeaseOptions,
   ): Promise<boolean> {
+    if (lease != null) {
+      return (
+        Number(
+          await this.redis.eval(
+            PROVIDER_BEGIN_WITH_LEASE_LUA,
+            3,
+            KEYS.job(streamId),
+            KEYS.providerLease(streamId, expectedCreatedAt, providerExecutionId),
+            KEYS.providerLeaseCapable(streamId, expectedCreatedAt, providerExecutionId),
+            String(expectedCreatedAt),
+            providerExecutionId,
+            String(Math.max(1, Math.floor(lease.ttlMs))),
+            lease.ownerId,
+            String(PROVIDER_LEASE_MARKER_TTL_SECONDS),
+          ),
+        ) === 1
+      );
+    }
     return (
       Number(
         await this.redis.eval(
@@ -2538,6 +2619,119 @@ export class RedisJobStore implements IJobStoreV2 {
         ),
       ) === 1
     );
+  }
+
+  /** A plain SET per execution, with no hash guard: the drain proof is always
+   * checked before the lease, so a lease re-created after the drain is
+   * harmless, while a hash-guarded renewal would stop renewing for an owner
+   * that is still unwinding after a successor replaced the hash. */
+  async renewProviderLeases(
+    executions: ProviderExecutionRef[],
+    lease: ProviderLeaseOptions,
+  ): Promise<boolean[]> {
+    if (executions.length === 0) {
+      return [];
+    }
+    const ttlMs = Math.max(1, Math.floor(lease.ttlMs));
+    if (this.isCluster) {
+      /** Each lease lives in its own stream's slot; a cluster pipeline cannot span them. */
+      const results = await Promise.allSettled(
+        executions.map((execution) =>
+          this.redis.set(
+            KEYS.providerLease(
+              execution.streamId,
+              execution.createdAt,
+              execution.providerExecutionId,
+            ),
+            lease.ownerId,
+            'PX',
+            ttlMs,
+          ),
+        ),
+      );
+      return results.map((result) => result.status === 'fulfilled' && result.value === 'OK');
+    }
+    const pipeline = this.redis.pipeline();
+    for (const execution of executions) {
+      pipeline.set(
+        KEYS.providerLease(execution.streamId, execution.createdAt, execution.providerExecutionId),
+        lease.ownerId,
+        'PX',
+        ttlMs,
+      );
+    }
+    const results = (await pipeline.exec()) ?? [];
+    return executions.map((_, index) => {
+      const [error, reply] = results[index] ?? [new Error('missing reply'), null];
+      return error == null && reply === 'OK';
+    });
+  }
+
+  async releaseProviderLease(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<void> {
+    await this.redis.del(KEYS.providerLease(streamId, createdAt, providerExecutionId));
+  }
+
+  async holdProviderExecution(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<void> {
+    await this.redis.set(
+      KEYS.providerHold(streamId, createdAt, providerExecutionId),
+      '1',
+      'EX',
+      PROVIDER_LEASE_MARKER_TTL_SECONDS,
+    );
+  }
+
+  async getProviderLeaseState(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<ProviderLeaseState> {
+    const result = (await this.redis.eval(
+      PROVIDER_LEASE_STATE_LUA,
+      3,
+      KEYS.providerLease(streamId, createdAt, providerExecutionId),
+      KEYS.providerLeaseCapable(streamId, createdAt, providerExecutionId),
+      KEYS.providerHold(streamId, createdAt, providerExecutionId),
+    )) as [number | string, string, number | string, number | string];
+    const owner = result?.[1];
+    const leased = owner != null && owner !== '';
+    const leaseTtlMs = Number(result?.[3]);
+    return {
+      capable: Number(result?.[0]) === 1,
+      leased,
+      held: Number(result?.[2]) === 1,
+      owner: leased ? owner : null,
+      leaseTtlMs: leased && Number.isFinite(leaseTtlMs) && leaseTtlMs >= 0 ? leaseTtlMs : null,
+    };
+  }
+
+  async recoverOrphanedProviderExecution(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+    nowMs: number,
+  ): Promise<OrphanedProviderDrainResult> {
+    const result = Number(
+      await this.redis.eval(
+        ORPHAN_PROVIDER_DRAIN_LUA,
+        4,
+        KEYS.job(streamId),
+        KEYS.providerLease(streamId, createdAt, providerExecutionId),
+        KEYS.providerLeaseCapable(streamId, createdAt, providerExecutionId),
+        KEYS.providerHold(streamId, createdAt, providerExecutionId),
+        String(createdAt),
+        providerExecutionId,
+        String(nowMs),
+      ),
+    );
+    return result === 1 || result === 2 ? result : 0;
   }
 
   async finalizeTerminalPersistence(

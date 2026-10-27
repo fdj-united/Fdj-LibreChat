@@ -116,6 +116,50 @@ export interface GenerationPresence {
   epoch: number | null;
 }
 
+/** Owner lease written atomically with a provider begin. The owner refreshes it
+ * while the provider runs, so a successor can tell a dead owner from a slow one. */
+export interface ProviderLeaseOptions {
+  ttlMs: number;
+  /** Diagnostic owner identity (host:pid), stored as the lease value. */
+  ownerId: string;
+}
+
+/** Manager-level owner lease settings (GENERATION_OWNER_LEASE_*). */
+export interface GenerationOwnerLeaseConfig {
+  /** `false` writes no lease or capability marker; every successor stays strict. */
+  enabled: boolean;
+  ttlMs: number;
+  /** Validated to at most `ttlMs / 3`. */
+  refreshMs: number;
+  /** Abort the owner's own provider once renewals have failed for `ttlMs - refreshMs`. */
+  selfFence: boolean;
+}
+
+/** One exact provider execution segment. */
+export interface ProviderExecutionRef {
+  streamId: string;
+  createdAt: number;
+  providerExecutionId: string;
+}
+
+/** Lease view of one provider execution, read in one same-slot round trip.
+ * `capable` means a lease-aware owner began it; without it the lease's
+ * absence proves nothing and every waiter stays strict. */
+export interface ProviderLeaseState {
+  capable: boolean;
+  leased: boolean;
+  held: boolean;
+  owner: string | null;
+  /** Remaining lease time; a live owner keeps it above `ttlMs - refreshMs`. */
+  leaseTtlMs: number | null;
+}
+
+/** Outcome of presuming an orphaned provider drained: 0 = not presumable
+ * (lease present, not capable, or held); 1 = the exact generation's hash was
+ * flipped to drained; 2 = presumable, but the hash already belongs to another
+ * generation (or was already drained), so nothing was written to it. */
+export type OrphanedProviderDrainResult = 0 | 1 | 2;
+
 /** Serializable job data without object references, suitable for external storage. */
 export interface SerializableJobData {
   streamId: string;
@@ -946,6 +990,43 @@ export interface IJobStore {
   /** Optional read-only probe that tells a lost store (job and epoch both gone)
    * apart from a replacement. Stores without it keep the replacement handling. */
   getGenerationPresence?(streamId: string): Promise<GenerationPresence>;
+  /** Refresh the owner lease of every listed execution. Resolves one flag per
+   * entry (true when its lease was written). Optional: stores without it keep
+   * no leases, so no execution they begin is ever marked capable. */
+  renewProviderLeases?(
+    executions: ProviderExecutionRef[],
+    lease: ProviderLeaseOptions,
+  ): Promise<boolean[]>;
+
+  /** Best-effort lease removal once the owner recorded its drain. */
+  releaseProviderLease?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<void>;
+
+  /** Mark an execution whose owner deliberately records no drain, so a lapsed
+   * lease is never read as "presumed drained". */
+  holdProviderExecution?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<void>;
+
+  getProviderLeaseState?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<ProviderLeaseState>;
+
+  /** Atomically re-check that the capable owner's lease is gone and not held,
+   * then mark the exact generation's provider drained on the owner's behalf. */
+  recoverOrphanedProviderExecution?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+    nowMs: number,
+  ): Promise<OrphanedProviderDrainResult>;
   getRunningJobs(): Promise<SerializableJobData[]>;
   /** Optional durable paused-job enumeration. Built-in stores implement it so
    * the manager can own approval expiry even after the original runtime died. */
@@ -1091,11 +1172,14 @@ export interface IJobStoreV2 extends IJobStore {
     providerExecutionId: string,
   ): Promise<boolean>;
 
-  /** Activates the provider only while its exact generation is still running. */
+  /** Activates the provider only while its exact generation is still running.
+   * With `lease`, the same atomic step writes the owner lease and its capability
+   * marker; without it nothing beyond the hash is written. */
   beginProviderExecution(
     streamId: string,
     expectedCreatedAt: number,
     providerExecutionId: string,
+    lease?: ProviderLeaseOptions,
   ): Promise<boolean>;
 
   /** Includes terminal jobs whose provider still owns user-data writes. */
