@@ -8,7 +8,7 @@ import {
   PAUSE_PERSISTENCE_TIMEOUT_ERROR,
   STEER_ENQUEUE_RECEIPT_FULL,
 } from '../interfaces/IJobStore';
-import { clearRedisTestPrefix } from './helpers/redis';
+import { clearRedisTestPrefix, getRedisTestKeyPrefix, wipeRedisTestKeys } from './helpers/redis';
 
 /** Suppress winston Console transport output (survives jest.resetModules) */
 jest.spyOn(console, 'log').mockImplementation();
@@ -2968,6 +2968,94 @@ describe('RedisJobStore Integration Tests', () => {
       const wrongKey = `stream:user:{${userId}}:jobs`;
       const wrongMembers = await ioredisClient.smembers(wrongKey);
       expect(wrongMembers).not.toContain(streamId);
+
+      await store.destroy();
+    });
+  });
+
+  describe('Generation presence probe', () => {
+    test('reports a live job with its epoch', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-live-${Date.now()}`;
+      const job = await store.createJob(streamId, 'user-1', streamId);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: job.createdAt,
+        epoch: job.createdAt,
+      });
+
+      await store.destroy();
+    });
+
+    test('reports neither job nor epoch after the store loses its state', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-wiped-${Date.now()}`;
+      await store.createJob(streamId, 'user-1', streamId);
+      await wipeRedisTestKeys(ioredisClient, getRedisTestKeyPrefix(ioredisClient), streamId);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: null,
+      });
+
+      await store.destroy();
+    });
+
+    test('keeps the epoch after a deliberate job deletion', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-deleted-${Date.now()}`;
+      const job = await store.createJob(streamId, 'user-1', streamId);
+      await store.updateJob(streamId, { status: 'complete' }, job.createdAt);
+      await expect(store.deleteJob(streamId, job.createdAt)).resolves.toBe(true);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: job.createdAt,
+      });
+
+      await store.destroy();
+    });
+
+    test('reports the newer generation after a replacement', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-replaced-${Date.now()}`;
+      const predecessor = await store.createJob(streamId, 'user-1', streamId);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const successor = await store.createJob(streamId, 'user-1', streamId);
+      expect(successor.createdAt).toBeGreaterThan(predecessor.createdAt);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: successor.createdAt,
+        epoch: successor.createdAt,
+      });
 
       await store.destroy();
     });

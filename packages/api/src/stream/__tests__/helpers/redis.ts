@@ -51,3 +51,33 @@ export async function clearRedisTestPrefix(
 
   await Promise.all(logicalKeys.map((key) => redis.del(key)));
 }
+
+/** Read the logical key prefix ioredis applies to this client's commands. */
+export function getRedisTestKeyPrefix(redis: RedisTestClient): string {
+  return (redis as Cluster).isCluster
+    ? String((redis as Cluster).options.redisOptions?.keyPrefix ?? '')
+    : String((redis as Redis).options.keyPrefix ?? '');
+}
+
+/**
+ * Simulate a Redis that lost all state for one stream (a restart without
+ * persistence, or FLUSHALL) without touching any other key: delete every key
+ * of this suite whose name contains `fragment`.
+ */
+export async function wipeRedisTestKeys(
+  redis: RedisTestClient,
+  keyPrefix: string,
+  fragment: string,
+): Promise<void> {
+  const nodes = (redis as Cluster).isCluster
+    ? (redis as Cluster).nodes('master')
+    : [redis as Redis];
+  const physicalKeys = [
+    ...new Set((await Promise.all(nodes.map((node) => node.keys('*')))).flat()),
+  ];
+  const logicalKeys = physicalKeys
+    .filter((key) => key.startsWith(keyPrefix) && key.includes(fragment))
+    .map((key) => key.slice(keyPrefix.length));
+
+  await Promise.all(logicalKeys.map((key) => redis.del(key)));
+}

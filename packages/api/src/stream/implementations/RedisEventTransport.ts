@@ -1532,6 +1532,19 @@ export class RedisEventTransport implements IEventTransport {
     this.unsubscribeUnusedChannel(streamId, state);
   }
 
+  async emitUnsequencedError(
+    streamId: string,
+    error: string,
+    generationId?: number,
+  ): Promise<void> {
+    const message: PubSubMessage = {
+      type: EventTypes.ERROR,
+      error,
+      ...(generationId != null && { generationId }),
+    };
+    await this.publisher.publish(CHANNELS.events(streamId), JSON.stringify(message));
+  }
+
   private async hasDurableAbortAck(streamId: string, generationId: number): Promise<boolean> {
     return (await this.publisher.get(KEYS.abortAck(streamId, generationId))) === '1';
   }

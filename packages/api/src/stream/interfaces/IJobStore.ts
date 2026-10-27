@@ -109,6 +109,13 @@ export type GenerationSettlementState = Pick<
   'createdAt' | 'status' | 'terminalPersistencePending'
 >;
 
+/** One consistent read of a stream's durable generation identity: the live job's
+ * `createdAt` and the retained generation epoch. `null` means the key is absent. */
+export interface GenerationPresence {
+  jobCreatedAt: number | null;
+  epoch: number | null;
+}
+
 /** Serializable job data without object references, suitable for external storage. */
 export interface SerializableJobData {
   streamId: string;
@@ -936,6 +943,9 @@ export interface IJobStore {
 
   deleteJob(streamId: string, expectedCreatedAt?: number): Promise<boolean>;
   hasJob(streamId: string): Promise<boolean>;
+  /** Optional read-only probe that tells a lost store (job and epoch both gone)
+   * apart from a replacement. Stores without it keep the replacement handling. */
+  getGenerationPresence?(streamId: string): Promise<GenerationPresence>;
   getRunningJobs(): Promise<SerializableJobData[]>;
   /** Optional durable paused-job enumeration. Built-in stores implement it so
    * the manager can own approval expiry even after the original runtime died. */
@@ -1696,6 +1706,13 @@ export interface IEventTransport {
    * `generationId` is optional for compatibility with legacy, untagged publishers.
    */
   emitError(streamId: string, error: string, generationId?: number): void | Promise<void>;
+
+  /**
+   * Optional: publish an error frame without a sequence number, so subscribers
+   * deliver it immediately instead of ordering it behind their reorder buffer.
+   * Used when the shared sequence counter itself was lost with the store.
+   */
+  emitUnsequencedError?(streamId: string, error: string, generationId?: number): Promise<void>;
 
   /** Optional live-view demand marker used by observational streams that do not replay. */
   renewDemand?(streamId: string, ttlMs: number): void | Promise<void>;

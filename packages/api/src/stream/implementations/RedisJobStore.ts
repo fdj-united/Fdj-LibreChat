@@ -21,6 +21,7 @@ import type {
   JobStatusTransition,
   IdempotencyClaimValue,
   IdempotencyClaimResult,
+  GenerationPresence,
   SteerArmOutcome,
   SteerArmResult,
   SteerEnqueueReceiptResult,
@@ -728,6 +729,17 @@ const JOB_DELETE_LUA =
   'if ARGV[2] == "1" and existed == 1 then return 0 end ' +
   'redis.call("DEL", KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5]) ' +
   'return existed';
+
+/**
+ * Read-only generation presence probe. Both reads run in one same-slot script so
+ * a replacement cannot land between them. Never mutates state.
+ *
+ *   KEYS: [job, generationEpoch]
+ *   RETURNS: [job createdAt | "", epoch | ""]
+ */
+const GENERATION_PRESENCE_LUA =
+  'return { redis.call("HGET", KEYS[1], "createdAt") or "", ' +
+  'redis.call("GET", KEYS[2]) or "" }';
 
 /**
  * Atomic stale-running reap. The liveness and epoch checks, steer projection
@@ -3180,6 +3192,23 @@ export class RedisJobStore implements IJobStoreV2 {
   async hasJob(streamId: string): Promise<boolean> {
     const exists = await this.redis.exists(KEYS.job(streamId));
     return exists === 1;
+  }
+
+  async getGenerationPresence(streamId: string): Promise<GenerationPresence> {
+    const result = (await this.redis.eval(
+      GENERATION_PRESENCE_LUA,
+      2,
+      KEYS.job(streamId),
+      KEYS.generationEpoch(streamId),
+    )) as [string, string];
+    const parse = (value: string | undefined): number | null => {
+      if (value == null || value === '') {
+        return null;
+      }
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    return { jobCreatedAt: parse(result?.[0]), epoch: parse(result?.[1]) };
   }
 
   async getRunningJobs(): Promise<SerializableJobData[]> {
