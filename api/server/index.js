@@ -147,6 +147,7 @@ const configureGenerationStreams = () => {
   GenerationJobManager.setOrphanedGenerationHandler(
     createOrphanedGenerationHandler({
       saveMessage: agentEventMethods.saveMessage,
+      getMessages: agentEventMethods.getMessages,
       getInterfaceConfig: async (tenantId) =>
         (await getAppConfig(tenantId ? { tenantId } : { baseOnly: true }))?.interfaceConfig,
     }),

@@ -12,6 +12,8 @@ const { getTenantId } = require('@librechat/data-schemas');
 const { createOrphanedGenerationHandler } = require('./orphanedGeneration');
 
 const conversationId = '0b8f3c62-6a36-4f2b-9d55-6f7d3f6b3a10';
+/** The user message is already in Mongo unless a test says otherwise. */
+const getMessages = jest.fn(async () => [{ messageId: 'user-msg-1' }]);
 
 function buildResult(overrides = {}) {
   return {
@@ -49,7 +51,11 @@ describe('createOrphanedGenerationHandler', () => {
       return { messageId: 'response-1' };
     });
     const getInterfaceConfig = jest.fn(async () => ({ retentionMode: 'all' }));
-    const handler = createOrphanedGenerationHandler({ saveMessage, getInterfaceConfig });
+    const handler = createOrphanedGenerationHandler({
+      saveMessage,
+      getMessages,
+      getInterfaceConfig,
+    });
 
     await handler(conversationId, buildResult());
 
@@ -81,7 +87,7 @@ describe('createOrphanedGenerationHandler', () => {
 
   it('falls back to the preliminary response id and runs without a tenant', async () => {
     const saveMessage = jest.fn(async () => ({}));
-    const handler = createOrphanedGenerationHandler({ saveMessage });
+    const handler = createOrphanedGenerationHandler({ saveMessage, getMessages });
 
     await handler(
       conversationId,
@@ -94,7 +100,7 @@ describe('createOrphanedGenerationHandler', () => {
 
   it('upserts the same row when called twice', async () => {
     const saveMessage = jest.fn(async () => ({}));
-    const handler = createOrphanedGenerationHandler({ saveMessage });
+    const handler = createOrphanedGenerationHandler({ saveMessage, getMessages });
 
     await handler(conversationId, buildResult());
     await handler(conversationId, buildResult());
@@ -103,17 +109,79 @@ describe('createOrphanedGenerationHandler', () => {
     expect(saveMessage.mock.calls[0][1].messageId).toBe(saveMessage.mock.calls[1][1].messageId);
   });
 
-  it('writes nothing when there is no persistable content', async () => {
+  it('writes nothing when there is no content and no announced response', async () => {
     const saveMessage = jest.fn();
-    const handler = createOrphanedGenerationHandler({ saveMessage });
+    const handler = createOrphanedGenerationHandler({ saveMessage, getMessages });
 
     await handler(conversationId, buildResult({ result: { content: [], text: '' } }));
 
     expect(saveMessage).not.toHaveBeenCalled();
   });
 
+  it('writes an empty unfinished row when a created event announced the response', async () => {
+    const saveMessage = jest.fn(async () => ({}));
+    const handler = createOrphanedGenerationHandler({ saveMessage, getMessages });
+
+    await handler(
+      conversationId,
+      buildResult({
+        result: { content: [], text: '' },
+        jobData: { createdEventEmitted: true },
+      }),
+    );
+
+    expect(saveMessage).toHaveBeenCalledTimes(1);
+    expect(saveMessage.mock.calls[0][1]).toMatchObject({
+      messageId: 'response-1',
+      parentMessageId: 'user-msg-1',
+      content: [],
+      text: '',
+      unfinished: true,
+      error: false,
+    });
+  });
+
+  it('saves the user message first when it is not in Mongo yet', async () => {
+    const saveMessage = jest.fn(async () => ({}));
+    const handler = createOrphanedGenerationHandler({
+      saveMessage,
+      getMessages: jest.fn(async () => []),
+    });
+
+    await handler(conversationId, buildResult());
+
+    expect(saveMessage).toHaveBeenCalledTimes(2);
+    expect(saveMessage.mock.calls[0][1]).toMatchObject({
+      messageId: 'user-msg-1',
+      parentMessageId: 'root',
+      conversationId,
+      text: 'hi',
+      sender: 'User',
+      isCreatedByUser: true,
+      user: 'user-1',
+    });
+    expect(saveMessage.mock.calls[1][1]).toMatchObject({ messageId: 'response-1' });
+  });
+
+  it('still attempts the response when the user prerequisite fails, then throws', async () => {
+    const saveMessage = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('user write failed'))
+      .mockResolvedValueOnce({});
+    const handler = createOrphanedGenerationHandler({
+      saveMessage,
+      getMessages: jest.fn(async () => []),
+    });
+
+    await expect(handler(conversationId, buildResult())).rejects.toThrow('user write failed');
+    expect(saveMessage).toHaveBeenCalledTimes(2);
+  });
+
   it('throws when the row was not persisted, so the abort publishes a reconcile frame', async () => {
-    const handler = createOrphanedGenerationHandler({ saveMessage: jest.fn(async () => null) });
+    const handler = createOrphanedGenerationHandler({
+      saveMessage: jest.fn(async () => null),
+      getMessages,
+    });
 
     await expect(handler(conversationId, buildResult())).rejects.toThrow('was not persisted');
   });
@@ -122,6 +190,7 @@ describe('createOrphanedGenerationHandler', () => {
     const saveMessage = jest.fn(async () => ({}));
     const handler = createOrphanedGenerationHandler({
       saveMessage,
+      getMessages,
       getInterfaceConfig: jest.fn(async () => {
         throw new Error('config unavailable');
       }),
