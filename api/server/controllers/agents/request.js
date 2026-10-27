@@ -52,6 +52,7 @@ const {
   resolvePersistableCodeEnvironmentDecision,
   getFailedTurnTraceFields,
   resolveFailedTurnContent,
+  GENERATION_STORE_LOST_ERROR,
 } = require('@librechat/api');
 const { disposeClient } = require('~/server/cleanup');
 const {
@@ -547,6 +548,105 @@ async function saveErrorTurn(
   } catch (err) {
     logger.error('[AgentController] Failed to persist error turn', err);
     throw err;
+  }
+}
+
+/**
+ * Persist the partial response of a generation whose stream store lost its state
+ * mid-run. Keyed by the live response messageId, so repeated calls upsert the same
+ * row. With nothing persistable it falls back to the failed-turn error row.
+ */
+async function saveStoreLostTurn(
+  req,
+  {
+    streamId,
+    conversationId,
+    endpointOption,
+    isNewConvo,
+    liveUserMessage,
+    liveResponseMessageId,
+    contentParts,
+    runCreated = false,
+    sender,
+    initialAgentId,
+    tenantId,
+  },
+) {
+  const userId = req.user.id;
+  const run = async () => {
+    const persistableContent = Array.isArray(contentParts)
+      ? filterPersistableAbortContent(contentParts)
+      : [];
+    const parentMessageId = liveUserMessage?.messageId;
+    const messageId =
+      liveResponseMessageId ??
+      (parentMessageId != null
+        ? getPreliminaryResponseMessageId({ messageId: parentMessageId })
+        : null);
+    if (persistableContent.length === 0 || messageId == null || parentMessageId == null) {
+      await saveErrorTurn(req, {
+        conversationId,
+        endpointOption,
+        isNewConvo,
+        errorText: GENERATION_STORE_LOST_ERROR,
+        liveUserMessage,
+        liveResponseMessageId,
+        runCreated,
+        sender,
+        initialAgentId,
+      });
+      return;
+    }
+
+    const endpoint = endpointOption?.endpoint;
+    const model = getAgentResponseModel(req, endpointOption);
+    const iconURL = getEndpointIconURL(req, endpointOption);
+    const agentId = endpointOption?.agent_id ?? req.body?.agent_id;
+    const partialMessage = {
+      messageId,
+      conversationId: liveUserMessage?.conversationId || conversationId,
+      parentMessageId,
+      sender: sender ?? 'AI',
+      content: persistableContent,
+      unfinished: true,
+      error: false,
+      isCreatedByUser: false,
+      user: userId,
+      ...(endpoint != null && { endpoint }),
+      ...(model != null && { model }),
+      ...(iconURL != null && { iconURL }),
+      ...(agentId != null && { agent_id: agentId }),
+    };
+    const savedPartialMessage = await saveMessage(
+      {
+        userId,
+        isTemporary:
+          req?._agentEventBindingRetention?.isTemporary ??
+          req?.resolvedConversation?.isTemporary ??
+          req?.body?.isTemporary,
+        expiredAt:
+          req?._agentEventBindingRetention?.expiredAt ?? req?.resolvedConversation?.expiredAt,
+        interfaceConfig: req?.config?.interfaceConfig,
+      },
+      partialMessage,
+      { context: 'api/server/controllers/agents/request.js - partial response after store loss' },
+    );
+    if (!savedPartialMessage) {
+      throw new Error('Partial response could not be persisted after store loss');
+    }
+    logger.info(
+      `[ResumableAgentController] Saved partial response after store loss for ${streamId} (messageId=${messageId}, parts=${persistableContent.length})`,
+    );
+  };
+
+  try {
+    return tenantId ? await tenantStorage.run({ tenantId, userId }, run) : await run();
+  } catch (error) {
+    logger.error(
+      '[ResumableAgentController] Failed to save partial response after store loss',
+      error,
+    );
+    throw error;
   }
 }
 
@@ -2172,6 +2272,41 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
       );
       return terminalClaim != null;
     };
+    /** A generation whose stream store lost its state (Redis restart without
+     * persistence, or a flush) has no terminal claim to win. Save the partial
+     * response, then let the manager publish the error frame, re-seed the
+     * generation epoch and clean up. Returns whether that path ran. */
+    const finalizeIfStoreLost = async () => {
+      try {
+        const fenceOutcome = await GenerationJobManager.getFenceOutcome?.(streamId, jobCreatedAt);
+        if (fenceOutcome !== 'store_lost') {
+          return false;
+        }
+        await GenerationJobManager.finalizeStoreLostGeneration(streamId, jobCreatedAt, {
+          beforePublish: () =>
+            saveStoreLostTurn(req, {
+              streamId,
+              conversationId,
+              endpointOption,
+              isNewConvo,
+              liveUserMessage: userMessage,
+              liveResponseMessageId,
+              contentParts: client?.contentParts,
+              runCreated: client?.run != null,
+              sender: client?.sender,
+              initialAgentId: verifiedInitialAgentId,
+              tenantId,
+            }),
+        });
+        return true;
+      } catch (storeLostError) {
+        logger.error(
+          `[ResumableAgentController] Failed to finalize store-lost generation ${streamId}:`,
+          storeLostError,
+        );
+        return false;
+      }
+    };
     const disposeBackgroundClient = () => {
       if (backgroundClientCleanupScheduled) {
         return;
@@ -2929,6 +3064,9 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
               reconciliationError,
             );
           }
+          /** No winner exists when the store itself lost the job: save the
+           * partial response here and end the stream with an error frame. */
+          const storeLost = await finalizeIfStoreLost();
           /** This controller lost terminal persistence ownership, so it cannot
            * prove the winning Stop/replacement has written the unfinished
            * response yet. Keep the conversation fence closed; a HITL resume
@@ -2936,7 +3074,11 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
            * bounded stale reclaim. */
           await finishResumableRequest(req, userId);
           disposeBackgroundClient();
-          startupTelemetry?.end(job.abortController.signal.aborted ? 'aborted' : 'replaced');
+          if (storeLost) {
+            startupTelemetry?.end('error');
+          } else {
+            startupTelemetry?.end(job.abortController.signal.aborted ? 'aborted' : 'replaced');
+          }
           return;
         }
 
@@ -3267,9 +3409,17 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
           startupTelemetry?.end('error', error);
         } else if (job.abortController.signal.aborted || error.message?.includes('abort')) {
           ownsScheduledFailure = true;
-          logger.debug(`[ResumableAgentController] Generation aborted for ${streamId}`);
-          startupTelemetry?.end('aborted');
-          // abortJob already handled emitDone and completeJob
+          if (await finalizeIfStoreLost()) {
+            /** A store-lost fence stopped the provider; no abortJob ran. */
+            logger.warn(
+              `[ResumableAgentController] Generation for ${streamId} ended after its stream store lost state`,
+            );
+            startupTelemetry?.end('error', error);
+          } else {
+            logger.debug(`[ResumableAgentController] Generation aborted for ${streamId}`);
+            startupTelemetry?.end('aborted');
+            // abortJob already handled emitDone and completeJob
+          }
         } else {
           logger.error(`[ResumableAgentController] Generation error for ${streamId}:`, error);
           const generationError = error.message || 'Generation failed';
@@ -3296,6 +3446,10 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
              * combination proves the failed-turn rows are durable enough to
              * let a checkpoint fork rebuild past this legacy turn. */
             legacyEventActorErrorHistoryDurable = ownsScheduledFailure;
+            if (!ownsScheduledFailure) {
+              /** The terminal claim found no job: the store may have lost it. */
+              await finalizeIfStoreLost();
+            }
           } catch (completeErr) {
             logger.warn(
               '[ResumableAgentController] completeJob failed during generation-error cleanup',
@@ -3541,3 +3695,4 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
 };
 
 module.exports = ResumableAgentController;
+module.exports.saveStoreLostTurn = saveStoreLostTurn;
