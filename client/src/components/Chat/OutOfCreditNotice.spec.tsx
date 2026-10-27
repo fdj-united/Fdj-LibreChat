@@ -202,6 +202,37 @@ describe('OutOfCreditNotice', () => {
     expect(screen.getByRole('meter')).toBeInTheDocument();
   });
 
+  it('hides an expired refill countdown while preserving the running-low balance warning', () => {
+    mockUseCreditRequestStatus.mockReturnValue(
+      baseStatus({
+        tokenCredits: 598412.34,
+        refillAmount: 40000000,
+        nextRefillAt: new Date(Date.now() - 1),
+      }),
+    );
+
+    renderNotice();
+
+    expect(screen.getByText('com_nav_balance_running_low_title')).toBeInTheDocument();
+    const credits = screen.getByText('598,412.34', { selector: 'strong' });
+    expect(credits.closest('span')).toHaveTextContent('598,412.34 credits left');
+    expect(screen.queryByText(/com_nav_balance_refill_countdown_/)).not.toBeInTheDocument();
+  });
+
+  it('rounds a positive sub-minute countdown up instead of showing zero minutes', () => {
+    mockUseCreditRequestStatus.mockReturnValue(
+      baseStatus({ tokenCredits: 0, nextRefillAt: new Date(Date.now() + 10_000) }),
+    );
+
+    renderNotice();
+
+    expect(
+      screen.getByText(`com_nav_balance_refill_countdown_m ${JSON.stringify({ minutes: 1 })}`, {
+        selector: 'strong',
+      }),
+    ).toBeInTheDocument();
+  });
+
   it('does not show the "running low" warning when no refillAmount is configured (nothing to compare against)', () => {
     mockUseCreditRequestStatus.mockReturnValue(baseStatus({ tokenCredits: 100 }));
 
