@@ -2702,6 +2702,10 @@ export class RedisJobStore implements IJobStoreV2 {
     return claimed === 'OK';
   }
 
+  async releaseOrphanSalvage(streamId: string, createdAt: number): Promise<void> {
+    await this.redis.del(KEYS.orphanSalvage(streamId, createdAt));
+  }
+
   async getProviderLeaseState(
     streamId: string,
     createdAt: number,

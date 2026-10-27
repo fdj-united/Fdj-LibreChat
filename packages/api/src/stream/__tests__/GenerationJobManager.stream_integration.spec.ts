@@ -5062,6 +5062,171 @@ describe('GenerationJobManager Integration Tests', () => {
       expect(await ioredisClient!.exists(leaseKey(streamId, job.createdAt, executionId))).toBe(0);
     }, 30000);
 
+    test('one slow renewal reply does not self-fence a healthy owner', async () => {
+      /** Prod ratio TTL = 4 x refresh. The first renewal is applied at once, but its reply
+       *  arrives after more than one refresh (and before the fence point). */
+      const lease = { ttlMs: 800, refreshMs: 200 };
+      const { owner, streamId, job, executionId } = await startOwner('slow-reply', {
+        ownerLease: lease,
+      });
+      const store = owner.getJobStore();
+      const realRenew = store.renewProviderLeases!.bind(store);
+      let calls = 0;
+      jest.spyOn(store, 'renewProviderLeases').mockImplementation(async (...args) => {
+        calls += 1;
+        const result = await realRenew(...args);
+        if (calls === 1) {
+          await new Promise((resolve) => setTimeout(resolve, lease.refreshMs + 60));
+        }
+        return result;
+      });
+
+      let leaseMissing = 0;
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < lease.ttlMs * 3) {
+        if ((await ioredisClient!.exists(leaseKey(streamId, job.createdAt, executionId))) === 0) {
+          leaseMissing += 1;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(job.abortController.signal.aborted).toBe(false);
+      expect(leaseMissing).toBe(0);
+      expect(calls).toBeGreaterThanOrEqual(4);
+    }, 30000);
+
+    test('times the first fence deadline from the begin send, not its reply', async () => {
+      const lease = { ttlMs: 600, refreshMs: 200 };
+      const { manager: owner } = createReplica({ ownerLease: lease, ownSubscriber: true });
+      const streamId = `${testPrefix}-slow-begin-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      const store = owner.getJobStore();
+      const realBegin = store.beginProviderExecution.bind(store);
+      /** The begin (and its lease) is applied at once; the reply takes 400 ms. */
+      jest.spyOn(store, 'beginProviderExecution').mockImplementation(async (...args) => {
+        const started = await realBegin(...args);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return started;
+      });
+      jest.spyOn(store, 'renewProviderLeases').mockRejectedValue(new Error('Redis unavailable'));
+      let abortedAt: number | null = null;
+      job.abortController.signal.addEventListener('abort', () => {
+        abortedAt = Date.now();
+      });
+
+      const sentAt = Date.now();
+      await owner.beginProviderExecution(
+        streamId,
+        job.createdAt,
+        job.metadata.providerExecutionId!,
+      );
+      await waitUntil(() => abortedAt != null, 'self-fence abort', lease.ttlMs * 3);
+      /** Fence at TTL - 1.5 x refresh (300 ms) from the send, before the lease expires. */
+      expect(abortedAt! - sentAt).toBeLessThan(lease.ttlMs);
+    }, 30000);
+
+    test('saves nothing when an owner that missed the abort ACK turns out to be alive', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('late-ack');
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      /** The abort is not delivered, but the owner keeps renewing, and later drains. */
+      subscriber.disconnect();
+      setTimeout(() => {
+        void owner.markProviderExecutionDrained(streamId, job.createdAt, executionId);
+      }, 3500);
+
+      await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+
+      expect(handler).not.toHaveBeenCalled();
+    }, 40000);
+
+    test('hanging hold writes do not delay the renewal of a healthy generation', async () => {
+      const lease = { ttlMs: 600, refreshMs: 200 };
+      const { manager: owner } = createReplica({ ownerLease: lease, ownSubscriber: true });
+      const store = owner.getJobStore();
+      jest
+        .spyOn(store, 'holdProviderExecution')
+        .mockImplementation(() => new Promise(() => undefined));
+      const started = [];
+      for (let index = 0; index < 4; index++) {
+        const streamId = `${testPrefix}-holds-${index}-${Date.now()}`;
+        const job = await owner.createJob(streamId, 'user-1', streamId, {
+          initialMetadata: { generationProtocolVersion: 2 },
+        });
+        const executionId = job.metadata.providerExecutionId!;
+        await owner.beginProviderExecution(streamId, job.createdAt, executionId);
+        started.push({ streamId, job, executionId });
+      }
+      const [healthy, ...abandoned] = started;
+
+      /** Each hold write hangs until its 2 s bound; the leases stay renewed meanwhile. */
+      await Promise.all(
+        abandoned.map(({ streamId, job, executionId }) =>
+          owner.abandonProviderExecution(streamId, job.createdAt, executionId),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+
+      expect(healthy.job.abortController.signal.aborted).toBe(false);
+      expect(
+        await ioredisClient!.pttl(
+          leaseKey(healthy.streamId, healthy.job.createdAt, healthy.executionId),
+        ),
+      ).toBeGreaterThan(0);
+    }, 30000);
+
+    test('replaces without a copy when the predecessor chunk-log read hangs', async () => {
+      const { owner, streamId, job, executionId } = await startOwner('slow-snapshot');
+      const { manager: router } = createReplica();
+      router.setOrphanedGenerationHandler(jest.fn());
+      job.abortController.signal.addEventListener('abort', () => {
+        void owner.markProviderExecutionDrained(streamId, job.createdAt, executionId);
+      });
+      jest
+        .spyOn(router.getJobStore(), 'getContentParts')
+        .mockImplementation(() => new Promise(() => undefined));
+
+      const startedAt = Date.now();
+      await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      /** Bounded at 2 s, then the live replacement proceeds as usual. */
+      expect(Date.now() - startedAt).toBeLessThan(3500);
+      expect(job.abortController.signal.aborted).toBe(true);
+    }, 30000);
+
+    test('gives the salvage claim back when the winning save fails', async () => {
+      const { manager: router } = createReplica();
+      const streamId = `${testPrefix}-claim-release-${Date.now()}`;
+      const createdAt = Date.now();
+      const claimKey = `stream:{${streamId}}:orphan-salvage:${createdAt}`;
+      const snapshot = {
+        job: { streamId, userId: 'user-1', status: 'running', createdAt },
+        content: [{ type: 'text', text: 'partial' }],
+      };
+      const persist = (
+        router as unknown as {
+          persistOrphanSnapshot: (id: string, value: unknown) => Promise<void>;
+        }
+      ).persistOrphanSnapshot.bind(router);
+
+      router.setOrphanedGenerationHandler(async () => {
+        throw new Error('Mongo unavailable');
+      });
+      await persist(streamId, snapshot);
+      expect(await ioredisClient!.exists(claimKey)).toBe(0);
+
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      await persist(streamId, snapshot);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(await ioredisClient!.exists(claimKey)).toBe(1);
+    }, 30000);
+
     test('does not self-fence when the self-fence switch is off', async () => {
       const { owner, job } = await startOwner('self-fence-off', {
         ownerLease: { selfFence: false },

@@ -1549,6 +1549,10 @@ export class RedisEventTransport implements IEventTransport {
     return (await this.publisher.get(KEYS.abortAck(streamId, generationId))) === '1';
   }
 
+  async hasAbortAcknowledgement(streamId: string, generationId: number): Promise<boolean> {
+    return this.hasDurableAbortAck(streamId, generationId);
+  }
+
   async recordAbortAcknowledgement(streamId: string, generationId: number): Promise<boolean> {
     try {
       await this.publisher.set(

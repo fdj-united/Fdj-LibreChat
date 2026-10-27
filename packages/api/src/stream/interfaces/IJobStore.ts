@@ -1022,6 +1022,8 @@ export interface IJobStore {
   /** Single-winner claim to salvage one orphaned generation's partial output, so
    * racing successors save it once. Resolves true for the winner. */
   claimOrphanSalvage?(streamId: string, createdAt: number): Promise<boolean>;
+  /** Give the claim back after a failed salvage so a later successor can retry it. */
+  releaseOrphanSalvage?(streamId: string, createdAt: number): Promise<void>;
 
   /** Atomically re-check that the capable owner's lease is gone and not held,
    * then mark the exact generation's provider drained on the owner's behalf. */
@@ -1823,6 +1825,8 @@ export interface IEventTransport {
   /** Persist proof that this process synchronously stopped the exact generation.
    * A delayed replacement can use the proof after the owner's listeners retire. */
   recordAbortAcknowledgement?(streamId: string, generationId: number): Promise<boolean>;
+  /** Read the durable abort proof written by the owner (or on its behalf). */
+  hasAbortAcknowledgement?(streamId: string, generationId: number): Promise<boolean>;
 
   /** Persist/read exact proof that a provider segment can no longer mutate user data. */
   recordProviderDrain?(
