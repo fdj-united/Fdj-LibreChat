@@ -163,6 +163,20 @@ const cacheConfig: {
    * @default 5000 (5 seconds)
    */
   MCP_REGISTRY_CACHE_TTL: number;
+  /**
+   * Classify a generation fence whose job hash and generation epoch are both gone as a lost
+   * store (Redis restarted without persistence, or was flushed) rather than a replacement.
+   * The stream then ends with an error frame, the partial response is saved and the epoch is
+   * re-seeded. `false` restores the replacement handling for every fence.
+   * @default true
+   */
+  GENERATION_STORE_LOST_DETECTION: boolean;
+  /**
+   * Backstop in ms: when the request controller has not finalized a store-lost generation
+   * within this window, the manager publishes the error frame and cleans up on its own.
+   * @default 15000
+   */
+  GENERATION_STORE_LOST_TERMINAL_GRACE_MS: number;
 } = {
   FORCED_IN_MEMORY_CACHE_NAMESPACES,
   USE_REDIS,
@@ -253,6 +267,12 @@ const cacheConfig: {
    * @default 5000 (5 seconds)
    */
   MCP_REGISTRY_CACHE_TTL: math(process.env.MCP_REGISTRY_CACHE_TTL, 5000),
+
+  GENERATION_STORE_LOST_DETECTION: isEnabled(process.env.GENERATION_STORE_LOST_DETECTION ?? 'true'),
+  GENERATION_STORE_LOST_TERMINAL_GRACE_MS: math(
+    process.env.GENERATION_STORE_LOST_TERMINAL_GRACE_MS,
+    15000,
+  ),
 };
 
 export { cacheConfig };

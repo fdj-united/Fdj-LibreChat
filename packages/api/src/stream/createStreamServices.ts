@@ -46,6 +46,20 @@ export interface StreamServices {
   jobStore: IJobStoreV2;
   eventTransport: IEventTransport;
   isRedis: boolean;
+  /** GENERATION_STORE_LOST_DETECTION: tell a lost Redis state apart from a replacement. */
+  storeLostDetection: boolean;
+  /** GENERATION_STORE_LOST_TERMINAL_GRACE_MS: manager backstop for store-lost terminalization. */
+  storeLostTerminalGraceMs: number;
+}
+
+function storeLostOptions(): Pick<
+  StreamServices,
+  'storeLostDetection' | 'storeLostTerminalGraceMs'
+> {
+  return {
+    storeLostDetection: cacheConfig.GENERATION_STORE_LOST_DETECTION,
+    storeLostTerminalGraceMs: cacheConfig.GENERATION_STORE_LOST_TERMINAL_GRACE_MS,
+  };
 }
 
 /**
@@ -101,6 +115,7 @@ export function createStreamServices(config: StreamServicesConfig = {}): StreamS
         jobStore,
         eventTransport,
         isRedis: true,
+        ...storeLostOptions(),
       };
     } catch (err) {
       logger.error(
@@ -133,5 +148,6 @@ function createInMemoryServices(options?: StreamServicesConfig['inMemoryOptions'
     jobStore,
     eventTransport,
     isRedis: false,
+    ...storeLostOptions(),
   };
 }

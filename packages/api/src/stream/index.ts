@@ -7,7 +7,9 @@ export {
   type GenerationSettledEvent,
   type GenerationSettledListener,
   GENERATION_RECOVERY_FAILED_ERROR,
+  GENERATION_STORE_LOST_ERROR,
   TERMINAL_PUBLICATION_RECONNECT_ERROR,
+  type GenerationFenceOutcome,
 } from './GenerationJobManager';
 
 export type {
@@ -20,6 +22,7 @@ export type {
   JobMetadataPatch,
   GenerationProtocolVersion,
   GenerationPredecessorState,
+  GenerationPresence,
   ParkedSteerClaim,
   IJobStore,
   IJobStoreV2,

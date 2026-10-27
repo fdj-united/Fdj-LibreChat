@@ -22,6 +22,7 @@ import type { StandardGraph } from '@librechat/agents';
 import type {
   SerializableJobData,
   GenerationSettlementState,
+  GenerationPresence,
   CreatedJobData,
   IEventTransport,
   UsageMetadata,
@@ -155,6 +156,25 @@ const SHUTTING_DOWN_ERROR = 'Generation job manager is shutting down';
 export const TERMINAL_PUBLICATION_RECONNECT_ERROR =
   'Terminal publication failed; reconnect to load the durable result';
 export const GENERATION_RECOVERY_FAILED_ERROR = 'generation_recovery_failed';
+/** Terminal error for a generation whose durable stream state disappeared
+ * (Redis restarted without persistence, or was flushed) while it was running.
+ * Unlike TERMINAL_PUBLICATION_RECONNECT_ERROR there is nothing to reconnect to,
+ * so subscribers receive it as an ordinary error frame. */
+export const GENERATION_STORE_LOST_ERROR =
+  'Generation interrupted: the server lost its stream state. The partial response was saved; you can continue.';
+/** How a generation fence was explained after the fact. `replaced` keeps the
+ * successor handoff; `store_lost` means the job and its epoch are both gone;
+ * `unknown` means the store could not be read and handoff handling applies. */
+export type GenerationFenceOutcome = 'replaced' | 'store_lost' | 'unknown';
+/** Presence probe attempts after a fence, spread over about two seconds so a
+ * restarting Redis can answer before the fence falls back to `unknown`. */
+const STORE_LOST_PROBE_ATTEMPTS = 3;
+const STORE_LOST_PROBE_RETRY_MS = 1_000;
+const DEFAULT_STORE_LOST_TERMINAL_GRACE_MS = 15_000;
+
+function isStoreLostPresence(presence: GenerationPresence, createdAt: number): boolean {
+  return presence.jobCreatedAt == null && (presence.epoch == null || presence.epoch < createdAt);
+}
 /** Upper bound for a terminal owner's required persistence barrier. A crashed
  * owner leaves the durable pending bit behind; the next read or subscriber
  * promotes it to conservative reconciliation after this window. */
@@ -761,6 +781,16 @@ interface RuntimeJobState {
   /** Attachment generation whose partial-response disconnect cleanup was most recently started. */
   lastSubscriberCleanupGeneration?: number;
   allSubscribersLeftHandlers?: Array<(...args: unknown[]) => void | Promise<void>>;
+  /** Whether this process owned the exact generation when its durable fence fired. */
+  ownedAtFence?: boolean;
+  /** Classification of this runtime's durable fence, started when it fired. */
+  fenceOutcome?: Promise<GenerationFenceOutcome>;
+  /** The job hash and epoch were both gone: end with an error instead of a handoff. */
+  storeLost?: boolean;
+  /** Single-shot store-lost terminalization (error frame, epoch re-seed, cleanup). */
+  storeLostFinalization?: Promise<void>;
+  /** Set once the controller's partial-response save has started. */
+  storeLostSaveStarted?: boolean;
 }
 
 interface FencedRuntimeRetirementContext {
@@ -884,6 +914,15 @@ class GenerationJobManagerClass {
   /** Whether to cleanup event transport immediately on job completion */
   private _cleanupOnComplete = true;
 
+  /** Classify a fence with no job and no newer epoch as a lost store (Redis only). */
+  private _storeLostDetection = true;
+
+  /** Backstop before the manager terminalizes a store-lost generation itself. */
+  private _storeLostTerminalGraceMs = DEFAULT_STORE_LOST_TERMINAL_GRACE_MS;
+
+  /** Backstop timers for store-lost runtimes awaiting controller finalization. */
+  private storeLostBackstops = new Map<RuntimeJobState, NodeJS.Timeout>();
+
   /** Optional host hook; the generic stream runtime does not know what external
    * durable work (scheduled chats, webhooks, etc.) a generation represents. */
   private approvalExpiredHandler: ApprovalExpiredHandler | undefined;
@@ -941,6 +980,9 @@ class GenerationJobManagerClass {
     eventTransport: IEventTransport;
     isRedis?: boolean;
     cleanupOnComplete?: boolean;
+    /** `false` restores replacement handling for a fence whose job and epoch are gone. */
+    storeLostDetection?: boolean;
+    storeLostTerminalGraceMs?: number;
   }): void {
     assertJobStoreV2(services.jobStore);
     this.cancelFencedRuntimeRetirements();
@@ -1008,6 +1050,13 @@ class GenerationJobManagerClass {
       typeof services.eventTransport.flushPendingChunks === 'function' &&
       typeof services.jobStore.flushPendingAppends === 'function';
     this._cleanupOnComplete = services.cleanupOnComplete ?? true;
+    this._storeLostDetection = services.storeLostDetection ?? true;
+    this._storeLostTerminalGraceMs =
+      services.storeLostTerminalGraceMs != null &&
+      Number.isFinite(services.storeLostTerminalGraceMs) &&
+      services.storeLostTerminalGraceMs >= 0
+        ? services.storeLostTerminalGraceMs
+        : DEFAULT_STORE_LOST_TERMINAL_GRACE_MS;
     this.shuttingDown = false;
     this.syncRunningJobMetrics();
 
@@ -3885,6 +3934,9 @@ class GenerationJobManagerClass {
     const targetCreatedAt = expectedCreatedAt ?? observedRuntime?.createdAt;
     let jobData = await this.jobStore.getJob(streamId);
     if (!jobData || (targetCreatedAt != null && jobData.createdAt !== targetCreatedAt)) {
+      if (!jobData && targetCreatedAt != null) {
+        this.classifyMissingJobAtClaim(streamId, targetCreatedAt, observedRuntime);
+      }
       if (targetCreatedAt != null) {
         this.reconcileInactiveGeneration(streamId, targetCreatedAt, jobData, observedRuntime);
       }
@@ -7121,13 +7173,19 @@ class GenerationJobManagerClass {
   private async getReplacementHandoffState(
     streamId: string,
     predecessorCreatedAt: number,
-  ): Promise<'none' | 'pending' | 'settled'> {
+    storeLostEligible = false,
+  ): Promise<'none' | 'pending' | 'settled' | 'store_lost'> {
     try {
       const current = (await this.jobStore.getJob(streamId)) as CreatedJobData | null;
       if (current == null) {
         /** A fenced append proves that a newer durable owner existed. Its job
          * may disappear after publishing predecessor DONE but before this poll,
-         * so absence is a settled handoff that still needs delivery grace. */
+         * so absence is a settled handoff that still needs delivery grace.
+         * The exception is a fence first classified `unknown` (store unreadable):
+         * with no epoch at or above this generation, no successor ever ran. */
+        if (storeLostEligible && (await this.probeStoreLost(streamId, predecessorCreatedAt))) {
+          return 'store_lost';
+        }
         return 'settled';
       }
       if (current.createdAt <= predecessorCreatedAt) {
@@ -7153,7 +7211,8 @@ class GenerationJobManagerClass {
     predecessorCreatedAt: number,
     deadlineAt: number,
     lifecycleSignal: AbortSignal,
-  ): Promise<'none' | 'pending' | 'settled' | 'deadline' | 'cancelled'> {
+    storeLostEligible = false,
+  ): Promise<'none' | 'pending' | 'settled' | 'store_lost' | 'deadline' | 'cancelled'> {
     if (lifecycleSignal.aborted) {
       return 'cancelled';
     }
@@ -7179,7 +7238,7 @@ class GenerationJobManagerClass {
         deadlineTimer.unref?.();
       });
       return await Promise.race([
-        this.getReplacementHandoffState(streamId, predecessorCreatedAt),
+        this.getReplacementHandoffState(streamId, predecessorCreatedAt, storeLostEligible),
         deadline,
         cancellation,
       ]);
@@ -7192,6 +7251,10 @@ class GenerationJobManagerClass {
   }
 
   private cancelFencedRuntimeRetirements(): void {
+    for (const backstop of this.storeLostBackstops.values()) {
+      clearTimeout(backstop);
+    }
+    this.storeLostBackstops.clear();
     for (const retirement of this.fencedRuntimeRetirements.values()) {
       if (retirement.timer != null) {
         clearTimeout(retirement.timer);
@@ -7272,8 +7335,17 @@ class GenerationJobManagerClass {
         runtime.createdAt,
         deadlineAt,
         lifecycleSignal,
+        this.isStoreLostEligible(runtime),
       );
       if (this.shuttingDown || lifecycleSignal.aborted || handoffState === 'cancelled') {
+        return;
+      }
+      if (handoffState === 'store_lost') {
+        if (this.fencedRuntimeRetirements.get(runtime) === retirement) {
+          /** Late detection: the controller already saw `unknown` and left, so
+           * terminalize now rather than waiting out the controller backstop. */
+          this.markStoreLost(streamId, runtime, 0);
+        }
         return;
       }
       if (handoffState === 'pending' && Date.now() < deadlineAt) {
@@ -7371,6 +7443,29 @@ class GenerationJobManagerClass {
   }
 
   private cleanupFencedRuntime(streamId: string, runtime: RuntimeJobState): void {
+    this.releaseFencedRuntimeState(streamId, runtime);
+
+    // finalEvent/errorEvent are cached before transport dispatch, so they do
+    // not prove that an attached SSE response closed. Each captured handler
+    // ignores this reconnect signal when its terminal is already queued. A
+    // lost store has nothing to reconnect to, so it ends with an error frame.
+    const signal =
+      runtime.storeLost === true
+        ? GENERATION_STORE_LOST_ERROR
+        : TERMINAL_PUBLICATION_RECONNECT_ERROR;
+    for (const notify of [...runtime.localErrorHandlers]) {
+      try {
+        notify(signal);
+      } catch (error) {
+        logger.error(
+          `[GenerationJobManager] Failed to recycle a subscriber for fenced generation ${streamId}:`,
+          error,
+        );
+      }
+    }
+  }
+
+  private releaseFencedRuntimeState(streamId: string, runtime: RuntimeJobState): void {
     if (runtime.replacementTransportHold !== true) {
       this.releaseAbortSubscription(runtime);
       this.releaseJobOwnership(streamId, runtime.createdAt);
@@ -7383,20 +7478,6 @@ class GenerationJobManagerClass {
         this.replayEventWriteQueues.delete(streamId);
         this.tokenUsageWriteQueues.delete(streamId);
         this.runStepWriteQueues.delete(streamId);
-      }
-    }
-
-    // finalEvent/errorEvent are cached before transport dispatch, so they do
-    // not prove that an attached SSE response closed. Each captured handler
-    // ignores this reconnect signal when its terminal is already queued.
-    for (const notify of [...runtime.localErrorHandlers]) {
-      try {
-        notify(TERMINAL_PUBLICATION_RECONNECT_ERROR);
-      } catch (error) {
-        logger.error(
-          `[GenerationJobManager] Failed to recycle a subscriber for fenced generation ${streamId}:`,
-          error,
-        );
       }
     }
   }
@@ -7427,7 +7508,284 @@ class GenerationJobManagerClass {
     const ownsExactProvider = this.ownedJobs.get(streamId) === runtime.createdAt;
     runtime.abortController.abort();
     this.recordFencedRuntimeAbortProof(streamId, runtime, ownsExactProvider);
-    this.preserveFencedRuntimeUntilHandoff(streamId, runtime);
+    if (!this.isStoreLostDetectionActive()) {
+      this.preserveFencedRuntimeUntilHandoff(streamId, runtime);
+      return;
+    }
+    /** The provider is already stopped, so a real replacement is as safe as
+     * before. The handoff hold waits for one presence read: a fence with no
+     * job and no newer epoch means the store lost its state, and holding
+     * subscribers for a successor that never existed would only end them in
+     * a reconnect loop with nothing to reconnect to. */
+    runtime.ownedAtFence = ownsExactProvider;
+    const outcome = this.classifyDurableFence(streamId, runtime);
+    runtime.fenceOutcome = outcome;
+    void outcome.then((result) => {
+      if (result === 'store_lost') {
+        this.markStoreLost(streamId, runtime);
+        return;
+      }
+      this.preserveFencedRuntimeUntilHandoff(streamId, runtime);
+    });
+  }
+
+  private isStoreLostDetectionActive(): boolean {
+    return (
+      this._storeLostDetection &&
+      this._isRedis &&
+      typeof this.jobStore.getGenerationPresence === 'function'
+    );
+  }
+
+  private isStoreLostEligible(runtime: RuntimeJobState): boolean {
+    return this.isStoreLostDetectionActive() && runtime.ownedAtFence === true;
+  }
+
+  /** Same-slot presence read: no job and no epoch at or above this generation.
+   * A deleted job normally retains its own epoch (JOB_DELETE_LUA), and every
+   * successor writes a newer one, so only a wiped store leaves neither. */
+  private async probeStoreLost(streamId: string, createdAt: number): Promise<boolean> {
+    try {
+      const presence = await this.jobStore.getGenerationPresence!(streamId);
+      return isStoreLostPresence(presence, createdAt);
+    } catch (error) {
+      logger.warn(
+        `[GenerationJobManager] Failed to read generation presence for ${streamId}:`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  private async classifyDurableFence(
+    streamId: string,
+    runtime: RuntimeJobState,
+  ): Promise<GenerationFenceOutcome> {
+    if (runtime.ownedAtFence !== true) {
+      return 'replaced';
+    }
+    for (let attempt = 1; attempt <= STORE_LOST_PROBE_ATTEMPTS; attempt++) {
+      try {
+        const presence = await this.jobStore.getGenerationPresence!(streamId);
+        if (!isStoreLostPresence(presence, runtime.createdAt)) {
+          return 'replaced';
+        }
+        logger.warn(
+          `[GenerationJobManager] Generation store lost state for ${streamId}@${runtime.createdAt} (job=absent, epoch=${presence.epoch ?? 'absent'}); ending with error`,
+        );
+        return 'store_lost';
+      } catch (error) {
+        logger.warn(
+          `[GenerationJobManager] Failed to classify fence for ${streamId}@${runtime.createdAt} (attempt ${attempt}/${STORE_LOST_PROBE_ATTEMPTS}):`,
+          error,
+        );
+        if (attempt < STORE_LOST_PROBE_ATTEMPTS) {
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, STORE_LOST_PROBE_RETRY_MS);
+            timer.unref?.();
+          });
+        }
+      }
+    }
+    return 'unknown';
+  }
+
+  /** Switch a fenced runtime to store-lost terminalization: no handoff hold,
+   * and a backstop in case its request controller never finalizes. */
+  private markStoreLost(
+    streamId: string,
+    runtime: RuntimeJobState,
+    backstopMs = this._storeLostTerminalGraceMs,
+  ): void {
+    runtime.storeLost = true;
+    runtime.fenceOutcome = Promise.resolve('store_lost');
+    const retirement = this.fencedRuntimeRetirements.get(runtime);
+    if (retirement != null && retirement.cleanupStarted !== true) {
+      if (retirement.timer != null) {
+        clearTimeout(retirement.timer);
+        retirement.timer = undefined;
+      }
+      retirement.controller.abort();
+      this.fencedRuntimeRetirements.delete(runtime);
+    }
+    if (runtime.storeLostFinalization != null || this.storeLostBackstops.has(runtime)) {
+      return;
+    }
+    const backstop = setTimeout(() => {
+      this.storeLostBackstops.delete(runtime);
+      if (runtime.storeLostFinalization == null) {
+        logger.warn(
+          `[GenerationJobManager] Store-lost generation ${streamId}@${runtime.createdAt} was not finalized by its request; ending it without a saved partial`,
+        );
+      }
+      void this.finalizeStoreLostRuntime(streamId, runtime);
+    }, backstopMs);
+    backstop.unref?.();
+    this.storeLostBackstops.set(runtime, backstop);
+  }
+
+  /** A live, owned, unfenced runtime whose job vanished before its terminal
+   * claim: the store may have been wiped after the last durable append. Start
+   * the same classification a fence would, while ownership is still known. */
+  private classifyMissingJobAtClaim(
+    streamId: string,
+    createdAt: number,
+    runtime: RuntimeJobState | undefined,
+  ): void {
+    if (
+      runtime == null ||
+      runtime.createdAt !== createdAt ||
+      this.runtimeState.get(streamId) !== runtime ||
+      runtime.abortController.signal.aborted ||
+      runtime.fenceOutcome != null ||
+      !this.isStoreLostDetectionActive() ||
+      this.ownedJobs.get(streamId) !== createdAt
+    ) {
+      return;
+    }
+    runtime.ownedAtFence = true;
+    const outcome = this.classifyDurableFence(streamId, runtime);
+    runtime.fenceOutcome = outcome;
+    void outcome.then((result) => {
+      if (result === 'store_lost') {
+        this.markStoreLost(streamId, runtime);
+      }
+    });
+  }
+
+  /**
+   * Explains why this generation lost its durable ownership, for a request
+   * controller whose terminal claim failed or whose provider was aborted.
+   * Returns `null` when no fence or missing-job claim was classified for the
+   * exact generation (a Stop or replacement owns terminal handling).
+   */
+  async getFenceOutcome(
+    streamId: string,
+    createdAt: number,
+  ): Promise<GenerationFenceOutcome | null> {
+    if (!this.isStoreLostDetectionActive()) {
+      return null;
+    }
+    const runtime = this.runtimeState.get(streamId);
+    if (runtime == null || runtime.createdAt !== createdAt) {
+      return null;
+    }
+    if (runtime.fenceOutcome != null) {
+      const outcome = await runtime.fenceOutcome;
+      if (outcome !== 'unknown' || runtime.ownedAtFence !== true) {
+        return outcome;
+      }
+      /** The store was unreadable while the fence was classified; it may be back. */
+      if (this.runtimeState.get(streamId) === runtime && runtime.storeLost !== true) {
+        if (await this.probeStoreLost(streamId, createdAt)) {
+          this.markStoreLost(streamId, runtime);
+          return 'store_lost';
+        }
+      }
+      return runtime.storeLost === true ? 'store_lost' : 'unknown';
+    }
+    return null;
+  }
+
+  /**
+   * Terminalize a store-lost generation exactly once: run the caller's
+   * partial-response save, publish GENERATION_STORE_LOST_ERROR (which also
+   * re-seeds the generation epoch so a queued follow-up turn is admitted),
+   * notify local subscribers and release local state. Returns false when the
+   * generation is not store-lost or was already finalized.
+   */
+  async finalizeStoreLostGeneration(
+    streamId: string,
+    createdAt: number,
+    options?: { beforePublish?: () => Promise<unknown> | unknown },
+  ): Promise<boolean> {
+    const runtime = this.runtimeState.get(streamId);
+    if (runtime == null || runtime.createdAt !== createdAt || runtime.storeLost !== true) {
+      return false;
+    }
+    return this.finalizeStoreLostRuntime(streamId, runtime, options?.beforePublish);
+  }
+
+  private async finalizeStoreLostRuntime(
+    streamId: string,
+    runtime: RuntimeJobState,
+    beforePublish?: () => Promise<unknown> | unknown,
+  ): Promise<boolean> {
+    if (runtime.storeLostFinalization != null) {
+      await runtime.storeLostFinalization;
+      return false;
+    }
+    let resolveFinalization!: () => void;
+    runtime.storeLostFinalization = new Promise<void>((resolve) => {
+      resolveFinalization = resolve;
+    });
+    try {
+      const backstop = this.storeLostBackstops.get(runtime);
+      if (backstop != null) {
+        clearTimeout(backstop);
+        this.storeLostBackstops.delete(runtime);
+      }
+      if (beforePublish != null && runtime.storeLostSaveStarted !== true) {
+        runtime.storeLostSaveStarted = true;
+        try {
+          await beforePublish();
+        } catch (error) {
+          logger.error(
+            `[GenerationJobManager] Failed to persist store-lost generation ${streamId}@${runtime.createdAt}:`,
+            error,
+          );
+        }
+      }
+
+      runtime.errorEvent = GENERATION_STORE_LOST_ERROR;
+      try {
+        /** Sequenced publication re-seeds the epoch (SET NX in PUBLISH_SEQ_LUA). */
+        await this.eventTransport.emitError(
+          streamId,
+          GENERATION_STORE_LOST_ERROR,
+          runtime.createdAt,
+        );
+      } catch (error) {
+        if (!(error instanceof GenerationPublicationFencedError)) {
+          logger.error(
+            `[GenerationJobManager] Failed to publish store-lost error for ${streamId}:`,
+            error,
+          );
+        }
+      }
+      /** The wipe also reset the sequence counter, so remote subscribers whose
+       * reorder buffers sit past it would drop the sequenced frame as a
+       * duplicate. An unsequenced copy is delivered immediately; subscribers
+       * deliver one terminal per generation. */
+      try {
+        await this.eventTransport.emitUnsequencedError?.(
+          streamId,
+          GENERATION_STORE_LOST_ERROR,
+          runtime.createdAt,
+        );
+      } catch (error) {
+        logger.error(
+          `[GenerationJobManager] Failed to broadcast store-lost error for ${streamId}:`,
+          error,
+        );
+      }
+
+      const retirement = this.fencedRuntimeRetirements.get(runtime);
+      if (retirement != null) {
+        retirement.cleanupStarted = true;
+        if (retirement.timer != null) {
+          clearTimeout(retirement.timer);
+          retirement.timer = undefined;
+        }
+        retirement.controller.abort();
+        this.fencedRuntimeRetirements.delete(runtime);
+      }
+      this.cleanupFencedRuntime(streamId, runtime);
+      recordGenerationJob(this.storeLabel, 'store_lost');
+      return true;
+    } finally {
+      resolveFinalization();
+    }
   }
 
   private preserveFencedRuntimeUntilHandoff(streamId: string, runtime: RuntimeJobState): void {
