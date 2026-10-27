@@ -1,6 +1,6 @@
 import React from 'react';
 import { I18nextProvider } from 'react-i18next';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import OutOfCreditNotice from './OutOfCreditNotice';
 import i18n from '~/locales/i18n';
 
@@ -202,7 +202,7 @@ describe('OutOfCreditNotice', () => {
     expect(screen.getByRole('meter')).toBeInTheDocument();
   });
 
-  it('hides an expired refill countdown while preserving the running-low balance warning', () => {
+  it('hides the entire running-low banner once the refill deadline has elapsed', () => {
     mockUseCreditRequestStatus.mockReturnValue(
       baseStatus({
         tokenCredits: 598412.34,
@@ -211,12 +211,32 @@ describe('OutOfCreditNotice', () => {
       }),
     );
 
-    renderNotice();
+    const { container } = renderNotice();
 
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText('com_nav_balance_running_low_title')).not.toBeInTheDocument();
+  });
+
+  it('hides the running-low banner when a future refill deadline is reached', () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-10-27T12:00:00Z'));
+    mockUseCreditRequestStatus.mockReturnValue(
+      baseStatus({
+        tokenCredits: 598412.34,
+        refillAmount: 40000000,
+        nextRefillAt: new Date(Date.now() + 10_000),
+      }),
+    );
+
+    const { container } = renderNotice();
     expect(screen.getByText('com_nav_balance_running_low_title')).toBeInTheDocument();
-    const credits = screen.getByText('598,412.34', { selector: 'strong' });
-    expect(credits.closest('span')).toHaveTextContent('598,412.34 credits left');
-    expect(screen.queryByText(/com_nav_balance_refill_countdown_/)).not.toBeInTheDocument();
+
+    act(() => {
+      jest.advanceTimersByTime(10_000);
+    });
+
+    expect(container).toBeEmptyDOMElement();
+    jest.useRealTimers();
   });
 
   it('rounds a positive sub-minute countdown up instead of showing zero minutes', () => {

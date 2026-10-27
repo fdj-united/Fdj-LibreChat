@@ -40,21 +40,23 @@ function ClockIcon({ className }: { className?: string }) {
   );
 }
 
-function useCountdownTick(active: boolean): void {
+function useCountdownTick(delayMs: number | undefined): void {
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (!active) {
+    if (delayMs == null) {
       return;
     }
-    const interval = setInterval(() => setTick((t) => t + 1), COUNTDOWN_TICK_MS);
+    const interval = setInterval(() => setTick((t) => t + 1), delayMs);
     return () => clearInterval(interval);
-  }, [active]);
+  }, [delayMs]);
 }
 
 function useFormattedCountdown(nextRefillAt: Date | undefined): string | undefined {
   const localize = useLocalize();
   const msRemaining = nextRefillAt ? nextRefillAt.getTime() - Date.now() : undefined;
-  useCountdownTick(msRemaining != null && msRemaining > 0);
+  const tickDelay =
+    msRemaining != null && msRemaining > 0 ? Math.min(msRemaining, COUNTDOWN_TICK_MS) : undefined;
+  useCountdownTick(tickDelay);
 
   if (msRemaining == null || msRemaining <= 0) {
     return undefined;
@@ -83,6 +85,7 @@ export default function OutOfCreditNotice() {
   } = useCreditRequestStatus();
   const duration = useFormattedCountdown(nextRefillAt);
   const [reason, setReason] = useState('');
+  const isRefillDeadlineElapsed = nextRefillAt != null && nextRefillAt.getTime() <= Date.now();
 
   const isOutOfCredits = tokenCredits <= 0;
   const isLowBalance =
@@ -95,7 +98,13 @@ export default function OutOfCreditNotice() {
   // deployment with balance disabled, or a query that simply hasn't resolved
   // yet, both leave `tokenCredits` at its 0 default, which is indistinguishable
   // from a genuinely exhausted balance unless checked explicitly.
-  if (!enabled || isLoading || isAutoRefillDue || (!isOutOfCredits && !isLowBalance)) {
+  if (
+    !enabled ||
+    isLoading ||
+    isAutoRefillDue ||
+    isRefillDeadlineElapsed ||
+    (!isOutOfCredits && !isLowBalance)
+  ) {
     return null;
   }
 
