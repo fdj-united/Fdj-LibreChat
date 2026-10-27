@@ -3250,6 +3250,25 @@ describe('RedisJobStore Integration Tests', () => {
       await store.destroy();
     });
 
+    test('the orphan salvage claim has a single winner', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { runningTtl: 60 });
+      await store.initialize();
+      const streamId = `lease-salvage-claim-${Date.now()}`;
+
+      const claims = await Promise.all([
+        store.claimOrphanSalvage(streamId, 1000),
+        store.claimOrphanSalvage(streamId, 1000),
+      ]);
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      await expect(store.claimOrphanSalvage(streamId, 2000)).resolves.toBe(true);
+
+      await store.destroy();
+    });
+
     test('orphan drain leaves a replaced hash alone', async () => {
       if (!ioredisClient) {
         return;

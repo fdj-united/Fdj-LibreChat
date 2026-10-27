@@ -692,6 +692,12 @@ export type OrphanedGenerationHandler = (
   result: AbortResult,
 ) => void | Promise<void>;
 
+/** A running predecessor's output, read before its replacement deleted the chunk log. */
+interface OrphanSnapshot {
+  job: SerializableJobData;
+  content: Agents.MessageContentComplex[];
+}
+
 /** A provider execution this process has begun and not yet drained. */
 interface OpenProviderExecution {
   promise: Promise<void>;
@@ -1029,6 +1035,10 @@ class GenerationJobManagerClass {
   /** Abandoned executions whose hold write failed; their leases keep being renewed
    * (and the hold retried) until the hold lands. */
   private readonly pendingProviderHolds = new Map<string, OpenProviderExecution>();
+  /** Predecessor snapshots awaiting the replacement handshake's verdict, and the
+   * predecessors that handshake presumed dead (keyed `streamId:createdAt`). */
+  private readonly orphanSnapshots = new Map<string, OrphanSnapshot>();
+  private readonly presumedOrphanAborts = new Set<string>();
   private readonly ownerLeaseId = `${hostname()}:${process.pid}`;
 
   /** Whether we're using Redis stores */
@@ -2231,6 +2241,13 @@ class GenerationJobManagerClass {
           }
         }
       }
+      const orphanKey = `${streamId}:${receipt.createdAt}`;
+      const presumedDead = this.presumedOrphanAborts.delete(orphanKey);
+      const snapshot = this.orphanSnapshots.get(orphanKey);
+      if (delivered && presumedDead && snapshot != null) {
+        this.orphanSnapshots.delete(orphanKey);
+        await this.persistOrphanSnapshot(streamId, snapshot);
+      }
       if (delivered) {
         acknowledged.push(receipt.createdAt);
       } else {
@@ -2673,7 +2690,10 @@ class GenerationJobManagerClass {
       this._orphanSalvage
     ) {
       /** Must run before the create: the replacement deletes the predecessor's chunk log. */
-      await this.salvageOrphanedPredecessor(streamId, observedPredecessorJob);
+      const snapshot = await this.salvageOrphanedPredecessor(streamId, observedPredecessorJob);
+      if (snapshot != null) {
+        this.holdOrphanSnapshot(streamId, snapshot);
+      }
       observedPredecessorJob = await this.jobStore.getJob(streamId);
     }
     let jobData: CreatedJobData;
@@ -9366,7 +9386,13 @@ class GenerationJobManagerClass {
 
   /** Wait up to one lease TTL for a capable owner's lease to lapse, then record the
    * abort acknowledgement it can no longer write. False keeps today's strict
-   * failure: an owner that is not lease-aware, held, or still renewing. */
+   * failure: an owner that is not lease-aware, held, or still renewing.
+   *
+   * Runs only after the owner missed the abort acknowledgement, so a live owner never
+   * reaches it. Worst case for a dead owner, at the defaults (abort-ACK 3 s, TTL 20 s,
+   * refresh 5 s): a turn sent right after a kill that followed a renewal waits about
+   * 3 s + (20 s - 3 s) + one 0.5 s poll, so about 20.5 s, once. A turn sent after the
+   * lease already lapsed is salvaged before the create and does not wait at all. */
   private async confirmOrphanedOwnerAbort(
     streamId: string,
     createdAt: number,
@@ -9392,6 +9418,7 @@ class GenerationJobManagerClass {
         return false;
       }
       if (!state.leased) {
+        this.presumedOrphanAborts.add(`${streamId}:${createdAt}`);
         await this.eventTransport.recordAbortAcknowledgement?.(streamId, createdAt);
         logger.warn(
           `[GenerationJobManager] Presumed provider stopped for ${streamId}@${createdAt}/${providerExecutionId}: owner lease expired (path=abort_ack)`,
@@ -9404,6 +9431,89 @@ class GenerationJobManagerClass {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, OWNER_LEASE_POLL_MS);
       });
+    }
+  }
+
+  /** Keep a snapshot for the replacement handshake that follows, dropping it once that
+   * handshake can no longer need it. */
+  private holdOrphanSnapshot(streamId: string, snapshot: OrphanSnapshot): void {
+    const key = `${streamId}:${snapshot.job.createdAt}`;
+    this.orphanSnapshots.set(key, snapshot);
+    const { ttlMs, refreshMs } = this._ownerLease;
+    const expiry = setTimeout(
+      () => {
+        if (this.orphanSnapshots.get(key) === snapshot) {
+          this.orphanSnapshots.delete(key);
+        }
+      },
+      2 * (ttlMs + refreshMs) + PROVIDER_DRAIN_TIMEOUT_MS,
+    );
+    expiry.unref?.();
+  }
+
+  /** Copy a running predecessor's output from the chunk log before the replacement
+   * deletes it. Only kept when a host hook could persist it. */
+  private async snapshotOrphanCandidate(
+    streamId: string,
+    observed: SerializableJobData,
+  ): Promise<OrphanSnapshot | undefined> {
+    if (observed.status !== 'running' || this.orphanedGenerationHandler == null) {
+      return undefined;
+    }
+    const parts = await this.jobStore.getContentParts(streamId, observed.createdAt);
+    return { job: observed, content: parts?.content ?? [] };
+  }
+
+  /**
+   * Save the snapshot of a predecessor whose owner the replacement handshake presumed dead
+   * (no abort acknowledgement, then its lease lapsed). One successor wins a durable claim,
+   * so racing successors save it once. Bounded, and a failure never blocks the new turn.
+   */
+  private async persistOrphanSnapshot(streamId: string, snapshot: OrphanSnapshot): Promise<void> {
+    const handler = this.orphanedGenerationHandler;
+    if (handler == null) {
+      return;
+    }
+    const { job } = snapshot;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const claimed = (await this.jobStore.claimOrphanSalvage?.(streamId, job.createdAt)) ?? true;
+      if (!claimed) {
+        return;
+      }
+      const content = filterPersistableAbortContent(snapshot.content);
+      const result: AbortResult = {
+        success: true,
+        jobData: job,
+        content,
+        text:
+          content.length > 0
+            ? parseTextParts(content as TMessageContentParts[], false, { includeSteer: true })
+            : '',
+        finalEvent: null,
+        collectedUsage: [],
+      };
+      await Promise.race([
+        Promise.resolve(handler(streamId, result)),
+        new Promise<void>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`timed out after ${ORPHAN_SALVAGE_TIMEOUT_MS}ms`)),
+            ORPHAN_SALVAGE_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      logger.warn(
+        `[GenerationJobManager] Salvaged orphaned generation ${streamId}@${job.createdAt} after its owner missed the replacement abort (parts=${content.length})`,
+      );
+    } catch (error) {
+      logger.error(
+        `[GenerationJobManager] Failed to salvage orphaned generation ${streamId}@${job.createdAt}:`,
+        error,
+      );
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
@@ -9424,7 +9534,7 @@ class GenerationJobManagerClass {
   private async salvageOrphanedPredecessor(
     streamId: string,
     observed: SerializableJobData | null,
-  ): Promise<void> {
+  ): Promise<OrphanSnapshot | undefined> {
     const getState = this.jobStore.getProviderLeaseState;
     if (
       !this._ownerLease.enabled ||
@@ -9438,32 +9548,22 @@ class GenerationJobManagerClass {
       return;
     }
     const providerExecutionId = observed.providerExecutionId;
-    const { ttlMs, refreshMs } = this._ownerLease;
-    const missedRenewalBelowMs = ttlMs - refreshMs - refreshMs / 2;
-    const lapseDeadline = Date.now() + ttlMs + refreshMs;
     try {
-      for (;;) {
-        const state = await getState.call(
-          this.jobStore,
-          streamId,
-          observed.createdAt,
-          providerExecutionId,
-        );
-        if (!state.capable || state.held) {
-          return;
-        }
-        if (!state.leased) {
-          break;
-        }
-        if (
-          (state.leaseTtlMs != null && state.leaseTtlMs >= missedRenewalBelowMs) ||
-          Date.now() >= lapseDeadline
-        ) {
-          return;
-        }
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, Math.min(OWNER_LEASE_POLL_MS, (state.leaseTtlMs ?? 0) + 10));
-        });
+      const state = await getState.call(
+        this.jobStore,
+        streamId,
+        observed.createdAt,
+        providerExecutionId,
+      );
+      if (!state.capable || state.held) {
+        return;
+      }
+      if (state.leased) {
+        /** A live lease does not tell a live owner from one killed less than a TTL ago,
+         *  and only the replacement's abort handshake can (a live owner acknowledges in
+         *  milliseconds). The replacement deletes the chunk log, so keep a copy of the
+         *  output now; it is saved only if the handshake later presumes the owner dead. */
+        return await this.snapshotOrphanCandidate(streamId, observed);
       }
     } catch (error) {
       logger.warn(

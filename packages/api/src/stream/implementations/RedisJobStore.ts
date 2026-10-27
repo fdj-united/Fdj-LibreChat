@@ -1764,6 +1764,9 @@ const KEYS = {
    *  lease mean a dead owner. */
   providerLeaseCapable: (streamId: string, createdAt: number, providerExecutionId: string) =>
     `stream:{${streamId}}:provider-lease-capable:${createdAt}:${providerExecutionId}`,
+  /** Single-winner claim to salvage an orphaned generation's partial output. */
+  orphanSalvage: (streamId: string, createdAt: number) =>
+    `stream:{${streamId}}:orphan-salvage:${createdAt}`,
   /** Keeps successors strict for an execution its owner abandoned on purpose. */
   providerHold: (streamId: string, createdAt: number, providerExecutionId: string) =>
     `stream:{${streamId}}:provider-hold:${createdAt}:${providerExecutionId}`,
@@ -2686,6 +2689,17 @@ export class RedisJobStore implements IJobStoreV2 {
       'EX',
       PROVIDER_LEASE_MARKER_TTL_SECONDS,
     );
+  }
+
+  async claimOrphanSalvage(streamId: string, createdAt: number): Promise<boolean> {
+    const claimed = await this.redis.set(
+      KEYS.orphanSalvage(streamId, createdAt),
+      '1',
+      'EX',
+      PROVIDER_LEASE_MARKER_TTL_SECONDS,
+      'NX',
+    );
+    return claimed === 'OK';
   }
 
   async getProviderLeaseState(

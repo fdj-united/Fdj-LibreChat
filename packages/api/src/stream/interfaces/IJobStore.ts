@@ -1019,6 +1019,10 @@ export interface IJobStore {
     providerExecutionId: string,
   ): Promise<ProviderLeaseState>;
 
+  /** Single-winner claim to salvage one orphaned generation's partial output, so
+   * racing successors save it once. Resolves true for the winner. */
+  claimOrphanSalvage?(streamId: string, createdAt: number): Promise<boolean>;
+
   /** Atomically re-check that the capable owner's lease is gone and not held,
    * then mark the exact generation's provider drained on the owner's behalf. */
   recoverOrphanedProviderExecution?(

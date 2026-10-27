@@ -4773,24 +4773,106 @@ describe('GenerationJobManager Integration Tests', () => {
       expect(replacement.createdAt).toBeGreaterThan(job.createdAt);
     }, 40000);
 
-    test('waits for a lease that missed its renewals to lapse, then salvages', async () => {
-      const { owner, subscriber, streamId, job } = await startOwner('salvage-lapse');
-      const { manager: router } = createReplica();
-      const handler = jest.fn();
+    test('salvages a fresh kill whose lease has not lapsed yet when the next turn arrives', async () => {
+      /** Prod-like ratios on a shorter clock: TTL 3 s, refresh 1 s. */
+      const lease = { ttlMs: 3000, refreshMs: 1000 };
+      const { owner, subscriber, streamId, job } = await startOwner('fresh-kill', {
+        ownerLease: lease,
+      });
+      const { manager: router } = createReplica({ ownerLease: lease });
+      const observed: unknown[] = [];
+      const handler = jest.fn(async (_id: string, result: { content: unknown }) => {
+        observed.push(result.content);
+      });
       router.setOrphanedGenerationHandler(handler);
+      /** SIGKILL right after a renewal: the lease key stays and simply stops being renewed. */
+      await new Promise((resolve) => setTimeout(resolve, lease.refreshMs + 50));
       killOwner(owner, subscriber);
-      /** Past one missed renewal, but the lease has not expired yet. */
-      await new Promise((resolve) => setTimeout(resolve, LEASE.refreshMs * 2));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      await router.createJob(streamId, 'user-1', streamId, {
+      const startedAt = Date.now();
+      const replacement = await router.createJob(streamId, 'user-1', streamId, {
         initialMetadata: { generationProtocolVersion: 2 },
       });
+      const elapsed = Date.now() - startedAt;
 
+      /** Abort-ACK timeout (3 s) plus the rest of the lease, never more than one TTL. */
+      expect(elapsed).toBeLessThanOrEqual(lease.ttlMs + 3000 + 1500);
       expect(handler).toHaveBeenCalledTimes(1);
       expect(handler.mock.calls[0][1]).toMatchObject({
         success: true,
         jobData: expect.objectContaining({ createdAt: job.createdAt }),
       });
+      expect(observed[0]).toEqual([
+        expect.objectContaining({ type: 'text', text: 'Hello dead owner' }),
+      ]);
+      expect(await router.getJobStore().getJob(streamId)).toMatchObject({
+        createdAt: replacement.createdAt,
+        status: 'running',
+      });
+    }, 40000);
+
+    test('does not save the snapshot when a live owner acknowledges the replacement', async () => {
+      const { owner, streamId, job, executionId } = await startOwner('live-replaced');
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      /** A live provider unwinds on the abort and records its own drain. */
+      job.abortController.signal.addEventListener('abort', () => {
+        void owner.markProviderExecutionDrained(streamId, job.createdAt, executionId);
+      });
+
+      const startedAt = Date.now();
+      await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(2000);
+      expect(job.abortController.signal.aborted).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+    }, 40000);
+
+    test('two successors racing after a lapsed lease both proceed and salvage once', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('race-lapsed');
+      const { manager: first } = createReplica();
+      const { manager: second } = createReplica();
+      const handler = jest.fn();
+      first.setOrphanedGenerationHandler(handler);
+      second.setOrphanedGenerationHandler(handler);
+      killOwner(owner, subscriber);
+      await ioredisClient!.del(leaseKey(streamId, job.createdAt, executionId));
+
+      const results = await Promise.allSettled(
+        [first, second].map((manager) =>
+          manager.createJob(streamId, 'user-1', streamId, {
+            initialMetadata: { generationProtocolVersion: 2 },
+          }),
+        ),
+      );
+
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+      expect(handler).toHaveBeenCalledTimes(1);
+    }, 40000);
+
+    test('two successors racing after a fresh kill salvage once', async () => {
+      const { owner, subscriber, streamId } = await startOwner('race-fresh');
+      const { manager: first } = createReplica();
+      const { manager: second } = createReplica();
+      const handler = jest.fn();
+      first.setOrphanedGenerationHandler(handler);
+      second.setOrphanedGenerationHandler(handler);
+      killOwner(owner, subscriber);
+
+      const results = await Promise.allSettled(
+        [first, second].map((manager) =>
+          manager.createJob(streamId, 'user-1', streamId, {
+            initialMetadata: { generationProtocolVersion: 2 },
+          }),
+        ),
+      );
+
+      expect(results.some((result) => result.status === 'fulfilled')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
     }, 40000);
 
     test('a held execution keeps the successor strict', async () => {
