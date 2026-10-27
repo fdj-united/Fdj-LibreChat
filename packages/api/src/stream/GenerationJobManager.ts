@@ -202,6 +202,8 @@ const OWNER_LEASE_POLL_MS = 500;
 /** Bound for the pre-create salvage of an orphaned predecessor. On timeout the
  * replacement falls through to the receipt handoff, which recovers the drain itself. */
 const ORPHAN_SALVAGE_TIMEOUT_MS = 5_000;
+/** Bound for writing the hold marker of an abandoned provider execution. */
+const PROVIDER_HOLD_WRITE_TIMEOUT_MS = 2_000;
 
 type PresumedDrainPath = 'abort_ack' | 'drain' | 'salvage';
 
@@ -699,8 +701,11 @@ interface OpenProviderExecution {
   providerExecutionId: string;
   /** A lease-carrying begin was sent for it; only these are renewed. */
   leased: boolean;
+  /** Monotonic time (performance.now) the last confirmed renewal was sent. */
   lastRenewOkAt: number;
   selfFenced: boolean;
+  /** Self-fence deadline, re-armed on every confirmed renewal. */
+  fenceTimer?: NodeJS.Timeout;
 }
 
 export interface CreateGenerationJobOptions {
@@ -1021,6 +1026,9 @@ class GenerationJobManagerClass {
   private _orphanSalvage = true;
   private ownerLeaseTimer: NodeJS.Timeout | null = null;
   private ownerLeaseRenewing = false;
+  /** Abandoned executions whose hold write failed; their leases keep being renewed
+   * (and the hold retried) until the hold lands. */
+  private readonly pendingProviderHolds = new Map<string, OpenProviderExecution>();
   private readonly ownerLeaseId = `${hostname()}:${process.pid}`;
 
   /** Whether we're using Redis stores */
@@ -8915,8 +8923,14 @@ class GenerationJobManagerClass {
       return;
     }
     entry.leased = true;
-    entry.lastRenewOkAt = Date.now();
+    entry.lastRenewOkAt = this.monotonicNow();
+    this.armSelfFence(entry);
     this.ensureOwnerLeaseTimer();
+  }
+
+  /** Lease ages are measured on a monotonic clock, so a wall-clock step cannot hide a lapse. */
+  private monotonicNow(): number {
+    return globalThis.performance.now();
   }
 
   private ensureOwnerLeaseTimer(): void {
@@ -8936,72 +8950,209 @@ class GenerationJobManagerClass {
     }
   }
 
-  /** One pipelined renewal per tick for every leased execution. The timer is
-   * independent of generation work, so only an event-loop stall longer than the
-   * TTL can let a live owner's lease lapse. */
+  private hasLeasesToRenew(): boolean {
+    return (
+      this.pendingProviderHolds.size > 0 ||
+      [...this.openProviderExecutions.values()].some((open) => open.leased)
+    );
+  }
+
+  /**
+   * Arm the self-fence deadline for one execution: TTL - 1.5 x refresh after its last
+   * confirmed renewal. Half a refresh absorbs timer jitter, so the fence lands before the
+   * lease can expire. The deadline is its own timer, so a renewal that hangs (a blackholed
+   * socket, a client with no command timeout) cannot postpone it.
+   */
+  private armSelfFence(entry: OpenProviderExecution): void {
+    this.disarmSelfFence(entry);
+    if (!this._ownerLease.selfFence || entry.selfFenced) {
+      return;
+    }
+    const { ttlMs, refreshMs } = this._ownerLease;
+    const fenceAfterMs = ttlMs - refreshMs - refreshMs / 2;
+    const delay = Math.max(0, entry.lastRenewOkAt + fenceAfterMs - this.monotonicNow());
+    entry.fenceTimer = setTimeout(() => {
+      entry.fenceTimer = undefined;
+      this.selfFenceOwner(
+        entry,
+        `no lease renewal confirmed for ${Math.round(this.monotonicNow() - entry.lastRenewOkAt)}ms`,
+      );
+    }, delay);
+    entry.fenceTimer.unref?.();
+  }
+
+  private disarmSelfFence(entry: OpenProviderExecution): void {
+    if (entry.fenceTimer != null) {
+      clearTimeout(entry.fenceTimer);
+      entry.fenceTimer = undefined;
+    }
+  }
+
+  /**
+   * Stop this owner's provider because a successor may already read its lease as a dead
+   * owner. This keeps "lease absent" a safe inference across an owner-only partition and
+   * an event-loop stall.
+   *
+   * Rollout note: the fence cannot tell an owner-only partition from a Redis-wide outage.
+   * An outage longer than about TTL - 1.5 x refresh (12.5 s at the defaults) therefore
+   * fences every live generation on every pod, by design: none of them can prove they are
+   * still the owner. R3 already fences appending generations after its own grace window;
+   * this adds the generations that were not appending (long tool calls).
+   */
+  private selfFenceOwner(entry: OpenProviderExecution, reason: string): void {
+    if (
+      entry.selfFenced ||
+      this.openProviderExecutions.get(
+        this.providerExecutionKey(entry.streamId, entry.createdAt, entry.providerExecutionId),
+      ) !== entry
+    ) {
+      return;
+    }
+    entry.selfFenced = true;
+    this.disarmSelfFence(entry);
+    logger.error(
+      `[GenerationJobManager] Owner lease lost (${reason}); self-fencing ${entry.streamId}@${entry.createdAt}`,
+    );
+    const runtime = this.runtimeState.get(entry.streamId);
+    if (runtime?.createdAt === entry.createdAt) {
+      /** Through the durable-fence path, not a bare abort: the fence is classified
+       *  (store lost vs. unknown/replaced) so the controller's registered store-lost
+       *  save still runs. The abort also ends this runtime's append-retry queue, so
+       *  no queued chunk is written after the lease may have lapsed; those chunks
+       *  remain in the local content the store-lost save reads. */
+      this.retireRuntimeAfterDurableFence(entry.streamId, runtime);
+      runtime.abortController.abort();
+    }
+  }
+
+  /** Resolves the store call, or rejects once `ms` elapse; the call itself is abandoned. */
+  private async withLeaseTimeout<T>(operation: Promise<T>, ms: number, what: string): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  /**
+   * One pipelined renewal per tick for every leased execution, bounded by one refresh
+   * interval so a hung command cannot block the next tick. An execution whose lease has
+   * certainly lapsed (no confirmed renewal for a full TTL, for example after an event-loop
+   * stall) is fenced instead of renewed: a successor may already have taken it over, and
+   * renewing would only resurrect the lease and hide that from this owner.
+   */
   private async renewOwnerLeases(): Promise<void> {
     if (this.ownerLeaseRenewing) {
       return;
     }
-    const entries = [...this.openProviderExecutions.values()].filter((entry) => entry.leased);
-    if (entries.length === 0) {
+    const renew = this.jobStore.renewProviderLeases;
+    if (!this.hasLeasesToRenew()) {
       this.stopOwnerLeaseTimer();
       return;
     }
-    const renew = this.jobStore.renewProviderLeases;
     if (renew == null) {
       return;
     }
+    const { ttlMs, refreshMs } = this._ownerLease;
+    const checkedAt = this.monotonicNow();
+    const entries: OpenProviderExecution[] = [];
+    for (const entry of this.openProviderExecutions.values()) {
+      if (!entry.leased || entry.selfFenced) {
+        continue;
+      }
+      if (this._ownerLease.selfFence && checkedAt - entry.lastRenewOkAt >= ttlMs) {
+        this.selfFenceOwner(
+          entry,
+          `lease lapsed ${Math.round(checkedAt - entry.lastRenewOkAt - ttlMs)}ms ago`,
+        );
+        continue;
+      }
+      entries.push(entry);
+    }
     this.ownerLeaseRenewing = true;
-    /** The lease TTL starts when Redis applies the SET, never before this send. */
-    const sentAt = Date.now();
-    let results: boolean[] = [];
     try {
-      results = await renew.call(
-        this.jobStore,
-        entries.map(({ streamId, createdAt, providerExecutionId }) => ({
-          streamId,
-          createdAt,
-          providerExecutionId,
-        })),
-        { ttlMs: this._ownerLease.ttlMs, ownerId: this.ownerLeaseId },
-      );
-    } catch (error) {
-      logger.warn('[GenerationJobManager] Owner lease renewal failed:', error);
+      await this.retryPendingProviderHolds();
+      const holds = [...this.pendingProviderHolds.values()];
+      const renewing = [...entries, ...holds];
+      if (renewing.length === 0) {
+        return;
+      }
+      /** The lease TTL starts when Redis applies the SET, never before this send. */
+      const sentAt = this.monotonicNow();
+      let results: boolean[] = [];
+      try {
+        results = await this.withLeaseTimeout(
+          renew.call(
+            this.jobStore,
+            renewing.map(({ streamId, createdAt, providerExecutionId }) => ({
+              streamId,
+              createdAt,
+              providerExecutionId,
+            })),
+            { ttlMs, ownerId: this.ownerLeaseId },
+          ),
+          refreshMs,
+          'Owner lease renewal',
+        );
+      } catch (error) {
+        logger.warn('[GenerationJobManager] Owner lease renewal failed:', error);
+      }
+      renewing.forEach((entry, index) => {
+        if (results[index] === true && !entry.selfFenced) {
+          entry.lastRenewOkAt = sentAt;
+          if (index < entries.length) {
+            this.armSelfFence(entry);
+          }
+        }
+      });
     } finally {
       this.ownerLeaseRenewing = false;
     }
-    const now = Date.now();
-    /** Fence on the first tick at TTL - refresh. Half a refresh absorbs timer jitter,
-     *  which would otherwise push the fence one tick later, past the lease expiry. */
-    const selfFenceAfterMs =
-      this._ownerLease.ttlMs - this._ownerLease.refreshMs - this._ownerLease.refreshMs / 2;
-    entries.forEach((entry, index) => {
-      if (results[index] === true) {
-        entry.lastRenewOkAt = sentAt;
-        return;
-      }
-      const failingForMs = now - entry.lastRenewOkAt;
-      if (!this._ownerLease.selfFence || entry.selfFenced || failingForMs < selfFenceAfterMs) {
-        return;
-      }
-      /** A successor may already read the lapsed lease as a dead owner. Stop this
-       *  provider so that inference stays true across an owner-only partition. */
-      entry.selfFenced = true;
-      logger.error(
-        `[GenerationJobManager] Owner lease renewal failing for ${failingForMs}ms; self-fencing ${entry.streamId}@${entry.createdAt}`,
+  }
+
+  /** Bounded hold write; false when it failed or timed out. */
+  private async writeProviderHold(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<boolean> {
+    const hold = this.jobStore.holdProviderExecution;
+    if (hold == null) {
+      return false;
+    }
+    try {
+      await this.withLeaseTimeout(
+        hold.call(this.jobStore, streamId, createdAt, providerExecutionId),
+        PROVIDER_HOLD_WRITE_TIMEOUT_MS,
+        'Provider hold write',
       );
-      const runtime = this.runtimeState.get(entry.streamId);
-      if (runtime?.createdAt === entry.createdAt) {
-        /** Through the durable-fence path, not a bare abort: the fence is classified
-         *  (store lost vs. unknown/replaced) so the controller's registered store-lost
-         *  save still runs. The abort also ends this runtime's append-retry queue, so
-         *  no queued chunk is written after the lease may have lapsed; those chunks
-         *  remain in the local content the store-lost save reads. */
-        this.retireRuntimeAfterDurableFence(entry.streamId, runtime);
-        runtime.abortController.abort();
+      return true;
+    } catch (error) {
+      logger.error(
+        `[GenerationJobManager] Failed to hold abandoned provider execution ${streamId}@${createdAt}:`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  private async retryPendingProviderHolds(): Promise<void> {
+    for (const [key, entry] of [...this.pendingProviderHolds]) {
+      if (
+        await this.writeProviderHold(entry.streamId, entry.createdAt, entry.providerExecutionId)
+      ) {
+        this.pendingProviderHolds.delete(key);
       }
-    });
+    }
   }
 
   private providerExecutionKey(
@@ -9033,7 +9184,7 @@ class GenerationJobManagerClass {
       createdAt,
       providerExecutionId,
       leased: false,
-      lastRenewOkAt: Date.now(),
+      lastRenewOkAt: this.monotonicNow(),
       selfFenced: false,
     };
     this.openProviderExecutions.set(key, entry);
@@ -9051,8 +9202,9 @@ class GenerationJobManagerClass {
       return;
     }
     this.openProviderExecutions.delete(key);
+    this.disarmSelfFence(entry);
     entry.settle();
-    if (![...this.openProviderExecutions.values()].some((open) => open.leased)) {
+    if (!this.hasLeasesToRenew()) {
       this.stopOwnerLeaseTimer();
     }
   }
@@ -9062,32 +9214,41 @@ class GenerationJobManagerClass {
    * that settled its provider work but failed terminalization and deliberately publishes no
    * marker. Shutdown simply stops waiting on it, and the absent marker keeps telling a
    * successor the truth. A leased execution also gets a hold marker: without it, the lease
-   * lapsing would turn this deliberate fail-closed into a presumed drain.
+   * lapsing would turn this deliberate fail-closed into a presumed drain. The hold write is
+   * awaited (bounded); when it fails, the lease keeps being renewed, and the hold retried,
+   * until the hold lands, so the execution is never presumed drained in between.
    */
-  abandonProviderExecution(streamId: string, createdAt: number, providerExecutionId: string): void {
-    const entry = this.openProviderExecutions.get(
-      this.providerExecutionKey(streamId, createdAt, providerExecutionId),
-    );
+  async abandonProviderExecution(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<void> {
+    const key = this.providerExecutionKey(streamId, createdAt, providerExecutionId);
+    const entry = this.openProviderExecutions.get(key);
     const mayHoldLease = entry != null ? entry.leased : this._ownerLease.enabled;
-    if (mayHoldLease && this.jobStore.holdProviderExecution != null) {
-      void this.jobStore
-        .holdProviderExecution(streamId, createdAt, providerExecutionId)
-        .catch((error) => {
-          logger.error(
-            `[GenerationJobManager] Failed to hold abandoned provider execution ${streamId}@${createdAt}:`,
-            error,
-          );
-        });
+    const held =
+      mayHoldLease && this.jobStore.holdProviderExecution != null
+        ? await this.writeProviderHold(streamId, createdAt, providerExecutionId)
+        : true;
+    const current = this.openProviderExecutions.get(key);
+    if (!held && current != null && current.leased) {
+      /** The provider work has settled: the fence deadline no longer applies. */
+      this.pendingProviderHolds.set(key, current);
     }
     this.closeProviderExecution(streamId, createdAt, providerExecutionId);
+    if (this.pendingProviderHolds.has(key)) {
+      this.ensureOwnerLeaseTimer();
+    }
   }
 
   /** Settle and drop every open tracker; used wherever the services they belong to go away. */
   private releaseOpenProviderExecutions(): void {
     for (const entry of this.openProviderExecutions.values()) {
+      this.disarmSelfFence(entry);
       entry.settle();
     }
     this.openProviderExecutions.clear();
+    this.pendingProviderHolds.clear();
     this.stopOwnerLeaseTimer();
   }
 

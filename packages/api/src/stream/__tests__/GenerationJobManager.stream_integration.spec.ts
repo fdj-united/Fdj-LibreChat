@@ -4661,10 +4661,21 @@ describe('GenerationJobManager Integration Tests', () => {
       return { owner, subscriber: subscriber!, streamId, job, executionId };
     }
 
-    /** SIGKILL equivalent: the owner stops receiving aborts and stops renewing its lease. */
+    /** SIGKILL equivalent: the owner stops receiving aborts, stops renewing its lease and
+     *  runs no timer at all (in particular no self-fence, which would write an abort proof). */
     function killOwner(owner: GenerationJobManagerClass, subscriber: Redis): void {
       subscriber.disconnect();
-      (owner as unknown as { stopOwnerLeaseTimer: () => void }).stopOwnerLeaseTimer();
+      const internals = owner as unknown as {
+        stopOwnerLeaseTimer: () => void;
+        disarmSelfFence: (entry: unknown) => void;
+        armSelfFence: (entry: unknown) => void;
+        openProviderExecutions: Map<string, unknown>;
+      };
+      internals.stopOwnerLeaseTimer();
+      for (const entry of internals.openProviderExecutions.values()) {
+        internals.disarmSelfFence(entry);
+      }
+      jest.spyOn(internals, 'armSelfFence').mockImplementation(() => undefined);
       jest
         .spyOn(owner as unknown as { renewOwnerLeases: () => Promise<void> }, 'renewOwnerLeases')
         .mockResolvedValue(undefined);
@@ -4787,7 +4798,7 @@ describe('GenerationJobManager Integration Tests', () => {
       const { manager: router } = createReplica();
       const handler = jest.fn();
       router.setOrphanedGenerationHandler(handler);
-      owner.abandonProviderExecution(streamId, job.createdAt, executionId);
+      await owner.abandonProviderExecution(streamId, job.createdAt, executionId);
       const holdKey = `stream:{${streamId}}:provider-hold:${job.createdAt}:${executionId}`;
       const holdDeadline = Date.now() + 2000;
       while ((await ioredisClient!.exists(holdKey)) === 0 && Date.now() < holdDeadline) {
@@ -4922,6 +4933,51 @@ describe('GenerationJobManager Integration Tests', () => {
       const attemptsAtFence = appendSpy.mock.calls.length;
       await new Promise((resolve) => setTimeout(resolve, 1500));
       expect(appendSpy.mock.calls.length).toBe(attemptsAtFence);
+    }, 30000);
+
+    test('self-fences before the lease can expire while a renewal hangs', async () => {
+      const lease = { ttlMs: 600, refreshMs: 200 };
+      const { owner, job } = await startOwner('self-fence-hung', { ownerLease: lease });
+      /** The begin wrote the last confirmed lease; every later renewal hangs forever
+       *  (a blackholed socket with no command timeout). */
+      const lastConfirmedAt = Date.now();
+      jest
+        .spyOn(owner.getJobStore(), 'renewProviderLeases')
+        .mockImplementation(() => new Promise(() => undefined));
+      let abortedAt: number | null = null;
+      job.abortController.signal.addEventListener('abort', () => {
+        abortedAt = Date.now();
+      });
+
+      await waitUntil(() => abortedAt != null, 'self-fence abort', lease.ttlMs * 3);
+      expect(abortedAt! - lastConfirmedAt).toBeLessThan(lease.ttlMs);
+    }, 30000);
+
+    test('keeps renewing an abandoned execution until its hold write lands', async () => {
+      const { owner, streamId, job, executionId } = await startOwner('hold-retry');
+      const store = owner.getJobStore();
+      const hold = jest
+        .spyOn(store, 'holdProviderExecution')
+        .mockRejectedValue(new Error('Redis blip'));
+      const holdKey = `stream:{${streamId}}:provider-hold:${job.createdAt}:${executionId}`;
+
+      await owner.abandonProviderExecution(streamId, job.createdAt, executionId);
+      await new Promise((resolve) => setTimeout(resolve, LEASE.ttlMs * 3));
+      /** No hold yet, but the lease is still renewed, so no successor presumes a drain. */
+      expect(await ioredisClient!.exists(holdKey)).toBe(0);
+      expect(
+        await ioredisClient!.pttl(leaseKey(streamId, job.createdAt, executionId)),
+      ).toBeGreaterThan(0);
+
+      hold.mockRestore();
+      const deadline = Date.now() + LEASE.ttlMs * 5;
+      while ((await ioredisClient!.exists(holdKey)) === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(await ioredisClient!.exists(holdKey)).toBe(1);
+      /** Once held, renewals stop and the lease lapses; the hold keeps successors strict. */
+      await new Promise((resolve) => setTimeout(resolve, LEASE.ttlMs * 2));
+      expect(await ioredisClient!.exists(leaseKey(streamId, job.createdAt, executionId))).toBe(0);
     }, 30000);
 
     test('does not self-fence when the self-fence switch is off', async () => {

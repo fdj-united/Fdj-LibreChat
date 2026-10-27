@@ -108,7 +108,7 @@ describe('GenerationJobManager owner lease', () => {
     expect(beginSpy).toHaveBeenCalledWith('stream-lease-off', job.createdAt, executionId);
     expect(internals.ownerLeaseTimer).toBeNull();
 
-    manager.abandonProviderExecution('stream-lease-off', job.createdAt, executionId);
+    await manager.abandonProviderExecution('stream-lease-off', job.createdAt, executionId);
     expect(store.holdProviderExecution).not.toHaveBeenCalled();
     await manager.destroy();
   });
@@ -119,7 +119,7 @@ describe('GenerationJobManager owner lease', () => {
     const executionId = job.metadata.providerExecutionId!;
     await manager.beginProviderExecution('stream-lease-hold', job.createdAt, executionId);
 
-    manager.abandonProviderExecution('stream-lease-hold', job.createdAt, executionId);
+    await manager.abandonProviderExecution('stream-lease-hold', job.createdAt, executionId);
     expect(store.holdProviderExecution).toHaveBeenCalledWith(
       'stream-lease-hold',
       job.createdAt,
@@ -146,6 +146,48 @@ describe('GenerationJobManager owner lease', () => {
   it('clamps the refresh interval to a third of the TTL', () => {
     const { internals } = createManager({ ttlMs: 9_000, refreshMs: 5_000 });
     expect(internals._ownerLease).toMatchObject({ ttlMs: 9_000, refreshMs: 3_000 });
+  });
+
+  it('does not let a hung renewal block the next tick', async () => {
+    jest.useFakeTimers();
+    const { manager, store } = createManager({ selfFence: false });
+    const job = await manager.createJob('stream-lease-hung', 'user-1');
+    await manager.beginProviderExecution(
+      'stream-lease-hung',
+      job.createdAt,
+      job.metadata.providerExecutionId!,
+    );
+    store.renewProviderLeases.mockImplementation(() => new Promise(() => undefined));
+
+    await jest.advanceTimersByTimeAsync(3_100);
+    /** Ticks at 1 s, 2 s (after the first times out at 2 s) and 3 s still send. */
+    expect(store.renewProviderLeases.mock.calls.length).toBeGreaterThanOrEqual(2);
+    await manager.destroy();
+  });
+
+  it('fences instead of renewing when a stall outlived the lease', async () => {
+    jest.useFakeTimers();
+    const { manager, store } = createManager();
+    const job = await manager.createJob('stream-lease-stall', 'user-1');
+    await manager.beginProviderExecution(
+      'stream-lease-stall',
+      job.createdAt,
+      job.metadata.providerExecutionId!,
+    );
+    const clock = manager as unknown as {
+      monotonicNow: () => number;
+      renewOwnerLeases: () => Promise<void>;
+    };
+    /** The event loop was blocked for longer than the TTL: no timer ran meanwhile, and the
+     *  renewal that would run next would succeed. */
+    const stalledAt = clock.monotonicNow() + 3_000 + 100;
+    jest.spyOn(clock, 'monotonicNow').mockReturnValue(stalledAt);
+
+    await clock.renewOwnerLeases();
+
+    expect(job.abortController.signal.aborted).toBe(true);
+    expect(store.renewProviderLeases).not.toHaveBeenCalled();
+    await manager.destroy();
   });
 
   it('self-fences only after renewals have failed for TTL minus refresh', async () => {
