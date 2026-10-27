@@ -19,6 +19,7 @@ const mockGenerationJobManager = {
   claimTerminalJob: jest.fn(),
   getFenceOutcome: jest.fn(),
   finalizeStoreLostGeneration: jest.fn(),
+  setStoreLostPersistence: jest.fn(),
   publishTerminalClaim: jest.fn(),
   finishTerminalJob: jest.fn(),
   completeJob: jest.fn(),
@@ -4445,6 +4446,11 @@ describe('ResumableAgentController resume metadata', () => {
         'conversation-123',
         1000,
       );
+      expect(mockGenerationJobManager.setStoreLostPersistence).toHaveBeenCalledWith(
+        'conversation-123',
+        1000,
+        expect.any(Function),
+      );
       expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledWith(
         'conversation-123',
         1000,
@@ -4490,6 +4496,72 @@ describe('ResumableAgentController resume metadata', () => {
         expect.objectContaining({ messageId: 'response-msg' }),
         expect.anything(),
       );
+    });
+
+    it('finalizes a store-lost generation from the generic error branch', async () => {
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+      /** The terminal claim found no job, so completeJob wins nothing. */
+      mockGenerationJobManager.completeJob.mockResolvedValue(false);
+      const client = {
+        options: {},
+        sender: 'Agent',
+        savedMessageIds: new Set(),
+        skipSaveUserMessage: false,
+        sendMessage: jest.fn(async (_text, options) => {
+          options.onStart(userMessage, 'response-msg');
+          client.contentParts = partialContent;
+          throw new Error('Provider stream failed');
+        }),
+      };
+      const released = waitForRequestRelease();
+
+      await AgentController(
+        createStoreLostRequest(),
+        createResumableResponse(),
+        jest.fn(),
+        jest.fn().mockResolvedValue({ client }),
+        null,
+      );
+      await released;
+
+      expect(mockGenerationJobManager.completeJob).toHaveBeenCalledWith(
+        'conversation-123',
+        'Provider stream failed',
+        1000,
+        expect.objectContaining({ beforeErrorPublication: expect.any(Function) }),
+      );
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledTimes(1);
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ messageId: 'response-msg', unfinished: true, error: false }),
+        expect.objectContaining({ context: expect.stringContaining('store loss') }),
+      );
+    });
+
+    it('leaves a generic error alone when completeJob won the terminal claim', async () => {
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+      const client = {
+        options: {},
+        sender: 'Agent',
+        savedMessageIds: new Set(),
+        skipSaveUserMessage: false,
+        sendMessage: jest.fn(async (_text, options) => {
+          options.onStart(userMessage, 'response-msg');
+          throw new Error('Provider stream failed');
+        }),
+      };
+      const released = waitForRequestRelease();
+
+      await AgentController(
+        createStoreLostRequest(),
+        createResumableResponse(),
+        jest.fn(),
+        jest.fn().mockResolvedValue({ client }),
+        null,
+      );
+      await released;
+
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).not.toHaveBeenCalled();
     });
 
     it('finalizes a store-lost fence that surfaced as a provider abort', async () => {

@@ -60,6 +60,9 @@ const mockGenerationJobManager = {
   emitDone: jest.fn(),
   emitError: jest.fn(),
   claimTerminalJob: jest.fn(),
+  getFenceOutcome: jest.fn(),
+  finalizeStoreLostGeneration: jest.fn(),
+  setStoreLostPersistence: jest.fn(),
   publishTerminalClaim: jest.fn(),
   finishTerminalJob: jest.fn(),
   completeJob: jest.fn(),
@@ -346,6 +349,13 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       contextUsage: null,
     });
     mockJobStore.updateJob.mockResolvedValue(undefined);
+    mockGenerationJobManager.getFenceOutcome.mockResolvedValue(null);
+    mockGenerationJobManager.finalizeStoreLostGeneration.mockImplementation(
+      async (_streamId, _createdAt, options) => {
+        await options?.beforePublish?.();
+        return true;
+      },
+    );
     mockGenerationJobManager.getResumeState.mockResolvedValue({ aggregatedContent: [] });
     mockGenerationJobManager.updateMetadata.mockResolvedValue(undefined);
     mockGenerationJobManager.emitDone.mockResolvedValue(undefined);
@@ -3268,6 +3278,79 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.publishTerminalClaim).not.toHaveBeenCalled();
       expect(mockGenerationJobManager.claimTerminalJob).not.toHaveBeenCalled();
       expect(mockGenerationJobManager.finishTerminalJob).not.toHaveBeenCalled();
+    });
+
+    it('saves the resumed partial and finalizes when the store lost the job', async () => {
+      const job = makeToolApprovalJob();
+      mockGenerationJobManager.getJob.mockResolvedValue(job);
+      mockJobStore.getJob.mockResolvedValue(null);
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(mockGenerationJobManager.setStoreLostPersistence).toHaveBeenCalledWith(
+        CONVO_ID,
+        1000,
+        expect.any(Function),
+      );
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledWith(
+        CONVO_ID,
+        1000,
+        { beforePublish: expect.any(Function) },
+      );
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          messageId: job.metadata.responseMessageId,
+          content: [{ type: 'text', text: 'resumed answer' }],
+          unfinished: true,
+          error: false,
+        }),
+        expect.objectContaining({ context: expect.stringContaining('store loss') }),
+      );
+      expect(mockGenerationJobManager.claimTerminalJob).not.toHaveBeenCalled();
+      expect(mockGenerationJobManager.publishTerminalClaim).not.toHaveBeenCalled();
+    });
+
+    it('finalizes a store-lost generation whose resumed terminal claim failed', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      mockGenerationJobManager.claimTerminalJob.mockResolvedValue(null);
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledTimes(1);
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ unfinished: true }),
+        expect.objectContaining({ context: expect.stringContaining('store loss') }),
+      );
+      expect(mockGenerationJobManager.publishTerminalClaim).not.toHaveBeenCalled();
+    });
+
+    it('finalizes a store-lost fence that aborted the resumed provider', async () => {
+      const job = makeToolApprovalJob();
+      mockGenerationJobManager.getJob.mockResolvedValue(job);
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          resumeCompletion: jest.fn(async () => {
+            job.abortController.abort();
+          }),
+        }),
+        userMCPAuthMap: {},
+      });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledTimes(1);
+      expect(mockGenerationJobManager.claimTerminalJob).not.toHaveBeenCalled();
     });
 
     it('does not write a completed response when a pause or abort wins the terminal claim', async () => {

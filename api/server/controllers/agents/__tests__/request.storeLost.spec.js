@@ -87,7 +87,7 @@ describe('saveStoreLostTurn', () => {
   });
 
   it('saves the partial response as unfinished, keyed by the live response messageId', async () => {
-    await saveStoreLostTurn(req, buildContext());
+    await expect(saveStoreLostTurn(req, buildContext())).resolves.toBe(true);
 
     expect(mockSaveMessage).toHaveBeenCalledTimes(1);
     expect(mockSaveMessage).toHaveBeenCalledWith(
@@ -142,10 +142,16 @@ describe('saveStoreLostTurn', () => {
   });
 
   it('writes the store-lost error turn when nothing is persistable', async () => {
-    await saveStoreLostTurn(
-      req,
-      buildContext({ contentParts: [{ type: 'empty' }], liveResponseMessageId: 'response-msg-1' }),
-    );
+    /** No partial row was written, so the caller must not claim one was saved. */
+    await expect(
+      saveStoreLostTurn(
+        req,
+        buildContext({
+          contentParts: [{ type: 'empty' }],
+          liveResponseMessageId: 'response-msg-1',
+        }),
+      ),
+    ).resolves.toBe(false);
 
     /** The failed-turn writer upserts the user row, then the error row. */
     expect(mockSaveMessage).toHaveBeenCalledTimes(2);

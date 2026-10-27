@@ -391,6 +391,49 @@ function resolveResumeValue(pendingAction, body) {
  * job, and prune the checkpoint. Mirrors the abort route's save shape but for a
  * successful finish. Best-effort title generation for a first-turn pause.
  */
+/**
+ * Persist a resumed segment's live content after the stream store lost the
+ * generation. Upserts the paused turn's response row (still `unfinished`), so
+ * repeated calls are idempotent. Resolves true only when a row was written.
+ */
+async function saveResumedStoreLostTurn({ req, contentParts, job, conversationId }) {
+  const userId = req.user.id;
+  const meta = job.metadata ?? {};
+  const responseMessageId = meta.responseMessageId;
+  const content = filterMalformedContentParts(Array.isArray(contentParts) ? contentParts : []);
+  if (!responseMessageId || content.length === 0) {
+    return false;
+  }
+  const savedResponseMessage = await saveMessage(
+    {
+      userId,
+      isTemporary: meta.isTemporary ?? req.body?.isTemporary,
+      expiredAt:
+        req._agentEventBindingRetention?.expiredAt ??
+        (meta.retentionExpiresAt ? new Date(meta.retentionExpiresAt) : undefined),
+      interfaceConfig: req?.config?.interfaceConfig,
+    },
+    {
+      messageId: responseMessageId,
+      parentMessageId: meta.userMessage?.messageId ?? Constants.NO_PARENT,
+      conversationId,
+      content,
+      unfinished: true,
+      error: false,
+      isCreatedByUser: false,
+      user: userId,
+    },
+    { context: 'api/server/controllers/agents/resume.js - partial response after store loss' },
+  );
+  if (!savedResponseMessage) {
+    throw new Error('Resumed partial response could not be persisted after store loss');
+  }
+  logger.info(
+    `[ResumeAgentController] Saved partial response after store loss for ${conversationId} (messageId=${responseMessageId}, parts=${content.length})`,
+  );
+  return true;
+}
+
 async function finalizeResumedTurn({
   req,
   client,
@@ -400,6 +443,7 @@ async function finalizeResumedTurn({
   addTitle,
   checkpointGeneration,
   appliedEventActor,
+  finalizeIfStoreLost = async () => false,
 }) {
   const userId = req.user.id;
   const checkpointerCfg = req.config?.endpoints?.[EModelEndpoint.agents]?.checkpointer;
@@ -425,6 +469,9 @@ async function finalizeResumedTurn({
   // side effects when the job we paused is no longer the live one; the caller's `finally`
   // still disposes the client + releases the slot.
   if (!jobData || jobData.createdAt !== job.createdAt) {
+    if (!jobData && (await finalizeIfStoreLost())) {
+      return;
+    }
     logger.warn(
       `[ResumeAgentController] Skipping resumed finalization — job ${streamId} was replaced`,
     );
@@ -535,6 +582,9 @@ async function finalizeResumedTurn({
     { persistencePending: true },
   );
   if (!terminalClaim) {
+    if (await finalizeIfStoreLost()) {
+      return;
+    }
     logger.warn(
       `[ResumeAgentController] Skipping resumed FINAL — another terminal/pause transition won for ${streamId}`,
     );
@@ -1814,6 +1864,8 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
    * failed pause may have lost ownership to a newer action or generation. */
   let pausePersistenceFailed = false;
   let pausePersistenceFailureFinalized = false;
+  /** Replaced by the store-lost path once the resumed client exists. */
+  let finalizeIfStoreLost = async () => false;
   try {
     if (userSubmittedPaths.length > 0) {
       job.metadata.userSubmittedPaths = userSubmittedPaths;
@@ -1881,6 +1933,35 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
     if (client.contentParts) {
       GenerationJobManager.setContentParts(streamId, client.contentParts, job.createdAt);
     }
+    /** disposeClient drops `client.contentParts`; keep the live array for a
+     * store-lost save that runs after this controller has returned. */
+    const storeLostContentParts = client.contentParts;
+    const persistStoreLostTurn = () =>
+      saveResumedStoreLostTurn({
+        req,
+        contentParts: client?.contentParts ?? storeLostContentParts,
+        job,
+        conversationId,
+      });
+    GenerationJobManager.setStoreLostPersistence?.(streamId, job.createdAt, persistStoreLostTurn);
+    finalizeIfStoreLost = async () => {
+      try {
+        const fenceOutcome = await GenerationJobManager.getFenceOutcome?.(streamId, job.createdAt);
+        if (fenceOutcome !== 'store_lost') {
+          return false;
+        }
+        await GenerationJobManager.finalizeStoreLostGeneration(streamId, job.createdAt, {
+          beforePublish: persistStoreLostTurn,
+        });
+        return true;
+      } catch (storeLostError) {
+        logger.error(
+          `[ResumeAgentController] Failed to finalize store-lost generation ${streamId}:`,
+          getSafeErrorMetadata(storeLostError),
+        );
+        return false;
+      }
+    };
 
     const resumeClient = () =>
       client.resumeCompletion({
@@ -2024,9 +2105,16 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
     // run row after observing its own abort; the generic Stop route deliberately
     // delegates a running generation's settlement to that generation owner.
     if (job.abortController.signal.aborted) {
-      logger.debug(
-        `[ResumeAgentController] Aborted during resume; abort route finalizes: ${streamId}`,
-      );
+      /** A store-lost fence also aborts the provider, but no abort route runs. */
+      if (await finalizeIfStoreLost()) {
+        logger.warn(
+          `[ResumeAgentController] Resumed generation for ${streamId} ended after its stream store lost state`,
+        );
+      } else {
+        logger.debug(
+          `[ResumeAgentController] Aborted during resume; abort route finalizes: ${streamId}`,
+        );
+      }
       if (scheduleId) {
         await recordScheduleOutcome({
           scheduleId,
@@ -2050,6 +2138,7 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
       addTitle,
       checkpointGeneration,
       appliedEventActor,
+      finalizeIfStoreLost,
     });
   } catch (err) {
     if (
@@ -2062,6 +2151,10 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
     }
     logger.error('[ResumeAgentController] Resume failed', getSafeErrorMetadata(err));
     if (pausePersistenceFailed) {
+      if (!pausePersistenceFailureFinalized) {
+        /** The pause barrier could not be failed: the store may have lost the job. */
+        await finalizeIfStoreLost();
+      }
       // failPausePersistence already performed the exact requires_action ->
       // error transition. Only its CAS winner owns this generation's checkpoint
       // cleanup; a stale/mismatched failure must leave the live scope intact.
@@ -2095,9 +2188,11 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
     // the error to / complete / prune the NEWER turn's job. The finally still releases
     // the slot + disposes. Proceed with finalization if the replacement check itself fails.
     let stillLive = true;
+    let jobMissing = false;
     try {
       const liveJob = await GenerationJobManager.getJobStore().getJob(streamId);
       stillLive = !!liveJob && liveJob.createdAt === job.createdAt;
+      jobMissing = liveJob == null;
     } catch (readErr) {
       logger.warn(
         '[ResumeAgentController] Replacement check failed; finalizing anyway',
@@ -2105,9 +2200,11 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
       );
     }
     if (!stillLive) {
-      logger.warn(
-        `[ResumeAgentController] Skipping failed-resume finalization — job ${streamId} was replaced`,
-      );
+      if (!(jobMissing && (await finalizeIfStoreLost()))) {
+        logger.warn(
+          `[ResumeAgentController] Skipping failed-resume finalization — job ${streamId} was replaced`,
+        );
+      }
     } else {
       // completeJob atomically claims running -> error and parks steers before
       // publishing. If abort or a re-pause won, it returns false; only the
@@ -2132,6 +2229,10 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
           },
           'failed resume finalization',
         );
+      } else {
+        /** The terminal claim found no job (or could not read it): the store
+         * may have lost the generation. */
+        await finalizeIfStoreLost();
       }
       if (scheduleId && errorFinalized) {
         const balanceRefusal = err?.message?.includes(ViolationTypes.TOKEN_BALANCE);
@@ -2174,3 +2275,4 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
 };
 
 module.exports = ResumeAgentController;
+module.exports.saveResumedStoreLostTurn = saveResumedStoreLostTurn;

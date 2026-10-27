@@ -306,6 +306,28 @@ describe('SSE stream tenant isolation', () => {
       expect(res.text).not.toContain('"reconcile":true');
     });
 
+    it('ends the stream with an error frame when the partial could not be saved', async () => {
+      const { GENERATION_STORE_LOST_UNSAVED_ERROR } = jest.requireActual('@librechat/api');
+      mockGenerationJobManager.getJob.mockResolvedValue({
+        metadata: { userId: 'user-123' },
+        status: 'running',
+        createdAt: 1000,
+        conversationId: 'stream-123',
+      });
+      mockGenerationJobManager.subscribe.mockImplementation(
+        (_streamId, _writeEvent, _onDone, onError) => {
+          process.nextTick(() => onError(GENERATION_STORE_LOST_UNSAVED_ERROR));
+          return { unsubscribe: jest.fn() };
+        },
+      );
+
+      const res = await request(app).get('/agents/chat/stream/stream-123?generationCreatedAt=1000');
+
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('event: error');
+      expect(res.text).toContain(JSON.stringify(GENERATION_STORE_LOST_UNSAVED_ERROR));
+    });
+
     it('ends the stream with an error frame when the generation store lost its state', async () => {
       const { GENERATION_STORE_LOST_ERROR, TERMINAL_PUBLICATION_RECONNECT_ERROR } =
         jest.requireActual('@librechat/api');
