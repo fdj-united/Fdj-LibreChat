@@ -5,6 +5,8 @@ import type { IJobStoreV2 } from '~/stream/interfaces/IJobStore';
 import {
   GenerationJobManagerClass,
   GENERATION_RECOVERY_FAILED_ERROR,
+  GENERATION_STORE_LOST_ERROR,
+  GENERATION_STORE_LOST_UNSAVED_ERROR,
   TERMINAL_PUBLICATION_RECONNECT_ERROR,
 } from '~/stream/GenerationJobManager';
 import {
@@ -15,6 +17,7 @@ import {
 import { InMemoryEventTransport } from '~/stream/implementations/InMemoryEventTransport';
 import { RedisEventTransport } from '~/stream/implementations/RedisEventTransport';
 import { InMemoryJobStore } from '~/stream/implementations/InMemoryJobStore';
+import { getRedisTestKeyPrefix, wipeRedisTestKeys } from './helpers/redis';
 import { STEER_ENQUEUE_NOT_RUNNING } from '~/stream/interfaces/IJobStore';
 import { RedisJobStore } from '~/stream/implementations/RedisJobStore';
 import { createStreamServices } from '~/stream/createStreamServices';
@@ -4031,6 +4034,1264 @@ describe('GenerationJobManager Integration Tests', () => {
       );
 
       expect(owner.getArmedPreemptIds(streamId)).not.toContain('steer-stale');
+    }, 40000);
+  });
+
+  describeRedis('Store loss (Redis)', () => {
+    const replicas: GenerationJobManagerClass[] = [];
+
+    function createReplica(
+      options: { storeLostDetection?: boolean; storeLostTerminalGraceMs?: number } = {},
+    ): GenerationJobManagerClass {
+      const manager = new GenerationJobManagerClass();
+      manager.configure({
+        ...createStreamServices({ useRedis: true, redisClient: ioredisClient! }),
+        storeLostDetection: options.storeLostDetection ?? true,
+        storeLostTerminalGraceMs: options.storeLostTerminalGraceMs ?? 60_000,
+      });
+      manager.initialize();
+      replicas.push(manager);
+      return manager;
+    }
+
+    afterEach(async () => {
+      for (const manager of replicas.splice(0)) {
+        await manager.destroy().catch(() => {});
+      }
+    });
+
+    /** Equivalent of FLUSHALL / a Redis restart without persistence, scoped to one stream. */
+    async function wipeStream(streamId: string): Promise<void> {
+      await wipeRedisTestKeys(ioredisClient!, getRedisTestKeyPrefix(ioredisClient!), streamId);
+    }
+
+    async function waitUntil(predicate: () => boolean, what: string, timeoutMs = 10000) {
+      const deadline = Date.now() + timeoutMs;
+      while (!predicate()) {
+        if (Date.now() > deadline) {
+          throw new Error(`Timed out waiting for ${what}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    async function emitContent(manager: GenerationJobManagerClass, streamId: string, n = 3) {
+      await manager.emitChunk(streamId, {
+        event: 'on_run_step',
+        data: {
+          id: 'step-1',
+          runId: 'run-1',
+          index: 0,
+          stepDetails: { type: 'message_creation' },
+        },
+      });
+      for (let i = 0; i < n - 1; i++) {
+        await manager.emitChunk(streamId, {
+          event: 'on_message_delta',
+          data: { id: 'step-1', delta: { content: { type: 'text', text: `part-${i} ` } } },
+        });
+      }
+    }
+
+    const durableEvent = {
+      event: 'on_run_step',
+      data: {
+        id: 'step-2',
+        runId: 'run-1',
+        index: 1,
+        stepDetails: { type: 'message_creation' },
+      },
+    };
+
+    test('ends a wiped generation with a store-lost error and re-seeds its epoch', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-durable-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      const sub = await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow(
+        'fenced out',
+      );
+
+      expect(job.abortController.signal.aborted).toBe(true);
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      expect(errors).not.toContain(TERMINAL_PUBLICATION_RECONNECT_ERROR);
+
+      const beforePublish = jest.fn(async () => true);
+      await expect(
+        owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish }),
+      ).resolves.toBe(true);
+      await expect(
+        owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish }),
+      ).resolves.toBe(false);
+      expect(beforePublish).toHaveBeenCalledTimes(1);
+
+      await waitUntil(() => errors.length > 0, 'store-lost error');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+
+      await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: job.createdAt,
+      });
+      expect(owner.getRuntimeStats().fencedRuntimeRetirements).toBe(0);
+
+      /** A follow-up turn queued behind the lost generation is admitted. */
+      const followUp = await owner.createJob(streamId, 'user-1', streamId, {
+        expectedPredecessorCreatedAt: job.createdAt,
+      });
+      expect(followUp.createdAt).toBeGreaterThan(job.createdAt);
+      sub?.unsubscribe();
+    }, 30000);
+
+    test('classifies a fire-and-forget fence after a wipe as store lost', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-ff-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const sub = await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      await owner.emitChunk(streamId, {
+        event: 'on_message_delta',
+        data: { id: 'step-1', delta: { content: { type: 'text', text: 'lost ' } } },
+      });
+      await waitUntil(() => job.abortController.signal.aborted, 'fence abort');
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      sub?.unsubscribe();
+    }, 30000);
+
+    test('delivers the store-lost error to a subscriber on another replica', async () => {
+      const owner = createReplica();
+      const viewer = createReplica();
+      const streamId = `${testPrefix}-store-lost-remote-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const remoteChunks: ServerSentEvent[] = [];
+      const remoteErrors: string[] = [];
+      const remoteSub = await viewer.subscribe(
+        streamId,
+        (event) => remoteChunks.push(event),
+        undefined,
+        (error) => remoteErrors.push(error),
+      );
+      await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId, 5);
+      await waitUntil(() => remoteChunks.length >= 5, 'remote chunks');
+
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      await owner.finalizeStoreLostGeneration(streamId, job.createdAt);
+
+      /** The wipe reset the sequence counter; the frame must not be dropped as a duplicate. */
+      await waitUntil(() => remoteErrors.length > 0, 'remote store-lost error');
+      /** No save was registered, so the frame must not claim one. */
+      expect(remoteErrors).toEqual([GENERATION_STORE_LOST_UNSAVED_ERROR]);
+      remoteSub?.unsubscribe();
+    }, 30000);
+
+    test('still treats a newer job created after the wipe as a replacement', async () => {
+      const owner = createReplica();
+      const router = createReplica();
+      const streamId = `${testPrefix}-store-lost-replaced-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      const successor = await router.createJob(streamId, 'user-1', streamId);
+      expect(successor.createdAt).toBeGreaterThan(job.createdAt);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('replaced');
+      await expect(owner.finalizeStoreLostGeneration(streamId, job.createdAt)).resolves.toBe(false);
+      await waitUntil(() => errors.length > 0, 'reconnect signal', 20000);
+      expect(errors).toEqual([TERMINAL_PUBLICATION_RECONNECT_ERROR]);
+    }, 40000);
+
+    test('treats a missing job with a newer retained epoch as a replacement', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-newer-epoch-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      /** A successor that already completed and was deleted leaves only its epoch. */
+      await ioredisClient!.set(
+        `stream:{${streamId}}:generation-epoch`,
+        String(job.createdAt + 1000),
+        'EX',
+        300,
+      );
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('replaced');
+    }, 30000);
+
+    test('keeps the reconnect handling when detection is disabled', async () => {
+      const owner = createReplica({ storeLostDetection: false });
+      const streamId = `${testPrefix}-store-lost-disabled-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+      expect(job.abortController.signal.aborted).toBe(true);
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBeNull();
+      await expect(owner.finalizeStoreLostGeneration(streamId, job.createdAt)).resolves.toBe(false);
+      await waitUntil(() => errors.length > 0, 'reconnect signal', 20000);
+      expect(errors).toEqual([TERMINAL_PUBLICATION_RECONNECT_ERROR]);
+      await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: null,
+      });
+    }, 40000);
+
+    test('the backstop saves through the registered persistence and ends the generation', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 1000 });
+      const streamId = `${testPrefix}-store-lost-backstop-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const save = jest.fn(async () => true);
+      owner.setStoreLostPersistence(streamId, job.createdAt, save);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      await waitUntil(() => errors.length > 0, 'backstop store-lost error');
+      expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+      expect(save).toHaveBeenCalledTimes(1);
+      await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: job.createdAt,
+      });
+      /** The controller arriving after the backstop finds nothing left to finalize. */
+      const beforePublish = jest.fn();
+      await expect(
+        owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish }),
+      ).resolves.toBe(false);
+      expect(beforePublish).not.toHaveBeenCalled();
+    }, 30000);
+
+    test('clamps a zero grace so the backstop cannot beat the controller', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 0 });
+      const streamId = `${testPrefix}-store-lost-zero-grace-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(errors).toEqual([]);
+      const beforePublish = jest.fn(async () => true);
+      await expect(
+        owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish }),
+      ).resolves.toBe(true);
+      expect(beforePublish).toHaveBeenCalledTimes(1);
+    }, 30000);
+
+    test('detects a wipe after the last append when the terminal claim fails', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-unfenced-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      await expect(
+        owner.claimTerminalJob(streamId, 'complete', undefined, job.createdAt, {
+          persistencePending: true,
+        }),
+      ).resolves.toBeNull();
+      /** The failed claim stops the runtime exactly as before. */
+      expect(job.abortController.signal.aborted).toBe(true);
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      await expect(owner.finalizeStoreLostGeneration(streamId, job.createdAt)).resolves.toBe(true);
+      await waitUntil(() => errors.length > 0, 'store-lost error');
+      expect(errors).toEqual([GENERATION_STORE_LOST_UNSAVED_ERROR]);
+    }, 30000);
+
+    /** Simulates a Redis restart: commands fail while `down`, then the store answers empty. */
+    function makeStoreUnreachable(manager: GenerationJobManagerClass) {
+      const store = manager.getJobStore() as RedisJobStore;
+      const state = { down: true, presenceCalls: 0, appendCalls: 0 };
+      const realPresence = store.getGenerationPresence.bind(store);
+      const realAppend = store.appendChunk.bind(store);
+      jest.spyOn(store, 'getGenerationPresence').mockImplementation(async (id: string) => {
+        state.presenceCalls++;
+        if (state.down) {
+          throw new Error('connect ECONNREFUSED (simulated restart)');
+        }
+        return realPresence(id);
+      });
+      jest
+        .spyOn(store, 'appendChunk')
+        .mockImplementation(async (...args: Parameters<RedisJobStore['appendChunk']>) => {
+          state.appendCalls++;
+          if (state.down) {
+            throw new Error('connect ECONNREFUSED (simulated restart)');
+          }
+          return realAppend(...args);
+        });
+      return state;
+    }
+
+    test('keeps a generation alive through an outage, then saves once when the store comes back empty', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 10_000 });
+      const streamId = `${testPrefix}-store-lost-outage-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      const outage = makeStoreUnreachable(owner);
+      await owner.emitChunk(streamId, {
+        event: 'on_message_delta',
+        data: { id: 'step-1', delta: { content: { type: 'text', text: 'during outage ' } } },
+      });
+      const durable = owner.emitChunk(streamId, durableEvent, { durable: true });
+      const durableSettled = durable.then(
+        () => 'appended',
+        () => 'fenced',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      /** A thrown append is retried, not a fence: the provider keeps running. */
+      expect(job.abortController.signal.aborted).toBe(false);
+      expect(outage.appendCalls).toBeGreaterThan(2);
+
+      await wipeStream(streamId);
+      outage.down = false;
+      await expect(durableSettled).resolves.toBe('fenced');
+      expect(job.abortController.signal.aborted).toBe(true);
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      const save = jest.fn(async () => true);
+      await owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish: save });
+      await owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish: save });
+      await waitUntil(() => errors.length > 0, 'store-lost error');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+    }, 40000);
+
+    test('keeps probing an unreachable store instead of settling on unknown', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 10_000 });
+      const streamId = `${testPrefix}-store-lost-probe-retry-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      /** The append itself answers (job gone); only presence reads fail for a while. */
+      const store = owner.getJobStore() as RedisJobStore;
+      const realPresence = store.getGenerationPresence.bind(store);
+      let presenceDown = true;
+      const presence = jest
+        .spyOn(store, 'getGenerationPresence')
+        .mockImplementation(async (id: string) => {
+          if (presenceDown) {
+            throw new Error('connect ECONNREFUSED (simulated restart)');
+          }
+          return realPresence(id);
+        });
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+      setTimeout(() => {
+        presenceDown = false;
+      }, 1500);
+
+      const save = jest.fn(async () => true);
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('store_lost');
+      expect(presence.mock.calls.length).toBeGreaterThan(2);
+      await owner.finalizeStoreLostGeneration(streamId, job.createdAt, { beforePublish: save });
+      await waitUntil(() => errors.length > 0, 'store-lost error');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+    }, 40000);
+
+    test('saves through the registered persistence when the store answers after the controller left', async () => {
+      const owner = createReplica({ storeLostTerminalGraceMs: 1000 });
+      const streamId = `${testPrefix}-store-lost-late-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      const save = jest.fn(async () => true);
+      owner.setStoreLostPersistence(streamId, job.createdAt, save);
+      const errors: string[] = [];
+      await owner.subscribe(
+        streamId,
+        () => {},
+        undefined,
+        (error) => errors.push(error),
+      );
+      await emitContent(owner, streamId);
+
+      await wipeStream(streamId);
+      const store = owner.getJobStore() as RedisJobStore;
+      const realPresence = store.getGenerationPresence.bind(store);
+      let presenceDown = true;
+      jest.spyOn(store, 'getGenerationPresence').mockImplementation(async (id: string) => {
+        if (presenceDown) {
+          throw new Error('connect ECONNREFUSED (simulated restart)');
+        }
+        return realPresence(id);
+      });
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      /** The controller asks while the store is still down and leaves without saving. */
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('unknown');
+      expect(save).not.toHaveBeenCalled();
+
+      presenceDown = false;
+      await waitUntil(() => errors.length > 0, 'late store-lost error', 20000);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([GENERATION_STORE_LOST_ERROR]);
+    }, 40000);
+
+    test('treats a deleted job that kept its own epoch as a replacement', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-own-epoch-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId);
+
+      /** A cross-replica Stop + delete, or the reaper, leaves the epoch at this generation. */
+      await ioredisClient!.del(`stream:{${streamId}}:job`);
+      await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: job.createdAt,
+      });
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('replaced');
+      await expect(owner.finalizeStoreLostGeneration(streamId, job.createdAt)).resolves.toBe(false);
+    }, 30000);
+
+    test('does not trust a missing epoch after it could have expired', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-stale-epoch-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId);
+
+      /** Last confirmed write longer ago than the epoch retention: a successor's
+       * epoch could have expired, so absence is no longer proof of a wipe. */
+      const runtime = (
+        owner as unknown as { runtimeState: Map<string, { lastDurableWriteAt?: number }> }
+      ).runtimeState.get(streamId)!;
+      runtime.lastDurableWriteAt = Date.now() - 301_000;
+      await wipeStream(streamId);
+      await expect(owner.emitChunk(streamId, durableEvent, { durable: true })).rejects.toThrow();
+
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBe('replaced');
+      await expect(owner.getJobStore().getGenerationPresence!(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: null,
+      });
+    }, 30000);
+
+    test('reports nothing for a generation stopped by the user', async () => {
+      const owner = createReplica();
+      const streamId = `${testPrefix}-store-lost-stopped-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId);
+      await owner.subscribe(streamId, () => {});
+      await emitContent(owner, streamId);
+
+      await owner.abortJob(streamId);
+      expect(job.abortController.signal.aborted).toBe(true);
+      await expect(owner.getFenceOutcome(streamId, job.createdAt)).resolves.toBeNull();
+    }, 30000);
+  });
+
+  describeRedis('Owner lease (Redis)', () => {
+    const replicas: GenerationJobManagerClass[] = [];
+    const subscribers: Array<Redis | Cluster> = [];
+    const LEASE = { enabled: true, ttlMs: 300, refreshMs: 100, selfFence: true };
+    const HANDOFF_ERROR = 'predecessor handoff could not be confirmed';
+
+    function createReplica(
+      options: {
+        ownerLease?: Partial<typeof LEASE>;
+        orphanSalvage?: boolean;
+        ownSubscriber?: boolean;
+      } = {},
+    ): { manager: GenerationJobManagerClass; subscriber?: Redis } {
+      const subscriber = options.ownSubscriber ? (ioredisClient as Redis).duplicate() : undefined;
+      if (subscriber) {
+        subscribers.push(subscriber);
+      }
+      const manager = new GenerationJobManagerClass();
+      manager.configure({
+        ...createStreamServices({
+          useRedis: true,
+          redisClient: ioredisClient!,
+          redisSubscriber: subscriber,
+        }),
+        ownerLease: { ...LEASE, ...options.ownerLease },
+        orphanSalvage: options.orphanSalvage ?? true,
+      });
+      manager.initialize();
+      replicas.push(manager);
+      return { manager, subscriber };
+    }
+
+    afterEach(async () => {
+      for (const manager of replicas.splice(0)) {
+        await manager.destroy().catch(() => {});
+      }
+      for (const subscriber of subscribers.splice(0)) {
+        subscriber.disconnect();
+      }
+    });
+
+    const leaseKey = (streamId: string, createdAt: number, executionId: string) =>
+      `stream:{${streamId}}:provider-lease:${createdAt}:${executionId}`;
+    const capableKey = (streamId: string, createdAt: number, executionId: string) =>
+      `stream:{${streamId}}:provider-lease-capable:${createdAt}:${executionId}`;
+    const drainKey = (streamId: string, createdAt: number, executionId: string) =>
+      `stream:{${streamId}}:provider-drain:${createdAt}:${executionId}`;
+    const abortAckKey = (streamId: string, createdAt: number) =>
+      `stream:{${streamId}}:abort-ack:${createdAt}`;
+    const chunksKey = (streamId: string) => `stream:{${streamId}}:chunks`;
+
+    async function waitUntil(predicate: () => boolean, what: string, timeoutMs = 10000) {
+      const deadline = Date.now() + timeoutMs;
+      while (!predicate()) {
+        if (Date.now() > deadline) {
+          throw new Error(`Timed out waiting for ${what}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    async function emitContent(manager: GenerationJobManagerClass, streamId: string) {
+      await manager.emitChunk(streamId, {
+        event: 'on_run_step',
+        data: {
+          id: 'step-1',
+          runId: 'run-1',
+          index: 0,
+          stepDetails: { type: 'message_creation' },
+        },
+      });
+      for (const text of ['Hello', ' dead', ' owner']) {
+        await manager.emitChunk(streamId, {
+          event: 'on_message_delta',
+          data: { id: 'step-1', delta: { content: { type: 'text', text } } },
+        });
+      }
+    }
+
+    /** Start a generation on its own replica, with a running provider and streamed output. */
+    async function startOwner(
+      name: string,
+      options: { ownerLease?: Partial<typeof LEASE>; legacyBegin?: boolean } = {},
+    ) {
+      const { manager: owner, subscriber } = createReplica({
+        ownerLease: options.ownerLease,
+        ownSubscriber: true,
+      });
+      const streamId = `${testPrefix}-${name}-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      const executionId = job.metadata.providerExecutionId!;
+      /** An owner from before this change sends the 1-key begin with no lease. */
+      const started = options.legacyBegin
+        ? await owner.getJobStore().beginProviderExecution(streamId, job.createdAt, executionId)
+        : await owner.beginProviderExecution(streamId, job.createdAt, executionId);
+      expect(started).toBe(true);
+      await emitContent(owner, streamId);
+      return { owner, subscriber: subscriber!, streamId, job, executionId };
+    }
+
+    /** SIGKILL equivalent: the owner stops receiving aborts, stops renewing its lease and
+     *  runs no timer at all (in particular no self-fence, which would write an abort proof). */
+    function killOwner(owner: GenerationJobManagerClass, subscriber: Redis): void {
+      subscriber.disconnect();
+      const internals = owner as unknown as {
+        stopOwnerLeaseTimer: () => void;
+        disarmSelfFence: (entry: unknown) => void;
+        armSelfFence: (entry: unknown) => void;
+        openProviderExecutions: Map<string, unknown>;
+      };
+      internals.stopOwnerLeaseTimer();
+      for (const entry of internals.openProviderExecutions.values()) {
+        internals.disarmSelfFence(entry);
+      }
+      jest.spyOn(internals, 'armSelfFence').mockImplementation(() => undefined);
+      jest
+        .spyOn(owner as unknown as { renewOwnerLeases: () => Promise<void> }, 'renewOwnerLeases')
+        .mockResolvedValue(undefined);
+    }
+
+    test('writes the lease with the provider begin and keeps renewing it', async () => {
+      const { streamId, job, executionId } = await startOwner('lease-renewed');
+
+      expect(await ioredisClient!.exists(capableKey(streamId, job.createdAt, executionId))).toBe(1);
+      const initialTtl = await ioredisClient!.pttl(leaseKey(streamId, job.createdAt, executionId));
+      expect(initialTtl).toBeGreaterThan(0);
+      expect(initialTtl).toBeLessThanOrEqual(LEASE.ttlMs);
+
+      /** Three TTLs later the lease is still there only because it was renewed. */
+      await new Promise((resolve) => setTimeout(resolve, LEASE.ttlMs * 3));
+      expect(
+        await ioredisClient!.pttl(leaseKey(streamId, job.createdAt, executionId)),
+      ).toBeGreaterThan(0);
+    }, 30000);
+
+    test('a successor replaces a dead owner without a handoff error and writes its proofs', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('dead-owner');
+      /** Salvage off: the receipt handoff alone must recover the abort and drain proofs. */
+      const { manager: router } = createReplica({ orphanSalvage: false });
+      killOwner(owner, subscriber);
+
+      const startedAt = Date.now();
+      const replacement = await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      const elapsed = Date.now() - startedAt;
+
+      /** One abort-ACK timeout (3 s) plus at most one lease TTL; without the lease this fails after 30 s. */
+      expect(elapsed).toBeLessThan(3000 + LEASE.ttlMs + 2000);
+      expect(await ioredisClient!.exists(abortAckKey(streamId, job.createdAt))).toBe(1);
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(1);
+      const current = await router.getJobStore().getJob(streamId);
+      expect(current).toMatchObject({ createdAt: replacement.createdAt, status: 'running' });
+      /** The acknowledged receipt is trimmed, so the lock is not carried forward. */
+      expect(
+        await ioredisClient!.hget(`stream:{${streamId}}:job`, '__replacedGenerations'),
+      ).toBeNull();
+    }, 40000);
+
+    test('salvages the dead owner partial output before the replacement deletes its chunk log', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('salvage');
+      const { manager: router } = createReplica();
+      const observed: Array<{ content: unknown; jobCreatedAt?: number }> = [];
+      const handler = jest.fn(async (id: string, result: { content: unknown }) => {
+        observed.push({
+          content: result.content,
+          jobCreatedAt: (await router.getJobStore().getJob(id))?.createdAt,
+        });
+      });
+      router.setOrphanedGenerationHandler(handler);
+      killOwner(owner, subscriber);
+      await ioredisClient!.del(leaseKey(streamId, job.createdAt, executionId));
+      /** The dead owner's output exists only in the durable chunk log now. */
+      expect(await ioredisClient!.exists(chunksKey(streamId))).toBe(1);
+
+      const startedAt = Date.now();
+      const replacement = await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+
+      /** The predecessor was already terminal and drained: no abort-ACK wait at all. */
+      expect(Date.now() - startedAt).toBeLessThan(2500);
+      expect(handler).toHaveBeenCalledTimes(1);
+      /** Read from the chunk log while the predecessor still owned the stream. */
+      expect(observed[0]).toEqual({
+        content: [expect.objectContaining({ type: 'text', text: 'Hello dead owner' })],
+        jobCreatedAt: job.createdAt,
+      });
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(1);
+      expect(await router.getJobStore().getJob(streamId)).toMatchObject({
+        createdAt: replacement.createdAt,
+        status: 'running',
+      });
+    }, 40000);
+
+    test('admits a queued turn that names the orphaned predecessor', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('salvage-queued');
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      killOwner(owner, subscriber);
+      await ioredisClient!.del(leaseKey(streamId, job.createdAt, executionId));
+
+      const replacement = await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+        expectedPredecessorCreatedAt: job.createdAt,
+      });
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(replacement.createdAt).toBeGreaterThan(job.createdAt);
+    }, 40000);
+
+    test('salvages a fresh kill whose lease has not lapsed yet when the next turn arrives', async () => {
+      /** Prod-like ratios on a shorter clock: TTL 3 s, refresh 1 s. */
+      const lease = { ttlMs: 3000, refreshMs: 1000 };
+      const { owner, subscriber, streamId, job } = await startOwner('fresh-kill', {
+        ownerLease: lease,
+      });
+      const { manager: router } = createReplica({ ownerLease: lease });
+      const observed: unknown[] = [];
+      const handler = jest.fn(async (_id: string, result: { content: unknown }) => {
+        observed.push(result.content);
+      });
+      router.setOrphanedGenerationHandler(handler);
+      /** SIGKILL right after a renewal: the lease key stays and simply stops being renewed. */
+      await new Promise((resolve) => setTimeout(resolve, lease.refreshMs + 50));
+      killOwner(owner, subscriber);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const startedAt = Date.now();
+      const replacement = await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      const elapsed = Date.now() - startedAt;
+
+      /** Abort-ACK timeout (3 s) plus the rest of the lease, never more than one TTL. */
+      expect(elapsed).toBeLessThanOrEqual(lease.ttlMs + 3000 + 1500);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][1]).toMatchObject({
+        success: true,
+        jobData: expect.objectContaining({ createdAt: job.createdAt }),
+      });
+      expect(observed[0]).toEqual([
+        expect.objectContaining({ type: 'text', text: 'Hello dead owner' }),
+      ]);
+      expect(await router.getJobStore().getJob(streamId)).toMatchObject({
+        createdAt: replacement.createdAt,
+        status: 'running',
+      });
+    }, 40000);
+
+    test('does not save the snapshot when a live owner acknowledges the replacement', async () => {
+      const { owner, streamId, job, executionId } = await startOwner('live-replaced');
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      /** A live provider unwinds on the abort and records its own drain. */
+      job.abortController.signal.addEventListener('abort', () => {
+        void owner.markProviderExecutionDrained(streamId, job.createdAt, executionId);
+      });
+
+      const startedAt = Date.now();
+      await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(2000);
+      expect(job.abortController.signal.aborted).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+    }, 40000);
+
+    test('two successors racing after a lapsed lease both proceed and salvage once', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('race-lapsed');
+      const { manager: first } = createReplica();
+      const { manager: second } = createReplica();
+      const handler = jest.fn();
+      first.setOrphanedGenerationHandler(handler);
+      second.setOrphanedGenerationHandler(handler);
+      killOwner(owner, subscriber);
+      await ioredisClient!.del(leaseKey(streamId, job.createdAt, executionId));
+
+      const results = await Promise.allSettled(
+        [first, second].map((manager) =>
+          manager.createJob(streamId, 'user-1', streamId, {
+            initialMetadata: { generationProtocolVersion: 2 },
+          }),
+        ),
+      );
+
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+      expect(handler).toHaveBeenCalledTimes(1);
+    }, 40000);
+
+    test('ends a resumed stream once the dead owner lease lapses, with no new turn', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('watchdog');
+      const { manager: relay } = createReplica();
+      const { manager: bystander } = createReplica();
+      const handler = jest.fn();
+      relay.setOrphanedGenerationHandler(handler);
+      bystander.setOrphanedGenerationHandler(handler);
+      const done = new Promise<Record<string, unknown>>((resolve) => {
+        void relay.subscribe(
+          streamId,
+          () => undefined,
+          (event) => resolve(event as Record<string, unknown>),
+        );
+      });
+      killOwner(owner, subscriber);
+
+      const finalEvent = await done;
+
+      expect(finalEvent).toMatchObject({ final: true, aborted: true });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][1].content).toEqual([
+        expect.objectContaining({ type: 'text', text: 'Hello dead owner' }),
+      ]);
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(1);
+      expect(await relay.getJobStore().getJob(streamId)).toMatchObject({
+        createdAt: job.createdAt,
+        status: 'aborted',
+      });
+    }, 20000);
+
+    test('two successors racing after a fresh kill salvage once', async () => {
+      const { owner, subscriber, streamId } = await startOwner('race-fresh');
+      const { manager: first } = createReplica();
+      const { manager: second } = createReplica();
+      const handler = jest.fn();
+      first.setOrphanedGenerationHandler(handler);
+      second.setOrphanedGenerationHandler(handler);
+      killOwner(owner, subscriber);
+
+      const results = await Promise.allSettled(
+        [first, second].map((manager) =>
+          manager.createJob(streamId, 'user-1', streamId, {
+            initialMetadata: { generationProtocolVersion: 2 },
+          }),
+        ),
+      );
+
+      expect(results.some((result) => result.status === 'fulfilled')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    }, 40000);
+
+    test('a held execution keeps the successor strict', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('held');
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      await owner.abandonProviderExecution(streamId, job.createdAt, executionId);
+      const holdKey = `stream:{${streamId}}:provider-hold:${job.createdAt}:${executionId}`;
+      const holdDeadline = Date.now() + 2000;
+      while ((await ioredisClient!.exists(holdKey)) === 0 && Date.now() < holdDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(await ioredisClient!.exists(holdKey)).toBe(1);
+      killOwner(owner, subscriber);
+      await ioredisClient!.del(leaseKey(streamId, job.createdAt, executionId));
+
+      await expect(
+        router.createJob(streamId, 'user-1', streamId, {
+          initialMetadata: { generationProtocolVersion: 2 },
+        }),
+      ).rejects.toThrow(HANDOFF_ERROR);
+      expect(handler).not.toHaveBeenCalled();
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(0);
+    }, 40000);
+
+    test('with the kill switch off the owner writes no lease and the successor fails as today', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('switch-off', {
+        ownerLease: { enabled: false },
+      });
+      const { manager: router } = createReplica({ ownerLease: { enabled: false } });
+      expect(
+        await ioredisClient!.exists(
+          leaseKey(streamId, job.createdAt, executionId),
+          capableKey(streamId, job.createdAt, executionId),
+        ),
+      ).toBe(0);
+      killOwner(owner, subscriber);
+
+      await expect(
+        router.createJob(streamId, 'user-1', streamId, {
+          initialMetadata: { generationProtocolVersion: 2 },
+        }),
+      ).rejects.toThrow(HANDOFF_ERROR);
+      expect(await router.getJobStore().getJob(streamId)).toMatchObject({
+        status: 'error',
+        replacedJobs: [expect.objectContaining({ createdAt: job.createdAt, status: 'running' })],
+      });
+    }, 40000);
+
+    test('a successor with the kill switch off stays strict for a lease-aware owner', async () => {
+      const { owner, subscriber, streamId, job, executionId } =
+        await startOwner('switch-off-successor');
+      const { manager: router } = createReplica({ ownerLease: { enabled: false } });
+      killOwner(owner, subscriber);
+      await ioredisClient!.del(leaseKey(streamId, job.createdAt, executionId));
+
+      await expect(
+        router.createJob(streamId, 'user-1', streamId, {
+          initialMetadata: { generationProtocolVersion: 2 },
+        }),
+      ).rejects.toThrow(HANDOFF_ERROR);
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(0);
+    }, 40000);
+
+    test('an owner from before the lease (no capability marker) keeps the successor strict', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('legacy-owner', {
+        legacyBegin: true,
+      });
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      expect(await ioredisClient!.exists(capableKey(streamId, job.createdAt, executionId))).toBe(0);
+      killOwner(owner, subscriber);
+
+      await expect(
+        router.createJob(streamId, 'user-1', streamId, {
+          initialMetadata: { generationProtocolVersion: 2 },
+        }),
+      ).rejects.toThrow(HANDOFF_ERROR);
+      expect(handler).not.toHaveBeenCalled();
+    }, 40000);
+
+    test('a live owner that keeps renewing still fails the handoff when it cannot acknowledge', async () => {
+      const { subscriber, streamId, job, executionId } = await startOwner('live-partitioned');
+      const { manager: router } = createReplica();
+      /** Only the abort channel is lost; the lease keeps being renewed. */
+      subscriber.disconnect();
+
+      await expect(
+        router.createJob(streamId, 'user-1', streamId, {
+          initialMetadata: { generationProtocolVersion: 2 },
+        }),
+      ).rejects.toThrow(HANDOFF_ERROR);
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(0);
+    }, 40000);
+
+    test('self-fences the provider when lease renewals keep failing', async () => {
+      const { owner, job } = await startOwner('self-fence');
+      jest
+        .spyOn(owner.getJobStore(), 'renewProviderLeases')
+        .mockRejectedValue(new Error('Redis unavailable'));
+
+      await waitUntil(
+        () => job.abortController.signal.aborted,
+        'self-fence abort',
+        LEASE.ttlMs * 5,
+      );
+      expect(job.abortController.signal.aborted).toBe(true);
+    }, 30000);
+
+    test('a self-fence stops the append retry queue and classifies the fence', async () => {
+      const { owner, streamId, job } = await startOwner('self-fence-queued');
+      const store = owner.getJobStore();
+      /** The store is unreachable from this owner: appends and renewals both throw. */
+      const appendSpy = jest
+        .spyOn(store, 'appendChunk')
+        .mockRejectedValue(new Error('Redis unavailable'));
+      jest.spyOn(store, 'renewProviderLeases').mockRejectedValue(new Error('Redis unavailable'));
+      const classifySpy = jest.spyOn(
+        owner as unknown as { classifyDurableFence: () => Promise<unknown> },
+        'classifyDurableFence',
+      );
+
+      const queued = owner.emitChunk(streamId, {
+        event: 'on_message_delta',
+        data: { id: 'step-1', delta: { content: { type: 'text', text: ' queued' } } },
+      });
+      await waitUntil(
+        () => job.abortController.signal.aborted,
+        'self-fence abort',
+        LEASE.ttlMs * 5,
+      );
+      await queued.catch(() => undefined);
+
+      /** The fence went through the store-lost classification (not a bare abort), so a
+       *  store-lost save registered by the controller can still run. */
+      expect(classifySpy).toHaveBeenCalledTimes(1);
+      /** No queued append is retried after the self-fence. */
+      const attemptsAtFence = appendSpy.mock.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(appendSpy.mock.calls.length).toBe(attemptsAtFence);
+    }, 30000);
+
+    test('self-fences before the lease can expire while a renewal hangs', async () => {
+      const lease = { ttlMs: 600, refreshMs: 200 };
+      const { owner, job } = await startOwner('self-fence-hung', { ownerLease: lease });
+      /** The begin wrote the last confirmed lease; every later renewal hangs forever
+       *  (a blackholed socket with no command timeout). */
+      const lastConfirmedAt = Date.now();
+      jest
+        .spyOn(owner.getJobStore(), 'renewProviderLeases')
+        .mockImplementation(() => new Promise(() => undefined));
+      let abortedAt: number | null = null;
+      job.abortController.signal.addEventListener('abort', () => {
+        abortedAt = Date.now();
+      });
+
+      await waitUntil(() => abortedAt != null, 'self-fence abort', lease.ttlMs * 3);
+      expect(abortedAt! - lastConfirmedAt).toBeLessThan(lease.ttlMs);
+    }, 30000);
+
+    test('keeps renewing an abandoned execution until its hold write lands', async () => {
+      const { owner, streamId, job, executionId } = await startOwner('hold-retry');
+      const store = owner.getJobStore();
+      const hold = jest
+        .spyOn(store, 'holdProviderExecution')
+        .mockRejectedValue(new Error('Redis blip'));
+      const holdKey = `stream:{${streamId}}:provider-hold:${job.createdAt}:${executionId}`;
+
+      await owner.abandonProviderExecution(streamId, job.createdAt, executionId);
+      await new Promise((resolve) => setTimeout(resolve, LEASE.ttlMs * 3));
+      /** No hold yet, but the lease is still renewed, so no successor presumes a drain. */
+      expect(await ioredisClient!.exists(holdKey)).toBe(0);
+      expect(
+        await ioredisClient!.pttl(leaseKey(streamId, job.createdAt, executionId)),
+      ).toBeGreaterThan(0);
+
+      hold.mockRestore();
+      const deadline = Date.now() + LEASE.ttlMs * 5;
+      while ((await ioredisClient!.exists(holdKey)) === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(await ioredisClient!.exists(holdKey)).toBe(1);
+      /** Once held, renewals stop and the lease lapses; the hold keeps successors strict. */
+      await new Promise((resolve) => setTimeout(resolve, LEASE.ttlMs * 2));
+      expect(await ioredisClient!.exists(leaseKey(streamId, job.createdAt, executionId))).toBe(0);
+    }, 30000);
+
+    test('one slow renewal reply does not self-fence a healthy owner', async () => {
+      /** Prod ratio TTL = 4 x refresh. The first renewal is applied at once, but its reply
+       *  arrives after more than one refresh (and before the fence point). */
+      const lease = { ttlMs: 800, refreshMs: 200 };
+      const { owner, streamId, job, executionId } = await startOwner('slow-reply', {
+        ownerLease: lease,
+      });
+      const store = owner.getJobStore();
+      const realRenew = store.renewProviderLeases!.bind(store);
+      let calls = 0;
+      jest.spyOn(store, 'renewProviderLeases').mockImplementation(async (...args) => {
+        calls += 1;
+        const result = await realRenew(...args);
+        if (calls === 1) {
+          await new Promise((resolve) => setTimeout(resolve, lease.refreshMs + 60));
+        }
+        return result;
+      });
+
+      let leaseMissing = 0;
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < lease.ttlMs * 3) {
+        if ((await ioredisClient!.exists(leaseKey(streamId, job.createdAt, executionId))) === 0) {
+          leaseMissing += 1;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(job.abortController.signal.aborted).toBe(false);
+      expect(leaseMissing).toBe(0);
+      expect(calls).toBeGreaterThanOrEqual(4);
+    }, 30000);
+
+    test('times the first fence deadline from the begin send, not its reply', async () => {
+      const lease = { ttlMs: 600, refreshMs: 200 };
+      const { manager: owner } = createReplica({ ownerLease: lease, ownSubscriber: true });
+      const streamId = `${testPrefix}-slow-begin-${Date.now()}`;
+      const job = await owner.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      const store = owner.getJobStore();
+      const realBegin = store.beginProviderExecution.bind(store);
+      /** The begin (and its lease) is applied at once; the reply takes 400 ms. */
+      jest.spyOn(store, 'beginProviderExecution').mockImplementation(async (...args) => {
+        const started = await realBegin(...args);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return started;
+      });
+      jest.spyOn(store, 'renewProviderLeases').mockRejectedValue(new Error('Redis unavailable'));
+      let abortedAt: number | null = null;
+      job.abortController.signal.addEventListener('abort', () => {
+        abortedAt = Date.now();
+      });
+
+      const sentAt = Date.now();
+      await owner.beginProviderExecution(
+        streamId,
+        job.createdAt,
+        job.metadata.providerExecutionId!,
+      );
+      await waitUntil(() => abortedAt != null, 'self-fence abort', lease.ttlMs * 3);
+      /** Fence at TTL - 1.5 x refresh (300 ms) from the send, before the lease expires. */
+      expect(abortedAt! - sentAt).toBeLessThan(lease.ttlMs);
+    }, 30000);
+
+    test('saves nothing when an owner that missed the abort ACK turns out to be alive', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('late-ack');
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      /** The abort is not delivered, but the owner keeps renewing, and later drains. */
+      subscriber.disconnect();
+      setTimeout(() => {
+        void owner.markProviderExecutionDrained(streamId, job.createdAt, executionId);
+      }, 3500);
+
+      await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+
+      expect(handler).not.toHaveBeenCalled();
+    }, 40000);
+
+    test('hanging hold writes do not delay the renewal of a healthy generation', async () => {
+      const lease = { ttlMs: 600, refreshMs: 200 };
+      const { manager: owner } = createReplica({ ownerLease: lease, ownSubscriber: true });
+      const store = owner.getJobStore();
+      jest
+        .spyOn(store, 'holdProviderExecution')
+        .mockImplementation(() => new Promise(() => undefined));
+      const started = [];
+      for (let index = 0; index < 4; index++) {
+        const streamId = `${testPrefix}-holds-${index}-${Date.now()}`;
+        const job = await owner.createJob(streamId, 'user-1', streamId, {
+          initialMetadata: { generationProtocolVersion: 2 },
+        });
+        const executionId = job.metadata.providerExecutionId!;
+        await owner.beginProviderExecution(streamId, job.createdAt, executionId);
+        started.push({ streamId, job, executionId });
+      }
+      const [healthy, ...abandoned] = started;
+
+      /** Each hold write hangs until its 2 s bound; the leases stay renewed meanwhile. */
+      await Promise.all(
+        abandoned.map(({ streamId, job, executionId }) =>
+          owner.abandonProviderExecution(streamId, job.createdAt, executionId),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+
+      expect(healthy.job.abortController.signal.aborted).toBe(false);
+      expect(
+        await ioredisClient!.pttl(
+          leaseKey(healthy.streamId, healthy.job.createdAt, healthy.executionId),
+        ),
+      ).toBeGreaterThan(0);
+    }, 30000);
+
+    test('replaces without a copy when the predecessor chunk-log read hangs', async () => {
+      const { owner, streamId, job, executionId } = await startOwner('slow-snapshot');
+      const { manager: router } = createReplica();
+      router.setOrphanedGenerationHandler(jest.fn());
+      job.abortController.signal.addEventListener('abort', () => {
+        void owner.markProviderExecutionDrained(streamId, job.createdAt, executionId);
+      });
+      jest
+        .spyOn(router.getJobStore(), 'getContentParts')
+        .mockImplementation(() => new Promise(() => undefined));
+
+      const startedAt = Date.now();
+      await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      /** Bounded at 2 s, then the live replacement proceeds as usual. */
+      expect(Date.now() - startedAt).toBeLessThan(3500);
+      expect(job.abortController.signal.aborted).toBe(true);
+    }, 30000);
+
+    test('gives the salvage claim back when the winning save fails', async () => {
+      const { manager: router } = createReplica();
+      const streamId = `${testPrefix}-claim-release-${Date.now()}`;
+      const createdAt = Date.now();
+      const claimKey = `stream:{${streamId}}:orphan-salvage:${createdAt}`;
+      const snapshot = {
+        job: { streamId, userId: 'user-1', status: 'running', createdAt },
+        content: [{ type: 'text', text: 'partial' }],
+      };
+      const persist = (
+        router as unknown as {
+          persistOrphanSnapshot: (id: string, value: unknown) => Promise<void>;
+        }
+      ).persistOrphanSnapshot.bind(router);
+
+      router.setOrphanedGenerationHandler(async () => {
+        throw new Error('Mongo unavailable');
+      });
+      await persist(streamId, snapshot);
+      expect(await ioredisClient!.exists(claimKey)).toBe(0);
+
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+      await persist(streamId, snapshot);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(await ioredisClient!.exists(claimKey)).toBe(1);
+    }, 30000);
+
+    test('does not self-fence when the self-fence switch is off', async () => {
+      const { owner, job } = await startOwner('self-fence-off', {
+        ownerLease: { selfFence: false },
+      });
+      jest
+        .spyOn(owner.getJobStore(), 'renewProviderLeases')
+        .mockRejectedValue(new Error('Redis unavailable'));
+
+      await new Promise((resolve) => setTimeout(resolve, LEASE.ttlMs * 3));
+      expect(job.abortController.signal.aborted).toBe(false);
+    }, 30000);
+
+    test('Stop, then the owner dies: only the drain is recovered, nothing is salvaged', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('stop-then-kill');
+      const { manager: router } = createReplica();
+      const handler = jest.fn();
+      router.setOrphanedGenerationHandler(handler);
+
+      /** The abort route already saved the partial; the owner dies before its drain. */
+      const stopped = await router.abortJob(streamId, { expectedCreatedAt: job.createdAt });
+      expect(stopped.success).toBe(true);
+      expect(await router.getJobStore().getJob(streamId)).toMatchObject({
+        status: 'aborted',
+        providerDrained: false,
+      });
+      killOwner(owner, subscriber);
+      await ioredisClient!.del(leaseKey(streamId, job.createdAt, executionId));
+
+      const startedAt = Date.now();
+      await router.createJob(streamId, 'user-1', streamId, {
+        initialMetadata: { generationProtocolVersion: 2 },
+      });
+      expect(Date.now() - startedAt).toBeLessThan(2500);
+      expect(handler).not.toHaveBeenCalled();
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(1);
     }, 40000);
   });
 });

@@ -164,7 +164,11 @@ export class AgentExecutionEnrollment {
        *  drain marker is published on purpose — a successor must still see the truth. The
        *  shutdown tracker has no other path to release, though; abandon it explicitly or it
        *  outlives this run and every later graceful shutdown waits its full budget on it. */
-      this.manager.abandonProviderExecution(this.runId, this.createdAt, this.providerExecutionId);
+      await this.manager.abandonProviderExecution(
+        this.runId,
+        this.createdAt,
+        this.providerExecutionId,
+      );
     }
     if (this.providerStarted && terminalError == null) {
       try {

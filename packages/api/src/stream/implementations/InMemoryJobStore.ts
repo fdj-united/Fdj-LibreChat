@@ -21,6 +21,7 @@ import type {
   JobStatusTransition,
   IdempotencyClaimValue,
   IdempotencyClaimResult,
+  GenerationPresence,
   ParkedSteerClaim,
 } from '~/stream/interfaces/IJobStore';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
@@ -1071,6 +1072,13 @@ export class InMemoryJobStore implements IJobStoreV2 {
 
   async hasJob(streamId: string): Promise<boolean> {
     return this.jobs.has(streamId);
+  }
+
+  async getGenerationPresence(streamId: string): Promise<GenerationPresence> {
+    return {
+      jobCreatedAt: this.jobs.get(streamId)?.createdAt ?? null,
+      epoch: this.getRetainedGenerationEpoch(streamId) ?? null,
+    };
   }
 
   async getRunningJobs(): Promise<SerializableJobData[]> {

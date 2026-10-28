@@ -225,7 +225,7 @@ if (cacheConfig.USE_REDIS) {
         return delay;
       },
     },
-    disableOfflineQueue: !cacheConfig.REDIS_ENABLE_OFFLINE_QUEUE,
+    disableOfflineQueue: !cacheConfig.REDIS_KEYV_ENABLE_OFFLINE_QUEUE,
     ...(cacheConfig.REDIS_PING_INTERVAL > 0
       ? { pingInterval: cacheConfig.REDIS_PING_INTERVAL * 1000 }
       : {}),

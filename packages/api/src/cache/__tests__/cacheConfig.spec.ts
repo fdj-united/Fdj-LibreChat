@@ -17,6 +17,8 @@ describe('cacheConfig', () => {
     delete process.env.REDIS_PING_TIMEOUT;
     delete process.env.REDIS_SUBSCRIBER_PING_INTERVAL;
     delete process.env.REDIS_KEEP_ALIVE;
+    delete process.env.REDIS_ENABLE_OFFLINE_QUEUE;
+    delete process.env.REDIS_KEYV_ENABLE_OFFLINE_QUEUE;
     delete process.env.FORCED_IN_MEMORY_CACHE_NAMESPACES;
     delete process.env.VIOLATION_SCORE_TTL;
 
@@ -222,6 +224,30 @@ describe('cacheConfig', () => {
 
       const { cacheConfig } = await import('../cacheConfig');
       expect(cacheConfig.REDIS_PING_INTERVAL).toBe(300);
+    });
+  });
+
+  describe('offline queue configuration', () => {
+    test('queues commands on both clients by default', async () => {
+      const { cacheConfig } = await import('../cacheConfig');
+      expect(cacheConfig.REDIS_ENABLE_OFFLINE_QUEUE).toBe(true);
+      expect(cacheConfig.REDIS_KEYV_ENABLE_OFFLINE_QUEUE).toBe(true);
+    });
+
+    test('lets the Keyv client fail fast while ioredis keeps queueing', async () => {
+      process.env.REDIS_KEYV_ENABLE_OFFLINE_QUEUE = 'false';
+
+      const { cacheConfig } = await import('../cacheConfig');
+      expect(cacheConfig.REDIS_ENABLE_OFFLINE_QUEUE).toBe(true);
+      expect(cacheConfig.REDIS_KEYV_ENABLE_OFFLINE_QUEUE).toBe(false);
+    });
+
+    test('follows REDIS_ENABLE_OFFLINE_QUEUE when the Keyv setting is not given', async () => {
+      process.env.REDIS_ENABLE_OFFLINE_QUEUE = 'false';
+
+      const { cacheConfig } = await import('../cacheConfig');
+      expect(cacheConfig.REDIS_ENABLE_OFFLINE_QUEUE).toBe(false);
+      expect(cacheConfig.REDIS_KEYV_ENABLE_OFFLINE_QUEUE).toBe(false);
     });
   });
 

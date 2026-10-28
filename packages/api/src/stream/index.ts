@@ -7,7 +7,12 @@ export {
   type GenerationSettledEvent,
   type GenerationSettledListener,
   GENERATION_RECOVERY_FAILED_ERROR,
+  GENERATION_STORE_LOST_ERROR,
+  GENERATION_STORE_LOST_UNSAVED_ERROR,
   TERMINAL_PUBLICATION_RECONNECT_ERROR,
+  type GenerationFenceOutcome,
+  type StoreLostPersistence,
+  type OrphanedGenerationHandler,
 } from './GenerationJobManager';
 
 export type {
@@ -20,6 +25,9 @@ export type {
   JobMetadataPatch,
   GenerationProtocolVersion,
   GenerationPredecessorState,
+  GenerationPresence,
+  GenerationOwnerLeaseConfig,
+  ProviderLeaseState,
   ParkedSteerClaim,
   IJobStore,
   IJobStoreV2,
@@ -67,6 +75,18 @@ export { createStreamServices } from './createStreamServices';
 export type { StreamServicesConfig, StreamServices } from './createStreamServices';
 export { filterPersistableAbortContent, hasPersistableAbortContent } from './abortContent';
 export { getGenerationElapsedMs } from './elapsed';
+export {
+  SSE_KEEPALIVE_FRAME,
+  startSseKeepalive,
+  loadStreamKeepaliveMs,
+  resolveStreamKeepaliveMs,
+  createStreamKeepaliveLoader,
+} from './keepalive';
+export type {
+  SseKeepaliveResponse,
+  StreamKeepaliveConfig,
+  StreamKeepaliveRequest,
+} from './keepalive';
 export {
   projectTerminalEvent,
   TRANSIENT_MESSAGE_FIELDS,

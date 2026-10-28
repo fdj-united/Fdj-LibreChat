@@ -1,6 +1,10 @@
 import { logger } from '@librechat/data-schemas';
 import type { Redis, Cluster } from 'ioredis';
-import type { IJobStoreV2, IEventTransport } from './interfaces/IJobStore';
+import type {
+  IJobStoreV2,
+  IEventTransport,
+  GenerationOwnerLeaseConfig,
+} from './interfaces/IJobStore';
 import { InMemoryEventTransport } from './implementations/InMemoryEventTransport';
 import { RedisEventTransport } from './implementations/RedisEventTransport';
 import { InMemoryJobStore } from './implementations/InMemoryJobStore';
@@ -46,6 +50,45 @@ export interface StreamServices {
   jobStore: IJobStoreV2;
   eventTransport: IEventTransport;
   isRedis: boolean;
+  /** GENERATION_STORE_LOST_DETECTION: tell a lost Redis state apart from a replacement. */
+  storeLostDetection: boolean;
+  /** GENERATION_STORE_LOST_TERMINAL_GRACE_MS: manager backstop for store-lost terminalization. */
+  storeLostTerminalGraceMs: number;
+  /** GENERATION_FENCE_ON_APPEND_ERROR: fence on a thrown append instead of retrying it. */
+  fenceOnAppendError: boolean;
+  /** GENERATION_OWNER_LEASE_*: owner lease that lets a successor detect a dead owner. */
+  ownerLease: GenerationOwnerLeaseConfig;
+  /** GENERATION_ORPHAN_SALVAGE_ENABLED: save a dead owner's partial before replacing it. */
+  orphanSalvage: boolean;
+  /** GENERATION_ORPHAN_SWEEP_*: finish a dead owner's generation without a replacement. */
+  orphanSweep: boolean;
+  orphanSweepIntervalMs: number;
+}
+
+function storeLostOptions(): Pick<
+  StreamServices,
+  | 'storeLostDetection'
+  | 'storeLostTerminalGraceMs'
+  | 'fenceOnAppendError'
+  | 'ownerLease'
+  | 'orphanSalvage'
+  | 'orphanSweep'
+  | 'orphanSweepIntervalMs'
+> {
+  return {
+    storeLostDetection: cacheConfig.GENERATION_STORE_LOST_DETECTION,
+    storeLostTerminalGraceMs: cacheConfig.GENERATION_STORE_LOST_TERMINAL_GRACE_MS,
+    fenceOnAppendError: cacheConfig.GENERATION_FENCE_ON_APPEND_ERROR,
+    ownerLease: {
+      enabled: cacheConfig.GENERATION_OWNER_LEASE_ENABLED,
+      ttlMs: cacheConfig.GENERATION_OWNER_LEASE_TTL_MS,
+      refreshMs: cacheConfig.GENERATION_OWNER_LEASE_REFRESH_MS,
+      selfFence: cacheConfig.GENERATION_OWNER_LEASE_SELF_FENCE,
+    },
+    orphanSalvage: cacheConfig.GENERATION_ORPHAN_SALVAGE_ENABLED,
+    orphanSweep: cacheConfig.GENERATION_ORPHAN_SWEEP_ENABLED,
+    orphanSweepIntervalMs: cacheConfig.GENERATION_ORPHAN_SWEEP_INTERVAL_MS,
+  };
 }
 
 /**
@@ -101,6 +144,7 @@ export function createStreamServices(config: StreamServicesConfig = {}): StreamS
         jobStore,
         eventTransport,
         isRedis: true,
+        ...storeLostOptions(),
       };
     } catch (err) {
       logger.error(
@@ -133,5 +177,6 @@ function createInMemoryServices(options?: StreamServicesConfig['inMemoryOptions'
     jobStore,
     eventTransport,
     isRedis: false,
+    ...storeLostOptions(),
   };
 }
