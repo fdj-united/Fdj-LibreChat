@@ -1,4 +1,6 @@
 import {
+  getInsightsConfig,
+  getInsightsCategory,
   INSIGHTS_MAX_RANGE_DAYS,
   INSIGHTS_SEARCH_MAX_LENGTH,
   INSIGHTS_SEARCH_MIN_LENGTH,
@@ -11,6 +13,8 @@ import type {
   TInsightsParams,
   TInsightsResponse,
   TInsightsUser,
+  TInsightsConfig,
+  TInsightsBreakdown,
 } from 'librechat-data-provider';
 import type { Model, PipelineStage } from 'mongoose';
 import type { IConversation, IMessage, IUser } from '~/types';
@@ -18,6 +22,7 @@ import type { IConversation, IMessage, IUser } from '~/types';
 export type InsightsOptions = TInsightsParams & {
   tenantId?: string;
   agents?: TInsightsAgent[];
+  insights?: TInsightsConfig;
 };
 
 export type InsightsResult = TInsightsResponse;
@@ -28,6 +33,7 @@ export type InsightsMethods = {
 
 type CountResult = { total: number };
 type ConversationDay = { date: string; conversations: number };
+type AgentConversations = { _id: string; conversations: number };
 type DailyUsers = { date: string; users: number };
 type UserMessageTotals = { messages: number };
 type RecentConversation = { conversationId: string; agentId: string; date: Date; userId: string };
@@ -294,6 +300,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
     const agentIds = [...new Set(options.agentIds ?? [])].sort((a, b) => a.localeCompare(b));
     const { from, to } = resolveRange(options);
     const timeZone = validTimeZone(options.timeZone);
+    const config = getInsightsConfig(options.insights);
     const churnedCutoff = new Date(to.getTime() - churnedUserWindowDays * dayMs);
     const churnedActivityFrom = new Date(from.getTime() - churnedUserWindowDays * dayMs);
     const tenant = tenantMatch(options.tenantId);
@@ -366,6 +373,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
       dailyUsers,
       topMessageUsers,
       churnedUserRows,
+      agentConversationRows,
     ] = await Promise.all([
       Conversation.aggregate<ConversationDay>([
         ...conversationPipeline,
@@ -455,6 +463,12 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
         { $sort: { lastSeen: -1, _id: 1 } },
         { $limit: churnedUserLimit },
       ]),
+      config.charts.usageByAgent || config.charts.usageByCategory
+        ? Conversation.aggregate<AgentConversations>([
+            ...conversationPipeline,
+            { $group: { _id: '$insightsAgentId', conversations: { $sum: 1 } } },
+          ])
+        : Promise.resolve([] as AgentConversations[]),
     ]);
 
     const latestConversationOwners = latestRows
@@ -502,7 +516,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
               },
             },
           ]),
-      latestConversationMatches.length === 0
+      latestConversationMatches.length === 0 || !config.privacy.includeFirstMessage
         ? Promise.resolve([] as FirstMessage[])
         : Message.aggregate<FirstMessage>([
             ...messageScope(
@@ -574,6 +588,32 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
 
     const users = new Map(userRows.map((user) => [user._id.toString(), user]));
     const agentNames = new Map((options.agents ?? []).map((agent) => [agent.id, agent.name]));
+    const agentCategories = new Map(
+      (options.agents ?? []).map((agent) => [
+        agent.id,
+        getInsightsCategory(agent.category, config.categoryAliases),
+      ]),
+    );
+    const categoryCounts = new Map<string, number>();
+    const byAgent: TInsightsBreakdown[] = [];
+    for (const row of agentConversationRows) {
+      const category = getInsightsCategory(agentCategories.get(row._id));
+      categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + row.conversations);
+      byAgent.push({
+        id: row._id,
+        label: agentNames.get(row._id) ?? row._id,
+        conversations: row.conversations,
+      });
+    }
+    const byCategory = [...categoryCounts].map(([id, conversations]) => ({
+      id,
+      label: id,
+      conversations,
+    }));
+    const order = (a: TInsightsBreakdown, b: TInsightsBreakdown) =>
+      b.conversations - a.conversations || a.id.localeCompare(b.id);
+    byAgent.sort(order);
+    byCategory.sort(order);
     const latestSummaries = new Map(
       latestMessageSummaries.map((summary) => [conversationOwnerKey(summary._id), summary]),
     );
@@ -610,6 +650,17 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
 
     return {
       agents: options.agents ?? [],
+      ...(config.filters.categories
+        ? { categories: [...new Set(agentCategories.values())].sort() }
+        : {}),
+      ...(config.charts.usageByAgent || config.charts.usageByCategory
+        ? {
+            breakdowns: {
+              ...(config.charts.usageByAgent ? { agents: byAgent } : {}),
+              ...(config.charts.usageByCategory ? { categories: byCategory } : {}),
+            },
+          }
+        : {}),
       summary: {
         totalUsers: userCount[0]?.total ?? 0,
         totalConversations,
@@ -646,7 +697,9 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
             date: row.date.toISOString(),
             name: user?.name || user?.username || '',
             email: user?.email ?? '',
-            firstMessage: firstByConversation.get(ownerKey) ?? '',
+            ...(config.privacy.includeFirstMessage
+              ? { firstMessage: firstByConversation.get(ownerKey) ?? '' }
+              : {}),
             messages: summary?.messages ?? 0,
             totalTokens: summary?.totalTokens ?? 0,
           };

@@ -11,6 +11,8 @@ import {
   useMediaQuery,
 } from '@librechat/client';
 import {
+  getInsightsConfig,
+  INSIGHTS_UNCATEGORIZED,
   INSIGHTS_MAX_RANGE_DAYS,
   INSIGHTS_SEARCH_MAX_LENGTH,
   INSIGHTS_SEARCH_MIN_LENGTH,
@@ -29,7 +31,9 @@ import { useAuthContext, useDocumentTitle, useLocalize } from '~/hooks';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { LocalizedDateRangePicker } from '~/components/ui';
 import { getRollingDateRange } from './dateRange';
+import Charts from './charts';
 import { cn } from '~/utils';
+import Panel from './panel';
 
 type ShortcutRange = Exclude<InsightsRange, 'custom'>;
 type Localize = ReturnType<typeof useLocalize>;
@@ -107,23 +111,6 @@ function responseStatus(error: unknown) {
 function getShortcutDateRange(range: ShortcutRange) {
   const days = ranges.find((item) => item.value === range)?.days ?? 7;
   return getRollingDateRange(new Date(), days);
-}
-
-function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <section
-      className={cn(
-        'min-w-0 rounded-lg border border-border-light bg-surface-primary p-5',
-        /** Dark mode only: Click UI gives dashboard widgets their own surface and
-         *  stroke, a step lighter than the page behind them. Light mode keeps the
-         *  shared surface/border tokens. */
-        'dark:border-chart-widget-stroke dark:bg-chart-widget-surface',
-        className,
-      )}
-    >
-      {children}
-    </section>
-  );
 }
 
 function EmptyState({ message }: { message: string }) {
@@ -437,6 +424,7 @@ function LatestConversations({
   setSearch,
   localize,
   locale,
+  includeFirstMessage,
 }: {
   rows: TInsightsConversation[];
   search: string;
@@ -448,6 +436,7 @@ function LatestConversations({
   setSearch: React.Dispatch<React.SetStateAction<string>>;
   localize: Localize;
   locale: string;
+  includeFirstMessage: boolean;
 }) {
   return (
     <Panel className="overflow-hidden">
@@ -480,7 +469,9 @@ function LatestConversations({
               <th className="w-[120px] px-2 py-2 font-medium">{localize('com_insights_date')}</th>
               <th className="w-[192px] px-2 py-2 font-medium">{localize('com_insights_user')}</th>
               <th className="w-[160px] px-2 py-2 font-medium">{localize('com_insights_agent')}</th>
-              <th className="px-2 py-2 font-medium">{localize('com_insights_first_message')}</th>
+              {includeFirstMessage && (
+                <th className="px-2 py-2 font-medium">{localize('com_insights_first_message')}</th>
+              )}
               <th className="w-20 px-2 py-2 text-right font-medium">
                 {localize('com_insights_messages')}
               </th>
@@ -502,11 +493,13 @@ function LatestConversations({
                   <UserCell {...conversation} localize={localize} />
                 </td>
                 <td className="truncate px-2 py-3 text-text-secondary">{conversation.agentName}</td>
-                <td className="max-w-xl px-2 py-3">
-                  <span className="line-clamp-2">
-                    {conversation.firstMessage || localize('com_insights_no_message')}
-                  </span>
-                </td>
+                {includeFirstMessage && (
+                  <td className="max-w-xl px-2 py-3">
+                    <span className="line-clamp-2">
+                      {conversation.firstMessage || localize('com_insights_no_message')}
+                    </span>
+                  </td>
+                )}
                 <td className="px-2 py-3 text-right tabular-nums">
                   {formatExactValue(conversation.messages, locale)}
                 </td>
@@ -560,6 +553,10 @@ export default function InsightsView() {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const { user } = useAuthContext();
   const { data: startupConfig, isLoading: configLoading } = useGetStartupConfig();
+  const insightsConfig = useMemo(
+    () => getInsightsConfig(startupConfig?.insights),
+    [startupConfig?.insights],
+  );
   const [range, setRange] = useState<ShortcutRange>('7d');
   const [customDateRange, setCustomDateRange] = useState<CustomDateRange>();
   const [searchInput, setSearchInput] = useState('');
@@ -573,6 +570,10 @@ export default function InsightsView() {
     () => [...new Set(urlSearchParams.getAll('agentIds').filter(Boolean))].sort(),
     [urlSearchParams],
   );
+  const selectedCategories = useMemo(
+    () => [...new Set(urlSearchParams.getAll('categories').filter(Boolean))].sort(),
+    [urlSearchParams],
+  );
   const insightsParams = useMemo<TInsightsParams>(() => {
     const params: TInsightsParams = {
       page,
@@ -580,6 +581,9 @@ export default function InsightsView() {
       search,
       timeZone,
       ...(selectedAgentIds.length > 0 ? { agentIds: selectedAgentIds } : {}),
+      ...(insightsConfig.filters.categories && selectedCategories.length > 0
+        ? { categories: selectedCategories }
+        : {}),
     };
     if (customDateRange) {
       return {
@@ -590,7 +594,16 @@ export default function InsightsView() {
       };
     }
     return { ...params, range };
-  }, [customDateRange, page, range, search, selectedAgentIds, timeZone]);
+  }, [
+    customDateRange,
+    page,
+    range,
+    search,
+    selectedAgentIds,
+    selectedCategories,
+    insightsConfig.filters.categories,
+    timeZone,
+  ]);
   const displayDateRange = useMemo(
     () => customDateRange ?? getShortcutDateRange(range),
     [customDateRange, range],
@@ -601,7 +614,10 @@ export default function InsightsView() {
   });
   const data = insights.data;
   const insightsStatus = responseStatus(insights.error);
-  const isRecoveringAgentFilters = shouldRecoverAgentFilters(insightsStatus, selectedAgentIds);
+  const isRecoveringAgentFilters = shouldRecoverAgentFilters(insightsStatus, [
+    ...selectedAgentIds,
+    ...(insightsConfig.filters.categories ? selectedCategories : []),
+  ]);
   const agentItems = useMemo(() => {
     if (!data) {
       return [];
@@ -749,7 +765,39 @@ export default function InsightsView() {
           {isSmallScreen && <OpenSidebar />}
           <h1 className="text-base font-semibold">{localize('com_insights_title')}</h1>
         </div>
-        <div className="flex max-w-full flex-wrap items-center gap-2 md:flex-nowrap">
+        <div className="flex max-w-full flex-wrap items-center gap-2 xl:flex-nowrap">
+          {data && insightsConfig.filters.categories && (
+            <MultiSelect
+              placeholder={localize('com_insights_all_categories')}
+              items={(data.categories ?? []).map((category) => ({
+                value: category,
+                label:
+                  category === INSIGHTS_UNCATEGORIZED
+                    ? localize('com_insights_uncategorized')
+                    : category,
+              }))}
+              selectedValues={selectedCategories}
+              setSelectedValues={(values) => {
+                const next = new URLSearchParams(urlSearchParams);
+                next.delete('categories');
+                values.forEach((value) => next.append('categories', value));
+                setUrlSearchParams(next, { replace: true });
+                setPage(1);
+              }}
+              showSelectedValues
+              showItemCheckboxes
+              className="w-full min-w-0 sm:w-52"
+              renderSelectedValues={(values) => {
+                if (values.length === 0) return localize('com_insights_all_categories');
+                if (values.length === 1) {
+                  return values[0] === INSIGHTS_UNCATEGORIZED
+                    ? localize('com_insights_uncategorized')
+                    : values[0];
+                }
+                return localize('com_insights_categories_selected', { count: values.length });
+              }}
+            />
+          )}
           {data && (
             <MultiSelect
               placeholder={localize('com_ui_agents')}
@@ -894,6 +942,7 @@ export default function InsightsView() {
                   <KpiCard key={card.id} card={card} locale={locale} />
                 ))}
               </div>
+              <Charts data={data} config={insightsConfig.charts} locale={locale} />
               <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(100%,580px),1fr))] gap-3">
                 <TopUsersTable rows={data.topUsers} localize={localize} locale={locale} />
                 <ChurnedUsersTable rows={data.churnedUsers} localize={localize} locale={locale} />
@@ -909,6 +958,7 @@ export default function InsightsView() {
                 setSearch={setSearchInput}
                 localize={localize}
                 locale={locale}
+                includeFirstMessage={insightsConfig.privacy.includeFirstMessage}
               />
             </>
           )}

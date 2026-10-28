@@ -5,7 +5,7 @@ const {
   createInsightsHandler,
   isEnabled,
 } = require('@librechat/api');
-const { requireJwtAuth } = require('~/server/middleware');
+const { requireJwtAuth, configMiddleware } = require('~/server/middleware');
 const db = require('~/models');
 
 const router = express.Router();
@@ -21,6 +21,7 @@ router.use(requireJwtAuth);
 router.get('/access', createInsightsAccessHandler({ isInsightsEnabled, getAccessibleAgents }));
 router.get(
   '/',
+  configMiddleware,
   createInsightsHandler({ isInsightsEnabled, getAccessibleAgents, getInsights: db.getInsights }),
 );
 
