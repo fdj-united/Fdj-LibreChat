@@ -83,6 +83,9 @@ const { checkMigrations } = require('./services/start/migration');
 const optionalJwtAuth = require('./middleware/optionalJwtAuth');
 const initializeMCPs = require('./services/initializeMCPs');
 const { configureSubagentTaskRouting } = require('./services/Endpoints/agents/subagentThreadStore');
+const {
+  createOrphanedGenerationHandler,
+} = require('./services/Endpoints/agents/orphanedGeneration');
 const configureSocialLogins = require('./socialLogins');
 const createSpaFallback = require('./utils/fallback');
 const { getAppConfig } = require('./services/Config');
@@ -139,6 +142,14 @@ const configureGenerationStreams = () => {
   GenerationJobManager.setTerminalHostActionHandler(
     createAgentEventTerminalHandler(agentEventMethods, {
       resumeDetachedAction: resumeAgentEventDetachedAction,
+    }),
+  );
+  GenerationJobManager.setOrphanedGenerationHandler(
+    createOrphanedGenerationHandler({
+      saveMessage: agentEventMethods.saveMessage,
+      getMessages: agentEventMethods.getMessages,
+      getInterfaceConfig: async (tenantId) =>
+        (await getAppConfig(tenantId ? { tenantId } : { baseOnly: true }))?.interfaceConfig,
     }),
   );
   GenerationJobManager.initialize();

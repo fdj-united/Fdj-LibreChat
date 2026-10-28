@@ -4308,7 +4308,7 @@ describe('GenerationJobManager startup telemetry', () => {
 
     /** A remote run that settled its provider work but failed terminalization twice
      *  deliberately publishes no drain marker; it must still stop shutdown waiting on it. */
-    manager.abandonProviderExecution(streamId, job.createdAt, providerExecutionId);
+    await manager.abandonProviderExecution(streamId, job.createdAt, providerExecutionId);
 
     manager.prepareForShutdown();
     let destroyed = false;

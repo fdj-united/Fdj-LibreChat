@@ -8,7 +8,7 @@ import {
   PAUSE_PERSISTENCE_TIMEOUT_ERROR,
   STEER_ENQUEUE_RECEIPT_FULL,
 } from '../interfaces/IJobStore';
-import { clearRedisTestPrefix } from './helpers/redis';
+import { clearRedisTestPrefix, getRedisTestKeyPrefix, wipeRedisTestKeys } from './helpers/redis';
 
 /** Suppress winston Console transport output (survives jest.resetModules) */
 jest.spyOn(console, 'log').mockImplementation();
@@ -2968,6 +2968,332 @@ describe('RedisJobStore Integration Tests', () => {
       const wrongKey = `stream:user:{${userId}}:jobs`;
       const wrongMembers = await ioredisClient.smembers(wrongKey);
       expect(wrongMembers).not.toContain(streamId);
+
+      await store.destroy();
+    });
+  });
+
+  describe('Generation presence probe', () => {
+    test('reports a live job with its epoch', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-live-${Date.now()}`;
+      const job = await store.createJob(streamId, 'user-1', streamId);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: job.createdAt,
+        epoch: job.createdAt,
+      });
+
+      await store.destroy();
+    });
+
+    test('reports neither job nor epoch after the store loses its state', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-wiped-${Date.now()}`;
+      await store.createJob(streamId, 'user-1', streamId);
+      await wipeRedisTestKeys(ioredisClient, getRedisTestKeyPrefix(ioredisClient), streamId);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: null,
+      });
+
+      await store.destroy();
+    });
+
+    test('keeps the epoch after a deliberate job deletion', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-deleted-${Date.now()}`;
+      const job = await store.createJob(streamId, 'user-1', streamId);
+      await store.updateJob(streamId, { status: 'complete' }, job.createdAt);
+      await expect(store.deleteJob(streamId, job.createdAt)).resolves.toBe(true);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: null,
+        epoch: job.createdAt,
+      });
+
+      await store.destroy();
+    });
+
+    test('reports the newer generation after a replacement', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `presence-replaced-${Date.now()}`;
+      const predecessor = await store.createJob(streamId, 'user-1', streamId);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const successor = await store.createJob(streamId, 'user-1', streamId);
+      expect(successor.createdAt).toBeGreaterThan(predecessor.createdAt);
+
+      await expect(store.getGenerationPresence(streamId)).resolves.toEqual({
+        jobCreatedAt: successor.createdAt,
+        epoch: successor.createdAt,
+      });
+
+      await store.destroy();
+    });
+  });
+
+  describe('Provider owner lease', () => {
+    const lease = { ttlMs: 200, ownerId: 'owner-pod:1' };
+
+    async function createStoreWithProvider(name: string, withLease = true) {
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient!, { runningTtl: 60 });
+      await store.initialize();
+      const streamId = `${name}-${Date.now()}`;
+      const providerExecutionId = `${name}-provider`;
+      const job = await store.createJob(streamId, 'user-1', streamId, undefined, {
+        providerExecutionId,
+      });
+      await expect(
+        withLease
+          ? store.beginProviderExecution(streamId, job.createdAt, providerExecutionId, lease)
+          : store.beginProviderExecution(streamId, job.createdAt, providerExecutionId),
+      ).resolves.toBe(true);
+      const keys = {
+        lease: `stream:{${streamId}}:provider-lease:${job.createdAt}:${providerExecutionId}`,
+        capable: `stream:{${streamId}}:provider-lease-capable:${job.createdAt}:${providerExecutionId}`,
+        hold: `stream:{${streamId}}:provider-hold:${job.createdAt}:${providerExecutionId}`,
+      };
+      return { store, streamId, providerExecutionId, job, keys };
+    }
+
+    test('begin writes the lease and capability marker in the same step', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { store, streamId, providerExecutionId, job, keys } =
+        await createStoreWithProvider('lease-begin');
+
+      const leaseTtl = await ioredisClient.pttl(keys.lease);
+      expect(leaseTtl).toBeGreaterThan(0);
+      expect(leaseTtl).toBeLessThanOrEqual(lease.ttlMs);
+      await expect(ioredisClient.get(keys.lease)).resolves.toBe(lease.ownerId);
+      expect(await ioredisClient.ttl(keys.capable)).toBeGreaterThan(86_000);
+      expect(await store.getJob(streamId)).toMatchObject({ providerDrained: false });
+      await expect(
+        store.getProviderLeaseState(streamId, job.createdAt, providerExecutionId),
+      ).resolves.toEqual({
+        capable: true,
+        leased: true,
+        held: false,
+        owner: lease.ownerId,
+        leaseTtlMs: expect.any(Number),
+      });
+
+      await store.destroy();
+    });
+
+    test('begin without a lease writes neither key', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { store, streamId, providerExecutionId, job, keys } = await createStoreWithProvider(
+        'lease-off',
+        false,
+      );
+
+      await expect(ioredisClient.exists(keys.lease, keys.capable)).resolves.toBe(0);
+      await expect(
+        store.getProviderLeaseState(streamId, job.createdAt, providerExecutionId),
+      ).resolves.toEqual({
+        capable: false,
+        leased: false,
+        held: false,
+        owner: null,
+        leaseTtlMs: null,
+      });
+      await expect(
+        store.recoverOrphanedProviderExecution(
+          streamId,
+          job.createdAt,
+          providerExecutionId,
+          Date.now(),
+        ),
+      ).resolves.toBe(0);
+
+      await store.destroy();
+    });
+
+    test('a rejected begin writes no lease', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { runningTtl: 60 });
+      await store.initialize();
+      const streamId = `lease-rejected-${Date.now()}`;
+      const job = await store.createJob(streamId, 'user-1', streamId, undefined, {
+        providerExecutionId: 'current',
+      });
+
+      await expect(
+        store.beginProviderExecution(streamId, job.createdAt, 'stale', lease),
+      ).resolves.toBe(false);
+      await expect(
+        ioredisClient.exists(
+          `stream:{${streamId}}:provider-lease:${job.createdAt}:stale`,
+          `stream:{${streamId}}:provider-lease-capable:${job.createdAt}:stale`,
+        ),
+      ).resolves.toBe(0);
+
+      await store.destroy();
+    });
+
+    test('renewal extends the lease, and release removes it', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { store, streamId, providerExecutionId, job, keys } =
+        await createStoreWithProvider('lease-renew');
+
+      await expect(
+        store.renewProviderLeases([{ streamId, createdAt: job.createdAt, providerExecutionId }], {
+          ttlMs: 60_000,
+          ownerId: lease.ownerId,
+        }),
+      ).resolves.toEqual([true]);
+      expect(await ioredisClient.pttl(keys.lease)).toBeGreaterThan(50_000);
+
+      await store.releaseProviderLease(streamId, job.createdAt, providerExecutionId);
+      await expect(ioredisClient.exists(keys.lease)).resolves.toBe(0);
+
+      await store.destroy();
+    });
+
+    test('orphan drain refuses while the lease is live, and when held', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { store, streamId, providerExecutionId, job, keys } =
+        await createStoreWithProvider('lease-orphan-refuse');
+
+      await expect(
+        store.recoverOrphanedProviderExecution(
+          streamId,
+          job.createdAt,
+          providerExecutionId,
+          Date.now(),
+        ),
+      ).resolves.toBe(0);
+
+      await store.holdProviderExecution(streamId, job.createdAt, providerExecutionId);
+      await ioredisClient.del(keys.lease);
+      await expect(
+        store.getProviderLeaseState(streamId, job.createdAt, providerExecutionId),
+      ).resolves.toEqual({
+        capable: true,
+        leased: false,
+        held: true,
+        owner: null,
+        leaseTtlMs: null,
+      });
+      await expect(
+        store.recoverOrphanedProviderExecution(
+          streamId,
+          job.createdAt,
+          providerExecutionId,
+          Date.now(),
+        ),
+      ).resolves.toBe(0);
+      expect(await store.getJob(streamId)).toMatchObject({ providerDrained: false });
+
+      await store.destroy();
+    });
+
+    test('orphan drain marks the exact generation drained once the lease expires', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { store, streamId, providerExecutionId, job, keys } =
+        await createStoreWithProvider('lease-orphan-expired');
+
+      await new Promise((resolve) => setTimeout(resolve, lease.ttlMs + 100));
+      await expect(ioredisClient.exists(keys.lease)).resolves.toBe(0);
+      const now = Date.now();
+      await expect(
+        store.recoverOrphanedProviderExecution(streamId, job.createdAt, providerExecutionId, now),
+      ).resolves.toBe(1);
+      expect(await store.getJob(streamId)).toMatchObject({ providerDrained: true });
+      await expect(
+        ioredisClient.hget(`stream:{${streamId}}:job`, 'providerDrainPresumedAt'),
+      ).resolves.toBe(String(now));
+
+      await store.destroy();
+    });
+
+    test('the orphan salvage claim has a single winner', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { runningTtl: 60 });
+      await store.initialize();
+      const streamId = `lease-salvage-claim-${Date.now()}`;
+
+      const claims = await Promise.all([
+        store.claimOrphanSalvage(streamId, 1000),
+        store.claimOrphanSalvage(streamId, 1000),
+      ]);
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      await expect(store.claimOrphanSalvage(streamId, 2000)).resolves.toBe(true);
+
+      await store.destroy();
+    });
+
+    test('orphan drain leaves a replaced hash alone', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+      const { store, streamId, providerExecutionId, job, keys } =
+        await createStoreWithProvider('lease-orphan-replaced');
+
+      await ioredisClient.del(keys.lease);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const successor = await store.createJob(streamId, 'user-1', streamId, undefined, {
+        providerExecutionId: 'successor',
+      });
+      await expect(
+        store.recoverOrphanedProviderExecution(
+          streamId,
+          job.createdAt,
+          providerExecutionId,
+          Date.now(),
+        ),
+      ).resolves.toBe(2);
+      expect(await store.getJob(streamId)).toMatchObject({
+        createdAt: successor.createdAt,
+        providerExecutionId: 'successor',
+        providerDrained: true,
+      });
 
       await store.destroy();
     });

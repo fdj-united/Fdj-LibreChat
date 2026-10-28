@@ -17,6 +17,9 @@ const mockGenerationJobManager = {
   emitChunk: jest.fn(),
   emitDone: jest.fn(),
   claimTerminalJob: jest.fn(),
+  getFenceOutcome: jest.fn(),
+  finalizeStoreLostGeneration: jest.fn(),
+  setStoreLostPersistence: jest.fn(),
   publishTerminalClaim: jest.fn(),
   finishTerminalJob: jest.fn(),
   completeJob: jest.fn(),
@@ -295,6 +298,7 @@ jest.mock('@librechat/api', () => ({
   getSafeErrorText: jest.requireActual('@librechat/api').getSafeErrorText,
   resolveFailedTurnContent: jest.requireActual('@librechat/api').resolveFailedTurnContent,
   getFailedTurnTraceFields: (...args) => mockGetFailedTurnTraceFields(...args),
+  GENERATION_STORE_LOST_ERROR: jest.requireActual('@librechat/api').GENERATION_STORE_LOST_ERROR,
   GenerationJobManager: mockGenerationJobManager,
   getReferencedQuotes: jest.fn((quotes) => {
     if (!Array.isArray(quotes)) {
@@ -509,6 +513,8 @@ describe('ResumableAgentController resume metadata', () => {
       }),
     );
     mockGenerationJobManager.finishTerminalJob.mockResolvedValue(undefined);
+    mockGenerationJobManager.getFenceOutcome.mockResolvedValue(null);
+    mockGenerationJobManager.finalizeStoreLostGeneration.mockResolvedValue(false);
     mockGenerationJobManager.completeJob.mockImplementation(
       async (_streamId, _error, _createdAt, options) => {
         await options?.beforeErrorPublication?.();
@@ -4356,6 +4362,253 @@ describe('ResumableAgentController resume metadata', () => {
     );
     expect(mockDecrementPendingRequest).toHaveBeenCalledWith('user-123');
     expect(mockDisposeClient).toHaveBeenCalledWith(client);
+  });
+
+  describe('store-lost generation', () => {
+    const userMessage = {
+      messageId: 'user-msg',
+      parentMessageId: 'parent-msg',
+      conversationId: 'conversation-123',
+      text: 'Keep going.',
+    };
+    const partialContent = [{ type: 'text', text: 'Partial answer.' }];
+
+    function createStoreLostRequest() {
+      return {
+        user: { id: 'user-123' },
+        body: {
+          text: userMessage.text,
+          messageId: userMessage.messageId,
+          parentMessageId: userMessage.parentMessageId,
+          conversationId: 'conversation-123',
+          endpointOption: { endpoint: 'agents', modelOptions: { model: 'gpt-4.1' } },
+        },
+        config: {},
+      };
+    }
+
+    function createCompletingClient() {
+      const client = {
+        options: {},
+        sender: 'Agent',
+        savedMessageIds: new Set(),
+        skipSaveUserMessage: false,
+        sendMessage: jest.fn(async (_text, options) => {
+          options.onStart(userMessage, 'response-msg');
+          client.contentParts = partialContent;
+          return {
+            messageId: 'response-msg',
+            parentMessageId: userMessage.messageId,
+            conversationId: 'conversation-123',
+            content: partialContent,
+            databasePromise: Promise.resolve({
+              conversation: { conversationId: 'conversation-123', title: 'Existing' },
+            }),
+          };
+        }),
+      };
+      return client;
+    }
+
+    function waitForRequestRelease() {
+      return new Promise((resolve) => {
+        mockDecrementPendingRequest.mockImplementation(async () => resolve());
+      });
+    }
+
+    beforeEach(() => {
+      mockGenerationJobManager.getJob.mockResolvedValue({ createdAt: 1000, status: 'running' });
+      mockGenerationJobManager.claimTerminalJob.mockResolvedValue(null);
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue(null);
+      mockGenerationJobManager.finalizeStoreLostGeneration.mockImplementation(
+        async (_streamId, _createdAt, options) => {
+          await options?.beforePublish?.();
+          return true;
+        },
+      );
+      mockSaveMessage.mockResolvedValue({ persisted: true });
+    });
+
+    it('saves the partial response before finalizing a lost claim', async () => {
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+      const released = waitForRequestRelease();
+
+      await AgentController(
+        createStoreLostRequest(),
+        createResumableResponse(),
+        jest.fn(),
+        jest.fn().mockResolvedValue({ client: createCompletingClient() }),
+        null,
+      );
+      await released;
+
+      expect(mockGenerationJobManager.getFenceOutcome).toHaveBeenCalledWith(
+        'conversation-123',
+        1000,
+      );
+      expect(mockGenerationJobManager.setStoreLostPersistence).toHaveBeenCalledWith(
+        'conversation-123',
+        1000,
+        expect.any(Function),
+      );
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledWith(
+        'conversation-123',
+        1000,
+        { beforePublish: expect.any(Function) },
+      );
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-123' }),
+        expect.objectContaining({
+          messageId: 'response-msg',
+          parentMessageId: 'user-msg',
+          content: partialContent,
+          unfinished: true,
+          error: false,
+        }),
+        expect.objectContaining({ context: expect.stringContaining('store loss') }),
+      );
+      expect(mockSaveMessage.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        mockDecrementPendingRequest.mock.invocationCallOrder[0],
+      );
+      expect(mockGenerationJobManager.publishTerminalClaim).not.toHaveBeenCalled();
+    });
+
+    it('leaves a replaced claim to its winner', async () => {
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('replaced');
+      const released = waitForRequestRelease();
+
+      await AgentController(
+        createStoreLostRequest(),
+        createResumableResponse(),
+        jest.fn(),
+        jest.fn().mockResolvedValue({ client: createCompletingClient() }),
+        null,
+      );
+      await released;
+
+      expect(mockGenerationJobManager.getFenceOutcome).toHaveBeenCalledWith(
+        'conversation-123',
+        1000,
+      );
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).not.toHaveBeenCalled();
+      expect(mockSaveMessage).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ messageId: 'response-msg' }),
+        expect.anything(),
+      );
+    });
+
+    it('finalizes a store-lost generation from the generic error branch', async () => {
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+      /** The terminal claim found no job, so completeJob wins nothing. */
+      mockGenerationJobManager.completeJob.mockResolvedValue(false);
+      const client = {
+        options: {},
+        sender: 'Agent',
+        savedMessageIds: new Set(),
+        skipSaveUserMessage: false,
+        sendMessage: jest.fn(async (_text, options) => {
+          options.onStart(userMessage, 'response-msg');
+          client.contentParts = partialContent;
+          throw new Error('Provider stream failed');
+        }),
+      };
+      const released = waitForRequestRelease();
+
+      await AgentController(
+        createStoreLostRequest(),
+        createResumableResponse(),
+        jest.fn(),
+        jest.fn().mockResolvedValue({ client }),
+        null,
+      );
+      await released;
+
+      expect(mockGenerationJobManager.completeJob).toHaveBeenCalledWith(
+        'conversation-123',
+        'Provider stream failed',
+        1000,
+        expect.objectContaining({ beforeErrorPublication: expect.any(Function) }),
+      );
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledTimes(1);
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ messageId: 'response-msg', unfinished: true, error: false }),
+        expect.objectContaining({ context: expect.stringContaining('store loss') }),
+      );
+    });
+
+    it('leaves a generic error alone when completeJob won the terminal claim', async () => {
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+      const client = {
+        options: {},
+        sender: 'Agent',
+        savedMessageIds: new Set(),
+        skipSaveUserMessage: false,
+        sendMessage: jest.fn(async (_text, options) => {
+          options.onStart(userMessage, 'response-msg');
+          throw new Error('Provider stream failed');
+        }),
+      };
+      const released = waitForRequestRelease();
+
+      await AgentController(
+        createStoreLostRequest(),
+        createResumableResponse(),
+        jest.fn(),
+        jest.fn().mockResolvedValue({ client }),
+        null,
+      );
+      await released;
+
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).not.toHaveBeenCalled();
+    });
+
+    it('finalizes a store-lost fence that surfaced as a provider abort', async () => {
+      const abortController = new AbortController();
+      mockGenerationJobManager.createJob.mockResolvedValue({
+        createdAt: 1000,
+        metadata: {
+          checkpointNamespace: '1000',
+          providerExecutionId: 'provider-segment-1',
+          providerDrained: true,
+        },
+        readyPromise: Promise.resolve(),
+        abortController,
+        emitter: { on: jest.fn() },
+      });
+      mockGenerationJobManager.getFenceOutcome.mockResolvedValue('store_lost');
+      const client = {
+        options: {},
+        sender: 'Agent',
+        savedMessageIds: new Set(),
+        skipSaveUserMessage: false,
+        sendMessage: jest.fn(async (_text, options) => {
+          options.onStart(userMessage, 'response-msg');
+          client.contentParts = partialContent;
+          abortController.abort();
+          throw new Error('Run aborted');
+        }),
+      };
+      const released = waitForRequestRelease();
+
+      await AgentController(
+        createStoreLostRequest(),
+        createResumableResponse(),
+        jest.fn(),
+        jest.fn().mockResolvedValue({ client }),
+        null,
+      );
+      await released;
+
+      expect(mockGenerationJobManager.finalizeStoreLostGeneration).toHaveBeenCalledTimes(1);
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ messageId: 'response-msg', unfinished: true }),
+        expect.anything(),
+      );
+      expect(mockGenerationJobManager.completeJob).not.toHaveBeenCalled();
+    });
   });
 
   it('claims terminal ownership before FINAL and always finishes the winning claim', async () => {

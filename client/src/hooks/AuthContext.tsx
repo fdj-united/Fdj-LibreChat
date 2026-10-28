@@ -26,6 +26,7 @@ import {
   getPostLoginRedirect,
   dropStoredRedirect,
   readStoredRedirect,
+  isTransientRequestError,
   clearComposerDraftStorage,
   clearRetainedFileDeletions,
   openFileDeletionRetention,
@@ -60,6 +61,11 @@ const endSessionClientState = (): void => {
   clearComposerDraftStorage();
 };
 
+/** Silent refreshes retried after a dropped connection or a 5xx before the session is ended. */
+export const SILENT_REFRESH_TRANSIENT_RETRIES = 3;
+/** Wait before asking for the user again once the user query has used up its own retries. */
+export const USER_RECOVERY_DELAY_MS = 5000;
+
 const AuthContextProvider = ({
   authConfig,
   children,
@@ -68,6 +74,7 @@ const AuthContextProvider = ({
   children: ReactNode;
 }) => {
   const isExternalRedirectRef = useRef(false);
+  const silentRefreshRetriesRef = useRef(0);
   const [user, setUser] = useRecoilState(store.user);
   const logoutRedirectRef = useRef<string | undefined>(undefined);
   const [token, setToken] = useState<string | undefined>(undefined);
@@ -223,6 +230,7 @@ const AuthContextProvider = ({
         if (isExternalRedirectRef.current) {
           return;
         }
+        silentRefreshRetriesRef.current = 0;
         const { user, token = '' } = data ?? {};
         if (token) {
           const storedRedirect = readStoredRedirect();
@@ -255,6 +263,17 @@ const AuthContextProvider = ({
           return;
         }
         console.log('refreshToken mutation error:', error);
+        /** A dropped connection or a 5xx is not a rejected session: retry with backoff and keep
+         * the drafts, instead of sending the user to the login page during a server restart. */
+        if (
+          isTransientRequestError(error) &&
+          silentRefreshRetriesRef.current < SILENT_REFRESH_TRANSIENT_RETRIES
+        ) {
+          const attempt = silentRefreshRetriesRef.current++;
+          setTimeout(() => silentRefresh(), 1000 * 2 ** attempt);
+          return;
+        }
+        silentRefreshRetriesRef.current = 0;
         endSessionClientState();
         setIsAuthReady(true);
         if (authConfig?.test === true) {
@@ -274,7 +293,7 @@ const AuthContextProvider = ({
     }
     if (userQuery.data) {
       setUser(userQuery.data);
-    } else if (userQuery.isError) {
+    } else if (userQuery.isError && !isTransientRequestError(userQuery.error)) {
       endSessionClientState();
       doSetError((userQuery.error as Error).message);
       setIsAuthReady(true);
@@ -303,6 +322,19 @@ const AuthContextProvider = ({
     silentRefresh,
     setUserContext,
   ]);
+
+  /** The user query gave up on a dropped connection or a 5xx: the session is still valid, so
+   * keep the user signed in and ask again after a pause until the server answers. */
+  const { isError: userQueryIsError, error: userQueryError, refetch: refetchUser } = userQuery;
+  useEffect(() => {
+    if (!userQueryIsError || !isTransientRequestError(userQueryError)) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      refetchUser();
+    }, USER_RECOVERY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [userQueryIsError, userQueryError, refetchUser]);
 
   useEffect(() => {
     const handleTokenUpdate = (event: CustomEvent<string>) => {

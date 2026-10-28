@@ -104,6 +104,8 @@ const cacheConfig: {
   REDIS_READONLY_RECOVERY_INTERVAL: number;
   /** Queue commands when disconnected */
   REDIS_ENABLE_OFFLINE_QUEUE: boolean;
+  /** Queue cache (Keyv) commands when disconnected; ioredis keeps REDIS_ENABLE_OFFLINE_QUEUE */
+  REDIS_KEYV_ENABLE_OFFLINE_QUEUE: boolean;
   /** flag to modify redis connection by adding dnsLookup this is required when connecting to elasticache for ioredis
    * see "Special Note: Aws Elasticache Clusters with TLS" on this webpage:  https://www.npmjs.com/package/ioredis **/
   REDIS_USE_ALTERNATIVE_DNS_LOOKUP: boolean;
@@ -161,6 +163,73 @@ const cacheConfig: {
    * @default 5000 (5 seconds)
    */
   MCP_REGISTRY_CACHE_TTL: number;
+  /**
+   * Classify a generation fence whose job hash and generation epoch are both gone as a lost
+   * store (Redis restarted without persistence, or was flushed) rather than a replacement.
+   * The stream then ends with an error frame, the partial response is saved and the epoch is
+   * re-seeded. `false` restores the replacement handling for every fence.
+   * @default true
+   */
+  GENERATION_STORE_LOST_DETECTION: boolean;
+  /**
+   * Backstop in ms: when the request controller has not finalized a store-lost generation
+   * within this window, the manager saves the partial response (through the controller's
+   * registered save), publishes the error frame and cleans up on its own. It also bounds how
+   * long an unreachable store is probed and how long failed appends are retried.
+   * Values below 1000 are raised to 1000.
+   * @default 15000
+   */
+  GENERATION_STORE_LOST_TERMINAL_GRACE_MS: number;
+  /**
+   * `true` restores fencing (stopping) a generation as soon as a durable chunk append throws.
+   * The default retries thrown appends in order, because an unreachable store is not proof
+   * that another generation took over; an append the store rejects still fences.
+   * @default false
+   */
+  GENERATION_FENCE_ON_APPEND_ERROR: boolean;
+  /**
+   * Owner lease for running providers. The owner refreshes a short-TTL lease while its
+   * provider runs and marks the execution as lease-aware, so a successor can treat an
+   * expired lease as a dead owner instead of waiting for proofs it will never write.
+   * `false` writes no capability marker, so every successor stays strict.
+   * @default true
+   */
+  GENERATION_OWNER_LEASE_ENABLED: boolean;
+  /**
+   * Owner lease TTL in ms. Must be at least 3x the refresh interval.
+   * @default 20000 (20 seconds)
+   */
+  GENERATION_OWNER_LEASE_TTL_MS: number;
+  /**
+   * Owner lease refresh interval in ms. Clamped to TTL / 3.
+   * @default 5000 (5 seconds)
+   */
+  GENERATION_OWNER_LEASE_REFRESH_MS: number;
+  /**
+   * Abort the owner's own provider when no lease renewal has succeeded for TTL - 1.5 x refresh,
+   * so a successor's "lease absent" inference holds across an owner-only partition.
+   * @default true
+   */
+  GENERATION_OWNER_LEASE_SELF_FENCE: boolean;
+  /**
+   * Before replacing a generation whose owner lease expired, save its partial output from
+   * the durable chunk log and record the dead owner's drain.
+   * @default true
+   */
+  GENERATION_ORPHAN_SALVAGE_ENABLED: boolean;
+  /**
+   * Finish a generation whose owner lease expired without waiting for the next turn or Stop:
+   * replicas relaying it to a subscriber check the lease every refresh interval, and every
+   * replica sweeps running jobs periodically. Only effective with the owner lease and the
+   * orphan salvage enabled.
+   * @default true
+   */
+  GENERATION_ORPHAN_SWEEP_ENABLED: boolean;
+  /**
+   * Interval in ms of the orphaned generation sweep over all running jobs. Minimum 5000.
+   * @default 30000 (30 seconds)
+   */
+  GENERATION_ORPHAN_SWEEP_INTERVAL_MS: number;
 } = {
   FORCED_IN_MEMORY_CACHE_NAMESPACES,
   USE_REDIS,
@@ -189,6 +258,11 @@ const cacheConfig: {
   REDIS_READONLY_RECOVERY_INTERVAL: math(process.env.REDIS_READONLY_RECOVERY_INTERVAL, 5000),
   /** Queue commands when disconnected */
   REDIS_ENABLE_OFFLINE_QUEUE: isEnabled(process.env.REDIS_ENABLE_OFFLINE_QUEUE ?? 'true'),
+  /** Defaults to REDIS_ENABLE_OFFLINE_QUEUE. `false` makes cache reads (user principals, roles)
+   * fail fast during a Redis outage instead of hanging, while ioredis still queues. */
+  REDIS_KEYV_ENABLE_OFFLINE_QUEUE: isEnabled(
+    process.env.REDIS_KEYV_ENABLE_OFFLINE_QUEUE ?? process.env.REDIS_ENABLE_OFFLINE_QUEUE ?? 'true',
+  ),
   /** flag to modify redis connection by adding dnsLookup this is required when connecting to elasticache for ioredis
    * see "Special Note: Aws Elasticache Clusters with TLS" on this webpage:  https://www.npmjs.com/package/ioredis **/
   REDIS_USE_ALTERNATIVE_DNS_LOOKUP: isEnabled(process.env.REDIS_USE_ALTERNATIVE_DNS_LOOKUP),
@@ -245,6 +319,25 @@ const cacheConfig: {
    * @default 5000 (5 seconds)
    */
   MCP_REGISTRY_CACHE_TTL: math(process.env.MCP_REGISTRY_CACHE_TTL, 5000),
+
+  GENERATION_STORE_LOST_DETECTION: isEnabled(process.env.GENERATION_STORE_LOST_DETECTION ?? 'true'),
+  GENERATION_STORE_LOST_TERMINAL_GRACE_MS: math(
+    process.env.GENERATION_STORE_LOST_TERMINAL_GRACE_MS,
+    15000,
+  ),
+  GENERATION_FENCE_ON_APPEND_ERROR: isEnabled(process.env.GENERATION_FENCE_ON_APPEND_ERROR),
+
+  GENERATION_OWNER_LEASE_ENABLED: isEnabled(process.env.GENERATION_OWNER_LEASE_ENABLED ?? 'true'),
+  GENERATION_OWNER_LEASE_TTL_MS: math(process.env.GENERATION_OWNER_LEASE_TTL_MS, 20000),
+  GENERATION_OWNER_LEASE_REFRESH_MS: math(process.env.GENERATION_OWNER_LEASE_REFRESH_MS, 5000),
+  GENERATION_OWNER_LEASE_SELF_FENCE: isEnabled(
+    process.env.GENERATION_OWNER_LEASE_SELF_FENCE ?? 'true',
+  ),
+  GENERATION_ORPHAN_SALVAGE_ENABLED: isEnabled(
+    process.env.GENERATION_ORPHAN_SALVAGE_ENABLED ?? 'true',
+  ),
+  GENERATION_ORPHAN_SWEEP_ENABLED: isEnabled(process.env.GENERATION_ORPHAN_SWEEP_ENABLED ?? 'true'),
+  GENERATION_ORPHAN_SWEEP_INTERVAL_MS: math(process.env.GENERATION_ORPHAN_SWEEP_INTERVAL_MS, 30000),
 };
 
 export { cacheConfig };

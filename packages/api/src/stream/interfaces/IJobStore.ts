@@ -109,6 +109,57 @@ export type GenerationSettlementState = Pick<
   'createdAt' | 'status' | 'terminalPersistencePending'
 >;
 
+/** One consistent read of a stream's durable generation identity: the live job's
+ * `createdAt` and the retained generation epoch. `null` means the key is absent. */
+export interface GenerationPresence {
+  jobCreatedAt: number | null;
+  epoch: number | null;
+}
+
+/** Owner lease written atomically with a provider begin. The owner refreshes it
+ * while the provider runs, so a successor can tell a dead owner from a slow one. */
+export interface ProviderLeaseOptions {
+  ttlMs: number;
+  /** Diagnostic owner identity (host:pid), stored as the lease value. */
+  ownerId: string;
+}
+
+/** Manager-level owner lease settings (GENERATION_OWNER_LEASE_*). */
+export interface GenerationOwnerLeaseConfig {
+  /** `false` writes no lease or capability marker; every successor stays strict. */
+  enabled: boolean;
+  ttlMs: number;
+  /** Validated to at most `ttlMs / 3`. */
+  refreshMs: number;
+  /** Abort the owner's own provider once no renewal has confirmed for `ttlMs - 1.5 * refreshMs`. */
+  selfFence: boolean;
+}
+
+/** One exact provider execution segment. */
+export interface ProviderExecutionRef {
+  streamId: string;
+  createdAt: number;
+  providerExecutionId: string;
+}
+
+/** Lease view of one provider execution, read in one same-slot round trip.
+ * `capable` means a lease-aware owner began it; without it the lease's
+ * absence proves nothing and every waiter stays strict. */
+export interface ProviderLeaseState {
+  capable: boolean;
+  leased: boolean;
+  held: boolean;
+  owner: string | null;
+  /** Remaining lease time; a live owner keeps it above `ttlMs - refreshMs`. */
+  leaseTtlMs: number | null;
+}
+
+/** Outcome of presuming an orphaned provider drained: 0 = not presumable
+ * (lease present, not capable, or held); 1 = the exact generation's hash was
+ * flipped to drained; 2 = presumable, but the hash already belongs to another
+ * generation (or was already drained), so nothing was written to it. */
+export type OrphanedProviderDrainResult = 0 | 1 | 2;
+
 /** Serializable job data without object references, suitable for external storage. */
 export interface SerializableJobData {
   streamId: string;
@@ -936,6 +987,52 @@ export interface IJobStore {
 
   deleteJob(streamId: string, expectedCreatedAt?: number): Promise<boolean>;
   hasJob(streamId: string): Promise<boolean>;
+  /** Optional read-only probe that tells a lost store (job and epoch both gone)
+   * apart from a replacement. Stores without it keep the replacement handling. */
+  getGenerationPresence?(streamId: string): Promise<GenerationPresence>;
+  /** Refresh the owner lease of every listed execution. Resolves one flag per
+   * entry (true when its lease was written). Optional: stores without it keep
+   * no leases, so no execution they begin is ever marked capable. */
+  renewProviderLeases?(
+    executions: ProviderExecutionRef[],
+    lease: ProviderLeaseOptions,
+  ): Promise<boolean[]>;
+
+  /** Best-effort lease removal once the owner recorded its drain. */
+  releaseProviderLease?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<void>;
+
+  /** Mark an execution whose owner deliberately records no drain, so a lapsed
+   * lease is never read as "presumed drained". */
+  holdProviderExecution?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<void>;
+
+  getProviderLeaseState?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+  ): Promise<ProviderLeaseState>;
+
+  /** Single-winner claim to salvage one orphaned generation's partial output, so
+   * racing successors save it once. Resolves true for the winner. */
+  claimOrphanSalvage?(streamId: string, createdAt: number): Promise<boolean>;
+  /** Give the claim back after a failed salvage so a later successor can retry it. */
+  releaseOrphanSalvage?(streamId: string, createdAt: number): Promise<void>;
+
+  /** Atomically re-check that the capable owner's lease is gone and not held,
+   * then mark the exact generation's provider drained on the owner's behalf. */
+  recoverOrphanedProviderExecution?(
+    streamId: string,
+    createdAt: number,
+    providerExecutionId: string,
+    nowMs: number,
+  ): Promise<OrphanedProviderDrainResult>;
   getRunningJobs(): Promise<SerializableJobData[]>;
   /** Optional durable paused-job enumeration. Built-in stores implement it so
    * the manager can own approval expiry even after the original runtime died. */
@@ -1081,11 +1178,14 @@ export interface IJobStoreV2 extends IJobStore {
     providerExecutionId: string,
   ): Promise<boolean>;
 
-  /** Activates the provider only while its exact generation is still running. */
+  /** Activates the provider only while its exact generation is still running.
+   * With `lease`, the same atomic step writes the owner lease and its capability
+   * marker; without it nothing beyond the hash is written. */
   beginProviderExecution(
     streamId: string,
     expectedCreatedAt: number,
     providerExecutionId: string,
+    lease?: ProviderLeaseOptions,
   ): Promise<boolean>;
 
   /** Includes terminal jobs whose provider still owns user-data writes. */
@@ -1697,6 +1797,12 @@ export interface IEventTransport {
    */
   emitError(streamId: string, error: string, generationId?: number): void | Promise<void>;
 
+  /**
+   * Unsequenced error frame, delivered immediately instead of behind subscribers'
+   * reorder buffers. Used when the sequence counter was lost with the store.
+   */
+  emitUnsequencedError?(streamId: string, error: string, generationId?: number): Promise<void>;
+
   /** Optional live-view demand marker used by observational streams that do not replay. */
   renewDemand?(streamId: string, ttlMs: number): void | Promise<void>;
 
@@ -1718,6 +1824,8 @@ export interface IEventTransport {
   /** Persist proof that this process synchronously stopped the exact generation.
    * A delayed replacement can use the proof after the owner's listeners retire. */
   recordAbortAcknowledgement?(streamId: string, generationId: number): Promise<boolean>;
+  /** Read the durable abort proof written by the owner (or on its behalf). */
+  hasAbortAcknowledgement?(streamId: string, generationId: number): Promise<boolean>;
 
   /** Persist/read exact proof that a provider segment can no longer mutate user data. */
   recordProviderDrain?(
