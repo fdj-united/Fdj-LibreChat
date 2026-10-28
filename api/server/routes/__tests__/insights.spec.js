@@ -5,6 +5,10 @@ const mockCreateInsightsAccessHandler = jest.fn(() => (_req, res) => res.json({ 
 const mockCreateInsightsHandler = jest.fn(() => (_req, res) => res.json({ summary: {} }));
 const mockGetAccessibleAgents = jest.fn();
 const mockGetInsights = jest.fn();
+const mockConfigMiddleware = jest.fn((req, _res, next) => {
+  req.config = { insights: { privacy: { includeFirstMessage: false } } };
+  next();
+});
 let mockResolverCreateCount = 0;
 let mockAccessHandlerDeps;
 let mockDashboardHandlerDeps;
@@ -27,6 +31,7 @@ jest.mock('@librechat/api', () => ({
 }));
 
 jest.mock('~/server/middleware', () => ({
+  configMiddleware: (...args) => mockConfigMiddleware(...args),
   requireJwtAuth: (req, _res, next) => {
     req.user = mockUser;
     next();
@@ -61,10 +66,15 @@ describe('Insights routes', () => {
       status: 200,
       body: { access: true },
     });
+    expect(mockConfigMiddleware).not.toHaveBeenCalled();
     await expect(request(app).get('/api/insights')).resolves.toMatchObject({
       status: 200,
       body: { summary: {} },
     });
+    expect(mockConfigMiddleware).toHaveBeenCalledTimes(1);
+    expect(mockConfigMiddleware.mock.calls[0][0].config.insights.privacy.includeFirstMessage).toBe(
+      false,
+    );
   });
 
   it('uses one shared agent access resolver for both handlers', () => {

@@ -1,10 +1,10 @@
 import type { Agents } from 'librechat-data-provider';
 import type {
+  AbortResult,
   ProviderExecutionRef,
   ProviderLeaseOptions,
   ProviderLeaseState,
 } from '~/stream/interfaces/IJobStore';
-import type { AbortResult } from '~/stream/GenerationJobManager';
 import { InMemoryEventTransport } from '~/stream/implementations/InMemoryEventTransport';
 import { InMemoryJobStore } from '~/stream/implementations/InMemoryJobStore';
 import { GenerationJobManagerClass } from '~/stream/GenerationJobManager';

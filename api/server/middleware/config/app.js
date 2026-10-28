@@ -1,5 +1,9 @@
 const { logger } = require('@librechat/data-schemas');
-const { getAppConfigOptionsFromUser, createStreamKeepaliveLoader } = require('@librechat/api');
+const {
+  getSafeErrorMetadata,
+  getAppConfigOptionsFromUser,
+  createStreamKeepaliveLoader,
+} = require('@librechat/api');
 const { getAppConfig } = require('~/server/services/Config');
 
 const configMiddleware = async (req, res, next) => {
