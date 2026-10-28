@@ -206,8 +206,13 @@ const ORPHAN_SALVAGE_TIMEOUT_MS = 5_000;
 const ORPHAN_SNAPSHOT_READ_TIMEOUT_MS = 2_000;
 /** Bound for writing the hold marker of an abandoned provider execution. */
 const PROVIDER_HOLD_WRITE_TIMEOUT_MS = 2_000;
+/** Orphan sweep defaults (GENERATION_ORPHAN_SWEEP_*). */
+const DEFAULT_ORPHAN_SWEEP_INTERVAL_MS = 30_000;
+const MIN_ORPHAN_SWEEP_INTERVAL_MS = 5_000;
 
-type PresumedDrainPath = 'abort_ack' | 'drain' | 'salvage';
+/** Who finished a dead owner's generation without a replacement turn. */
+type OrphanFinishPath = 'subscriber' | 'sweep';
+type PresumedDrainPath = 'abort_ack' | 'drain' | 'salvage' | OrphanFinishPath;
 
 function resolveOwnerLeaseConfig(
   config: Partial<GenerationOwnerLeaseConfig> | undefined,
@@ -1042,6 +1047,16 @@ class GenerationJobManagerClass {
   private readonly orphanSnapshots = new Map<string, OrphanSnapshot>();
   private readonly presumedOrphanAborts = new Set<string>();
   private readonly ownerLeaseId = `${hostname()}:${process.pid}`;
+  /** Finishing a dead owner's generation without a replacement turn (GENERATION_ORPHAN_SWEEP_*). */
+  private _orphanSweep = true;
+  private _orphanSweepIntervalMs = DEFAULT_ORPHAN_SWEEP_INTERVAL_MS;
+  private orphanSweepTimer: NodeJS.Timeout | null = null;
+  private orphanSweepRunning = false;
+  /** Watches the owner lease of generations this process only relays to subscribers. */
+  private orphanWatchdogTimer: NodeJS.Timeout | null = null;
+  /** In-flight orphan checks keyed `streamId:createdAt`, so a generation is checked once
+   * at a time no matter how many subscribers or which path asks. */
+  private readonly orphanFinishes = new Map<string, Promise<boolean>>();
 
   /** Whether we're using Redis stores */
   private _isRedis = false;
@@ -1101,6 +1116,13 @@ class GenerationJobManagerClass {
       this.cleanupInterval.unref();
     }
 
+    if (this.orphanSweepActive()) {
+      this.orphanSweepTimer = setInterval(() => {
+        void this.sweepOrphanedGenerations();
+      }, this._orphanSweepIntervalMs);
+      this.orphanSweepTimer.unref?.();
+    }
+
     logger.debug('[GenerationJobManager] Initialized');
   }
 
@@ -1132,9 +1154,13 @@ class GenerationJobManagerClass {
     ownerLease?: Partial<GenerationOwnerLeaseConfig>;
     /** `false` skips the pre-create salvage of an orphaned predecessor. */
     orphanSalvage?: boolean;
+    /** `false` leaves a dead owner's generation running until a replacement or Stop. */
+    orphanSweep?: boolean;
+    orphanSweepIntervalMs?: number;
   }): void {
     assertJobStoreV2(services.jobStore);
     this.cancelFencedRuntimeRetirements();
+    this.stopOrphanTimers();
     const previousStore = this.storeLabel;
     if (this.cleanupInterval) {
       logger.warn(
@@ -1208,6 +1234,11 @@ class GenerationJobManagerClass {
     this._fenceOnAppendError = services.fenceOnAppendError ?? false;
     this._ownerLease = resolveOwnerLeaseConfig(services.ownerLease);
     this._orphanSalvage = services.orphanSalvage ?? true;
+    this._orphanSweep = services.orphanSweep ?? true;
+    this._orphanSweepIntervalMs =
+      services.orphanSweepIntervalMs != null && Number.isFinite(services.orphanSweepIntervalMs)
+        ? Math.max(MIN_ORPHAN_SWEEP_INTERVAL_MS, Math.floor(services.orphanSweepIntervalMs))
+        : DEFAULT_ORPHAN_SWEEP_INTERVAL_MS;
     this.shuttingDown = false;
     this.syncRunningJobMetrics();
 
@@ -5540,6 +5571,7 @@ class GenerationJobManagerClass {
         };
       }
       this.startSubscriberLease(streamId, runtime);
+      this.ensureOrphanWatchdog();
       const subscriberClaim = (runtime.subscriberStateWrite ?? Promise.resolve())
         .then(async () => {
           const firstSubscriber = await this.jobStore.claimFirstSubscriber(
@@ -9674,29 +9706,21 @@ class GenerationJobManagerClass {
 
     let timer: NodeJS.Timeout | undefined;
     const salvage = (async () => {
-      const presumed = await this.presumeOrphanedProviderDrained(
+      const result = await this.abortOrphanedGeneration(
         streamId,
-        observed.createdAt,
+        observed,
         providerExecutionId,
         'salvage',
       );
-      if (presumed !== 'drained') {
+      if (result === undefined) {
         return;
       }
-      if (observed.status !== 'running') {
+      if (result === null) {
         logger.warn(
           `[GenerationJobManager] Recovered orphaned generation drain ${streamId}@${observed.createdAt} before replacement (status=${observed.status})`,
         );
         return;
       }
-      await this.eventTransport.recordAbortAcknowledgement?.(streamId, observed.createdAt);
-      const handler = this.orphanedGenerationHandler;
-      const result = await this.abortJob(streamId, {
-        expectedCreatedAt: observed.createdAt,
-        ...(handler != null && {
-          beforePublish: (pending: AbortResult) => handler(streamId, pending),
-        }),
-      });
       logger.warn(
         `[GenerationJobManager] Salvaged orphaned generation ${streamId}@${observed.createdAt} before replacement (status=${observed.status}, parts=${result.content.length}, aborted=${result.success})`,
       );
@@ -9722,6 +9746,211 @@ class GenerationJobManagerClass {
       if (timer) {
         clearTimeout(timer);
       }
+    }
+  }
+
+  /**
+   * Record a dead owner's drain on its behalf and, while the generation still looks
+   * running, abort it through the normal abort path so the host hook saves the partial
+   * output and subscribers get a terminal frame. Resolves undefined when the drain could
+   * not be presumed (the owner renewed, or is strict), and null when the generation had
+   * already stopped and only its drain was recovered.
+   */
+  private async abortOrphanedGeneration(
+    streamId: string,
+    observed: SerializableJobData,
+    providerExecutionId: string,
+    path: PresumedDrainPath,
+  ): Promise<AbortResult | null | undefined> {
+    const presumed = await this.presumeOrphanedProviderDrained(
+      streamId,
+      observed.createdAt,
+      providerExecutionId,
+      path,
+    );
+    if (presumed !== 'drained') {
+      return undefined;
+    }
+    if (observed.status !== 'running') {
+      return null;
+    }
+    await this.eventTransport.recordAbortAcknowledgement?.(streamId, observed.createdAt);
+    const handler = this.orphanedGenerationHandler;
+    return this.abortJob(streamId, {
+      expectedCreatedAt: observed.createdAt,
+      ...(handler != null && {
+        beforePublish: (pending: AbortResult) => handler(streamId, pending),
+      }),
+    });
+  }
+
+  /** Whether dead owners' generations are finished without waiting for a replacement:
+   * needs the owner lease, the orphan salvage and a store that can recover a drain. */
+  private orphanSweepActive(): boolean {
+    return (
+      this._orphanSweep &&
+      this._ownerLease.enabled &&
+      this._orphanSalvage &&
+      this.jobStore.getProviderLeaseState != null &&
+      this.jobStore.recoverOrphanedProviderExecution != null
+    );
+  }
+
+  private stopOrphanTimers(): void {
+    if (this.orphanSweepTimer != null) {
+      clearInterval(this.orphanSweepTimer);
+      this.orphanSweepTimer = null;
+    }
+    if (this.orphanWatchdogTimer != null) {
+      clearInterval(this.orphanWatchdogTimer);
+      this.orphanWatchdogTimer = null;
+    }
+  }
+
+  /**
+   * Finish a running generation whose lease-aware owner died, without a replacement turn:
+   * the same salvage a replacement does (drain recovered on the owner's behalf, partial
+   * saved by the host hook, terminal frame to subscribers). Only a lapsed lease counts,
+   * exactly as for a replacement; a live owner's lease never runs below `ttl - refresh`.
+   * The durable salvage claim makes racing replicas do it once. Resolves true when this
+   * call finished the generation.
+   */
+  private finishOrphanedGeneration(
+    streamId: string,
+    createdAt: number,
+    path: OrphanFinishPath,
+    observed?: SerializableJobData,
+  ): Promise<boolean> {
+    const key = `${streamId}:${createdAt}`;
+    const inFlight = this.orphanFinishes.get(key);
+    if (inFlight != null) {
+      return inFlight;
+    }
+    const finish = this.runOrphanFinish(streamId, createdAt, path, observed)
+      .catch((error) => {
+        logger.warn(
+          `[GenerationJobManager] Failed to finish orphaned generation ${streamId}@${createdAt}:`,
+          error,
+        );
+        return false;
+      })
+      .finally(() => {
+        this.orphanFinishes.delete(key);
+      });
+    this.orphanFinishes.set(key, finish);
+    return finish;
+  }
+
+  private async runOrphanFinish(
+    streamId: string,
+    createdAt: number,
+    path: OrphanFinishPath,
+    observed?: SerializableJobData,
+  ): Promise<boolean> {
+    const getState = this.jobStore.getProviderLeaseState;
+    if (this.shuttingDown || !this.orphanSweepActive() || getState == null) {
+      return false;
+    }
+    const job = observed ?? (await this.jobStore.getJob(streamId));
+    const providerExecutionId = job?.providerExecutionId;
+    if (
+      job == null ||
+      job.createdAt !== createdAt ||
+      job.status !== 'running' ||
+      job.providerDrained !== false ||
+      !providerExecutionId ||
+      this.ownedJobs.get(streamId) === createdAt ||
+      this.openProviderExecutions.has(
+        this.providerExecutionKey(streamId, createdAt, providerExecutionId),
+      )
+    ) {
+      return false;
+    }
+    const state = await getState.call(this.jobStore, streamId, createdAt, providerExecutionId);
+    if (!state.capable || state.held || state.leased) {
+      return false;
+    }
+    if (!((await this.jobStore.claimOrphanSalvage?.(streamId, createdAt)) ?? true)) {
+      return false;
+    }
+    let result: AbortResult | null | undefined;
+    try {
+      result = await this.abortOrphanedGeneration(streamId, job, providerExecutionId, path);
+    } finally {
+      if (result == null) {
+        /** Nothing was finished (a renewal won the race, or the abort threw): give the
+         *  claim back so a later check or a replacement can still salvage it. */
+        await this.jobStore.releaseOrphanSalvage?.(streamId, createdAt).catch(() => undefined);
+      }
+    }
+    if (result == null) {
+      return false;
+    }
+    logger.warn(
+      `[GenerationJobManager] Salvaged orphaned generation ${streamId}@${createdAt} after its owner lease lapsed (path=${path}, parts=${result.content.length}, aborted=${result.success})`,
+    );
+    return result.success;
+  }
+
+  /** One watchdog timer for every generation this process relays to a local subscriber. */
+  private ensureOrphanWatchdog(): void {
+    if (this.orphanWatchdogTimer != null || !this.orphanSweepActive()) {
+      return;
+    }
+    this.orphanWatchdogTimer = setInterval(() => {
+      this.checkSubscribedOrphans();
+    }, this._ownerLease.refreshMs);
+    this.orphanWatchdogTimer.unref?.();
+  }
+
+  /** Check the owner lease of each subscribed generation another process owns; the timer
+   * stops itself once there is none left to watch. */
+  private checkSubscribedOrphans(): void {
+    let watching = false;
+    for (const [streamId, runtime] of this.runtimeState) {
+      if (
+        !runtime.hasSubscriber ||
+        runtime.finalEvent != null ||
+        runtime.errorEvent != null ||
+        this.ownedJobs.get(streamId) === runtime.createdAt
+      ) {
+        continue;
+      }
+      watching = true;
+      void this.finishOrphanedGeneration(streamId, runtime.createdAt, 'subscriber');
+    }
+    if (!watching && this.orphanWatchdogTimer != null) {
+      clearInterval(this.orphanWatchdogTimer);
+      this.orphanWatchdogTimer = null;
+    }
+  }
+
+  /**
+   * Finish dead owners' generations nobody is subscribed to (or whose subscribers' pods
+   * died too). Runs on every replica: the durable salvage claim and the abort's terminal
+   * CAS make concurrent sweeps finish each generation once.
+   */
+  private async sweepOrphanedGenerations(): Promise<void> {
+    if (this.orphanSweepRunning || this.shuttingDown || !this.orphanSweepActive()) {
+      return;
+    }
+    this.orphanSweepRunning = true;
+    try {
+      const jobs = await this.jobStore.getRunningJobs();
+      for (const job of jobs) {
+        if (
+          job.providerDrained !== false ||
+          !job.providerExecutionId ||
+          this.ownedJobs.get(job.streamId) === job.createdAt
+        ) {
+          continue;
+        }
+        await this.finishOrphanedGeneration(job.streamId, job.createdAt, 'sweep', job);
+      }
+    } catch (error) {
+      logger.warn('[GenerationJobManager] Orphaned generation sweep failed:', error);
+    } finally {
+      this.orphanSweepRunning = false;
     }
   }
 
@@ -11079,6 +11308,7 @@ class GenerationJobManagerClass {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
+    this.stopOrphanTimers();
 
     for (const runtime of this.runtimeState.values()) {
       runtime.startupTelemetry?.end('aborted');

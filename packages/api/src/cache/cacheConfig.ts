@@ -217,6 +217,19 @@ const cacheConfig: {
    * @default true
    */
   GENERATION_ORPHAN_SALVAGE_ENABLED: boolean;
+  /**
+   * Finish a generation whose owner lease expired without waiting for the next turn or Stop:
+   * replicas relaying it to a subscriber check the lease every refresh interval, and every
+   * replica sweeps running jobs periodically. Only effective with the owner lease and the
+   * orphan salvage enabled.
+   * @default true
+   */
+  GENERATION_ORPHAN_SWEEP_ENABLED: boolean;
+  /**
+   * Interval in ms of the orphaned generation sweep over all running jobs. Minimum 5000.
+   * @default 30000 (30 seconds)
+   */
+  GENERATION_ORPHAN_SWEEP_INTERVAL_MS: number;
 } = {
   FORCED_IN_MEMORY_CACHE_NAMESPACES,
   USE_REDIS,
@@ -324,6 +337,8 @@ const cacheConfig: {
   GENERATION_ORPHAN_SALVAGE_ENABLED: isEnabled(
     process.env.GENERATION_ORPHAN_SALVAGE_ENABLED ?? 'true',
   ),
+  GENERATION_ORPHAN_SWEEP_ENABLED: isEnabled(process.env.GENERATION_ORPHAN_SWEEP_ENABLED ?? 'true'),
+  GENERATION_ORPHAN_SWEEP_INTERVAL_MS: math(process.env.GENERATION_ORPHAN_SWEEP_INTERVAL_MS, 30000),
 };
 
 export { cacheConfig };

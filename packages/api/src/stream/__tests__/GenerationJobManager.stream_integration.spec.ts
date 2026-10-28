@@ -4854,6 +4854,36 @@ describe('GenerationJobManager Integration Tests', () => {
       expect(handler).toHaveBeenCalledTimes(1);
     }, 40000);
 
+    test('ends a resumed stream once the dead owner lease lapses, with no new turn', async () => {
+      const { owner, subscriber, streamId, job, executionId } = await startOwner('watchdog');
+      const { manager: relay } = createReplica();
+      const { manager: bystander } = createReplica();
+      const handler = jest.fn();
+      relay.setOrphanedGenerationHandler(handler);
+      bystander.setOrphanedGenerationHandler(handler);
+      const done = new Promise<Record<string, unknown>>((resolve) => {
+        void relay.subscribe(
+          streamId,
+          () => undefined,
+          (event) => resolve(event as Record<string, unknown>),
+        );
+      });
+      killOwner(owner, subscriber);
+
+      const finalEvent = await done;
+
+      expect(finalEvent).toMatchObject({ final: true, aborted: true });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][1].content).toEqual([
+        expect.objectContaining({ type: 'text', text: 'Hello dead owner' }),
+      ]);
+      expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(1);
+      expect(await relay.getJobStore().getJob(streamId)).toMatchObject({
+        createdAt: job.createdAt,
+        status: 'aborted',
+      });
+    }, 20000);
+
     test('two successors racing after a fresh kill salvage once', async () => {
       const { owner, subscriber, streamId } = await startOwner('race-fresh');
       const { manager: first } = createReplica();

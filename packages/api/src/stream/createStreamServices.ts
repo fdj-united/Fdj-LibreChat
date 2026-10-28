@@ -60,6 +60,9 @@ export interface StreamServices {
   ownerLease: GenerationOwnerLeaseConfig;
   /** GENERATION_ORPHAN_SALVAGE_ENABLED: save a dead owner's partial before replacing it. */
   orphanSalvage: boolean;
+  /** GENERATION_ORPHAN_SWEEP_*: finish a dead owner's generation without a replacement. */
+  orphanSweep: boolean;
+  orphanSweepIntervalMs: number;
 }
 
 function storeLostOptions(): Pick<
@@ -69,6 +72,8 @@ function storeLostOptions(): Pick<
   | 'fenceOnAppendError'
   | 'ownerLease'
   | 'orphanSalvage'
+  | 'orphanSweep'
+  | 'orphanSweepIntervalMs'
 > {
   return {
     storeLostDetection: cacheConfig.GENERATION_STORE_LOST_DETECTION,
@@ -81,6 +86,8 @@ function storeLostOptions(): Pick<
       selfFence: cacheConfig.GENERATION_OWNER_LEASE_SELF_FENCE,
     },
     orphanSalvage: cacheConfig.GENERATION_ORPHAN_SALVAGE_ENABLED,
+    orphanSweep: cacheConfig.GENERATION_ORPHAN_SWEEP_ENABLED,
+    orphanSweepIntervalMs: cacheConfig.GENERATION_ORPHAN_SWEEP_INTERVAL_MS,
   };
 }
 
