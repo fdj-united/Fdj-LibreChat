@@ -1,3 +1,4 @@
+import { getInsightsConfig } from 'librechat-data-provider';
 import type { TInsightsAgent, TInsightsResponse } from 'librechat-data-provider';
 import type { Response } from 'express';
 import type { ServerRequest } from '~/types';
@@ -40,10 +41,14 @@ const createResponse = () => {
   };
 };
 
-const createRequest = (query: ServerRequest['query'] = {}): ServerRequest =>
+const createRequest = (
+  query: ServerRequest['query'] = {},
+  insights?: ReturnType<typeof getInsightsConfig>,
+): ServerRequest =>
   ({
     query,
     user: { id: 'user-id', role: 'USER', tenantId: 'tenant-a' },
+    ...(insights ? { config: { config: { insights } } } : {}),
   }) as ServerRequest;
 
 const createDashboardHandler = (getInsights = jest.fn().mockResolvedValue(emptyInsights)) => ({
@@ -59,6 +64,54 @@ describe('Insights handlers', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     getAccessibleAgents.mockResolvedValue(agents);
+  });
+
+  it('applies category aliases only within the authorized agent selection', async () => {
+    getAccessibleAgents.mockResolvedValueOnce([
+      { ...agents[0], category: 'hr' },
+      { ...agents[1], category: 'Tech' },
+    ]);
+    const config = getInsightsConfig({
+      filters: { categories: true },
+      categoryAliases: { hr: 'HR' },
+    });
+    const { handler, getInsights } = createDashboardHandler();
+    const { response } = createResponse();
+    await handler(createRequest({ categories: ['HR'] }, config), response);
+    expect(getInsights).toHaveBeenCalledWith(
+      expect.objectContaining({ agentIds: ['agent-a'], insights: config }),
+    );
+  });
+
+  it('rejects a category unavailable to the authenticated user before loading data', async () => {
+    const { handler, getInsights } = createDashboardHandler();
+    const { response, status } = createResponse();
+    await handler(
+      createRequest(
+        { categories: ['Private team'] },
+        getInsightsConfig({ filters: { categories: true } }),
+      ),
+      response,
+    );
+    expect(status).toHaveBeenCalledWith(403);
+    expect(getInsights).not.toHaveBeenCalled();
+  });
+
+  it('does not let query parameters override the server privacy policy', async () => {
+    const config = getInsightsConfig({ privacy: { includeFirstMessage: false } });
+    const { handler, getInsights } = createDashboardHandler();
+    const { response } = createResponse();
+    await handler(createRequest({ includeFirstMessage: 'true' }, config), response);
+    expect(getInsights).toHaveBeenCalledWith(expect.objectContaining({ insights: config }));
+  });
+
+  it('ignores category parameters when category filtering is disabled', async () => {
+    const { handler, getInsights } = createDashboardHandler();
+    const { response } = createResponse();
+    await handler(createRequest({ categories: ['Private team'] }), response);
+    expect(getInsights).toHaveBeenCalledWith(
+      expect.objectContaining({ agentIds: ['agent-a', 'agent-b'] }),
+    );
   });
 
   it('returns access when at least one agent is accessible', async () => {
@@ -136,6 +189,7 @@ describe('Insights handlers', () => {
       fromTimestamp: undefined,
       toTimestamp: undefined,
       timeZone: undefined,
+      insights: getInsightsConfig(),
     });
     expect(json).toHaveBeenCalledWith(emptyInsights);
   });
