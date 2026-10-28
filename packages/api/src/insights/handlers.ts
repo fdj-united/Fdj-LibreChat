@@ -1,5 +1,7 @@
 import { logger } from '@librechat/data-schemas';
 import {
+  getInsightsConfig,
+  getInsightsCategory,
   INSIGHTS_SEARCH_MAX_LENGTH,
   INSIGHTS_SEARCH_MIN_LENGTH,
   INSIGHTS_AGENT_ID_MAX_LENGTH,
@@ -126,7 +128,33 @@ export function createInsightsHandler({
         res.status(403).json({ message: 'Forbidden' });
         return;
       }
-      const agentIds = requestedAgentIds.length > 0 ? requestedAgentIds : [...authorizedAgentIds];
+      const config = getInsightsConfig(req.config?.config?.insights);
+      const categories = [
+        ...new Set(
+          agents.map((agent) => getInsightsCategory(agent.category, config.categoryAliases)),
+        ),
+      ].sort();
+      const requestedCategories = config.filters.categories
+        ? stringValues(req.query.categories)
+        : [];
+      if (requestedCategories.some((category) => !categories.includes(category))) {
+        res.status(403).json({ message: 'Forbidden' });
+        return;
+      }
+      const selectedAgentIds =
+        requestedAgentIds.length > 0 ? requestedAgentIds : [...authorizedAgentIds];
+      const agentIds =
+        requestedCategories.length === 0
+          ? selectedAgentIds
+          : agents
+              .filter(
+                (agent) =>
+                  selectedAgentIds.includes(agent.id) &&
+                  requestedCategories.includes(
+                    getInsightsCategory(agent.category, config.categoryAliases),
+                  ),
+              )
+              .map((agent) => agent.id);
 
       const page = positiveInteger(req.query.page, 1);
       const pageSize = Math.min(50, Math.max(5, positiveInteger(req.query.pageSize, 10)));
@@ -147,6 +175,7 @@ export function createInsightsHandler({
         fromTimestamp: stringValue(req.query.fromTimestamp),
         toTimestamp: stringValue(req.query.toTimestamp),
         timeZone: timeZoneValue(req.query.timeZone),
+        insights: config,
       });
       res.json(insights);
     } catch (error) {

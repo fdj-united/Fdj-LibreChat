@@ -4,7 +4,13 @@ import type { TInsightsAgent } from 'librechat-data-provider';
 import type { Types } from 'mongoose';
 
 type Principal = { principalType: PrincipalType; principalId?: string | Types.ObjectId };
-type AgentRecord = { _id: Types.ObjectId; id: string; name?: string; tenantId?: string };
+type AgentRecord = {
+  _id: Types.ObjectId;
+  id: string;
+  name?: string;
+  tenantId?: string;
+  category?: string;
+};
 
 export type InsightsAccessUser = {
   id: string;
@@ -39,6 +45,7 @@ export type InsightsAgentAccessDeps = {
 const toChoice = (agent: AgentRecord): TInsightsAgent => ({
   id: agent.id,
   name: agent.name?.trim() || agent.id,
+  ...(agent.category ? { category: agent.category } : {}),
 });
 
 export function createInsightsAgentAccessResolver(deps: InsightsAgentAccessDeps) {
@@ -46,7 +53,7 @@ export function createInsightsAgentAccessResolver(deps: InsightsAgentAccessDeps)
     const tenantFilter = user.tenantId
       ? { tenantId: user.tenantId }
       : { tenantId: { $exists: false } };
-    const agentsPromise = deps.getAgents(tenantFilter, '_id id name tenantId');
+    const agentsPromise = deps.getAgents(tenantFilter, '_id id name tenantId category');
 
     if (user.role === SystemRoles.ADMIN) {
       return (await agentsPromise)

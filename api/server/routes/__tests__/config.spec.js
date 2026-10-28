@@ -486,6 +486,25 @@ describe('GET /api/config', () => {
       expect(response.body.insightsEnabled).toBe(true);
     });
 
+    it('should advertise the server Insights privacy and chart configuration', async () => {
+      mockGetAppConfig.mockResolvedValue({
+        ...baseAppConfig,
+        config: {
+          ...baseAppConfig.config,
+          insights: {
+            privacy: { includeFirstMessage: false },
+            charts: { usageByCategory: true },
+            categoryAliases: { privateCategory: 'Private team' },
+          },
+        },
+      });
+      const response = await request(createApp(mockUser)).get('/api/config');
+      expect(response.body.insights.privacy.includeFirstMessage).toBe(false);
+      expect(response.body.insights.charts.usageByCategory).toBe(true);
+      expect(response.body.insights.charts.usageByAgent).toBe(false);
+      expect(response.body.insights).not.toHaveProperty('categoryAliases');
+    });
+
     it('should advertise Langfuse fanout only when the toggle and collector URL are configured', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);
       mockHasCapability.mockResolvedValue(true);

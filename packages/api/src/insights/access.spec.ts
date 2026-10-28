@@ -29,7 +29,10 @@ describe('createInsightsAgentAccessResolver', () => {
       tenantId: 'tenant-a',
     });
 
-    expect(deps.getAgents).toHaveBeenCalledWith({ tenantId: 'tenant-a' }, '_id id name tenantId');
+    expect(deps.getAgents).toHaveBeenCalledWith(
+      { tenantId: 'tenant-a' },
+      '_id id name tenantId category',
+    );
     expect(deps.getUserPrincipals).not.toHaveBeenCalled();
     expect(result).toEqual([
       { id: 'agent-b', name: 'Alpha' },

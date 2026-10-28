@@ -1,11 +1,13 @@
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
+import { getInsightsConfig } from 'librechat-data-provider';
 import { render, screen, waitFor } from '@testing-library/react';
-import type { TInsightsParams } from 'librechat-data-provider';
+import type { TInsightsParams, TInsightsResponse } from 'librechat-data-provider';
+import type { TInsightsConfig } from 'librechat-data-provider';
 import InsightsView from '../InsightsView';
 
-const insightsData = {
+const insightsData: TInsightsResponse = {
   agents: [
     { id: 'agent-1', name: 'Alpha' },
     { id: 'agent-2', name: 'Beta' },
@@ -13,7 +15,7 @@ const insightsData = {
   ],
   summary: { totalConversations: 4, totalUsers: 2, totalMessages: 8, totalTokens: 100 },
   daily: [],
-  latest: { conversations: [], page: 1, pages: 1 },
+  latest: { conversations: [], page: 1, pageSize: 10, pages: 1 },
   topUsers: [],
   churnedUsers: [],
 };
@@ -26,8 +28,12 @@ const mockUseInsightsQuery = jest.fn((params: TInsightsParams) => ({
   params,
 }));
 
+const mockStartupConfig: { insightsEnabled: boolean; insights?: TInsightsConfig } = {
+  insightsEnabled: true,
+};
+
 jest.mock('~/data-provider', () => ({
-  useGetStartupConfig: () => ({ data: { insightsEnabled: true }, isLoading: false }),
+  useGetStartupConfig: () => ({ data: mockStartupConfig, isLoading: false }),
   useInsightsQuery: (params: TInsightsParams) => mockUseInsightsQuery(params),
 }));
 
@@ -74,6 +80,7 @@ async function openAgentMenu(user: ReturnType<typeof userEvent.setup>) {
 
 describe('InsightsView agent selection', () => {
   beforeEach(() => {
+    delete mockStartupConfig.insights;
     mockUseInsightsQuery.mockClear();
     mockUseInsightsQuery.mockImplementation((params) => ({
       data: insightsData,
@@ -82,6 +89,58 @@ describe('InsightsView agent selection', () => {
       error: null,
       params,
     }));
+  });
+
+  it('hides first-message content even if a stale response still includes it', () => {
+    mockStartupConfig.insights = getInsightsConfig({ privacy: { includeFirstMessage: false } });
+    mockUseInsightsQuery.mockImplementation((params) => ({
+      data: {
+        ...insightsData,
+        latest: {
+          conversations: [
+            {
+              conversationId: 'chat',
+              agentId: 'agent-1',
+              agentName: 'Alpha',
+              userId: 'u',
+              name: 'User',
+              email: 'user@example.com',
+              date: '2026-10-28T10:00:00Z',
+              firstMessage: 'private preview',
+              messages: 1,
+              totalTokens: 10,
+            },
+          ],
+          page: 1,
+          pageSize: 10,
+          pages: 1,
+        },
+      },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+      params,
+    }));
+    renderView();
+    expect(screen.queryByText('com_insights_first_message')).not.toBeInTheDocument();
+    expect(screen.queryByText('private preview')).not.toBeInTheDocument();
+    expect(screen.getByRole('table', { name: '' })).toBeInTheDocument();
+  });
+
+  it('sends selected categories through the existing query interface', async () => {
+    mockStartupConfig.insights = getInsightsConfig({ filters: { categories: true } });
+    mockUseInsightsQuery.mockImplementation((params) => ({
+      data: { ...insightsData, categories: ['HR', 'Tech'] },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+      params,
+    }));
+    const user = userEvent.setup();
+    renderView();
+    await user.click(screen.getByText('com_insights_all_categories'));
+    await user.click(await screen.findByRole('option', { name: 'HR' }));
+    await waitFor(() => expect(lastQueryParams().categories).toEqual(['HR']));
   });
 
   it('filters names without changing selection and clears search on close', async () => {
