@@ -206,7 +206,7 @@ const cacheConfig: {
    */
   GENERATION_OWNER_LEASE_REFRESH_MS: number;
   /**
-   * Abort the owner's own provider when no lease renewal has succeeded for TTL - refresh,
+   * Abort the owner's own provider when no lease renewal has succeeded for TTL - 1.5 x refresh,
    * so a successor's "lease absent" inference holds across an owner-only partition.
    * @default true
    */
@@ -258,9 +258,8 @@ const cacheConfig: {
   REDIS_READONLY_RECOVERY_INTERVAL: math(process.env.REDIS_READONLY_RECOVERY_INTERVAL, 5000),
   /** Queue commands when disconnected */
   REDIS_ENABLE_OFFLINE_QUEUE: isEnabled(process.env.REDIS_ENABLE_OFFLINE_QUEUE ?? 'true'),
-  /** Queue cache (Keyv) commands when disconnected. Defaults to REDIS_ENABLE_OFFLINE_QUEUE. Set it
-   * to false so cache reads (user principals, roles) fail fast during a Redis outage instead of
-   * hanging, while ioredis (rate limiters, job store, pub/sub) still queues until it is ready. */
+  /** Defaults to REDIS_ENABLE_OFFLINE_QUEUE. `false` makes cache reads (user principals, roles)
+   * fail fast during a Redis outage instead of hanging, while ioredis still queues. */
   REDIS_KEYV_ENABLE_OFFLINE_QUEUE: isEnabled(
     process.env.REDIS_KEYV_ENABLE_OFFLINE_QUEUE ?? process.env.REDIS_ENABLE_OFFLINE_QUEUE ?? 'true',
   ),

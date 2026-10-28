@@ -784,7 +784,7 @@ const JOB_DELETE_LUA =
 
 /**
  * Read-only generation presence probe. Both reads run in one same-slot script so
- * a replacement cannot land between them. Never mutates state.
+ * a replacement cannot land between them.
  *
  *   KEYS: [job, generationEpoch]
  *   RETURNS: [job createdAt | "", epoch | ""]

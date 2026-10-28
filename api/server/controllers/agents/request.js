@@ -2295,9 +2295,8 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
      * returned (Redis came back empty later) still saves the partial response. */
     GenerationJobManager.setStoreLostPersistence?.(streamId, jobCreatedAt, persistStoreLostTurn);
     /** A generation whose stream store lost its state (Redis restart without
-     * persistence, or a flush) has no terminal claim to win. Save the partial
-     * response, then let the manager publish the error frame, re-seed the
-     * generation epoch and clean up. Returns whether that path ran. */
+     * persistence, or a flush) has no terminal claim to win. Returns whether the
+     * store-lost path ran. */
     const finalizeIfStoreLost = async () => {
       try {
         const fenceOutcome = await GenerationJobManager.getFenceOutcome?.(streamId, jobCreatedAt);

@@ -131,7 +131,7 @@ export interface GenerationOwnerLeaseConfig {
   ttlMs: number;
   /** Validated to at most `ttlMs / 3`. */
   refreshMs: number;
-  /** Abort the owner's own provider once renewals have failed for `ttlMs - refreshMs`. */
+  /** Abort the owner's own provider once no renewal has confirmed for `ttlMs - 1.5 * refreshMs`. */
   selfFence: boolean;
 }
 
@@ -1798,9 +1798,8 @@ export interface IEventTransport {
   emitError(streamId: string, error: string, generationId?: number): void | Promise<void>;
 
   /**
-   * Optional: publish an error frame without a sequence number, so subscribers
-   * deliver it immediately instead of ordering it behind their reorder buffer.
-   * Used when the shared sequence counter itself was lost with the store.
+   * Unsequenced error frame, delivered immediately instead of behind subscribers'
+   * reorder buffers. Used when the sequence counter was lost with the store.
    */
   emitUnsequencedError?(streamId: string, error: string, generationId?: number): Promise<void>;
 

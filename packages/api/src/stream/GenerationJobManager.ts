@@ -913,7 +913,6 @@ interface RuntimeJobState {
   storeLost?: boolean;
   /** Single-shot store-lost terminalization (error frame, epoch re-seed, cleanup). */
   storeLostFinalization?: Promise<void>;
-  /** Set once the controller's partial-response save has started. */
   storeLostSaveStarted?: boolean;
   /** Partial-response save registered by the request controller, so the
    * backstop and late detection can persist after the controller has left. */
@@ -1278,7 +1277,6 @@ class GenerationJobManagerClass {
     this.terminalHostActionHandler = handler;
   }
 
-  /** Installs the host persistence hook for a dead owner's partial output. */
   setOrphanedGenerationHandler(handler?: OrphanedGenerationHandler): void {
     this.orphanedGenerationHandler = handler;
   }
@@ -7768,11 +7766,9 @@ class GenerationJobManagerClass {
       this.preserveFencedRuntimeUntilHandoff(streamId, runtime);
       return;
     }
-    /** The provider is already stopped, so a real replacement is as safe as
-     * before. The handoff hold waits for one presence read: a fence with no
-     * job and no newer epoch means the store lost its state, and holding
-     * subscribers for a successor that never existed would only end them in
-     * a reconnect loop with nothing to reconnect to. */
+    /** The handoff hold waits for one presence read: a fence with no job and no
+     * newer epoch means the store lost its state, and holding subscribers for a
+     * successor that never existed would leave them in a reconnect loop. */
     runtime.ownedAtFence = ownsExactProvider;
     const outcome = this.classifyDurableFence(streamId, runtime);
     runtime.fenceOutcome = outcome;
@@ -8062,11 +8058,10 @@ class GenerationJobManagerClass {
   }
 
   /**
-   * Terminalize a store-lost generation exactly once: run the caller's
-   * partial-response save, publish GENERATION_STORE_LOST_ERROR (which also
-   * re-seeds the generation epoch so a queued follow-up turn is admitted),
-   * notify local subscribers and release local state. Returns false when the
-   * generation is not store-lost or was already finalized.
+   * Terminalize a store-lost generation exactly once. Publishing
+   * GENERATION_STORE_LOST_ERROR also re-seeds the generation epoch, so a queued
+   * follow-up turn is admitted. Returns false when the generation is not
+   * store-lost or was already finalized.
    */
   async finalizeStoreLostGeneration(
     streamId: string,
@@ -9105,16 +9100,12 @@ class GenerationJobManagerClass {
   }
 
   /**
-   * One pipelined renewal per tick for every leased execution. No tick is ever skipped:
-   * each renewal is awaited for at most half a refresh, and one that times out or fails is
-   * retried at once. A slow reply is not discarded either: whenever it confirms, the lease
-   * counts as renewed from that call's send time. The self-fence therefore fires only when
-   * no renewal has confirmed for TTL - 1.5 x refresh, not because one reply was slow.
-   *
-   * An execution whose lease has certainly lapsed (no confirmed renewal for a full TTL, for
-   * example after an event-loop stall) is fenced instead of renewed: a successor may already
-   * have taken it over, and renewing would only resurrect the lease and hide that.
-   * Pending hold writes are retried after the renewal is sent, never ahead of it.
+   * One pipelined renewal per tick for every leased execution. Each renewal is awaited for
+   * at most half a refresh and retried at once on timeout or failure; a late confirmation
+   * still counts from its send time, so the self-fence fires only when nothing has confirmed
+   * for TTL - 1.5 x refresh. An execution with no confirmed renewal for a full TTL (e.g.
+   * after an event-loop stall) is fenced instead: a successor may already have taken it
+   * over, and renewing would resurrect the lease and hide that.
    */
   private async renewOwnerLeases(): Promise<void> {
     const renew = this.jobStore.renewProviderLeases;
@@ -9151,11 +9142,8 @@ class GenerationJobManagerClass {
     void this.retryPendingProviderHolds();
   }
 
-  /**
-   * Send one renewal for `renewing` and wait at most `waitMs` for it. Results are applied
-   * whenever they arrive, also after the wait gave up. Resolves true when it confirmed in
-   * time.
-   */
+  /** Results are applied whenever they arrive, also after the wait gave up; resolves true
+   * only when the renewal confirmed within `waitMs`. */
   private async sendLeaseRenewal(
     renewing: OpenProviderExecution[],
     waitMs: number,
@@ -9319,13 +9307,10 @@ class GenerationJobManagerClass {
   }
 
   /**
-   * Release the tracker for an execution whose owner will never record its drain — a run
-   * that settled its provider work but failed terminalization and deliberately publishes no
-   * marker. Shutdown simply stops waiting on it, and the absent marker keeps telling a
-   * successor the truth. A leased execution also gets a hold marker: without it, the lease
-   * lapsing would turn this deliberate fail-closed into a presumed drain. The hold write is
-   * awaited (bounded); when it fails, the lease keeps being renewed, and the hold retried,
-   * until the hold lands, so the execution is never presumed drained in between.
+   * Release the tracker for an execution that settled its provider work but failed
+   * terminalization, so it deliberately never records its drain. A leased execution also
+   * gets a hold marker, or its lapsing lease would turn this fail-closed into a presumed
+   * drain; if the hold write fails, the lease is renewed and the hold retried until it lands.
    */
   async abandonProviderExecution(
     streamId: string,
@@ -9474,7 +9459,7 @@ class GenerationJobManagerClass {
   }
 
   /** Wait up to one lease TTL for a capable owner's lease to lapse, then record the
-   * abort acknowledgement it can no longer write. False keeps today's strict
+   * abort acknowledgement it can no longer write. False keeps the strict
    * failure: an owner that is not lease-aware, held, or still renewing.
    *
    * Runs only after the owner missed the abort acknowledgement, so a live owner never
@@ -9649,18 +9634,15 @@ class GenerationJobManagerClass {
   }
 
   /**
-   * Before a replacement deletes the predecessor's chunk log, finish a generation
-   * whose lease-aware owner died: record its drain on the owner's behalf and, while
-   * it still looks running, abort it through the normal abort path so the host hook
-   * saves the partial output and subscribers get a terminal frame. A predecessor
-   * already stopped (Stop, then the owner died) only needs its drain recovered.
+   * Before a replacement deletes the predecessor's chunk log, finish a generation whose
+   * lease-aware owner died, so its partial output is saved and subscribers get a terminal.
    *
    * A live owner renews every refresh interval, so its lease never runs below
    * `ttl - refresh`. A lease below that has missed a renewal: wait for it to lapse
    * (at most one TTL) rather than replace the generation and lose its partial. A
    * freshly renewed lease returns at once, so live replacements are not delayed.
-   * The salvage itself is bounded; on timeout or error the replacement falls
-   * through to the receipt handoff, which recovers the drain on its own.
+   * On timeout or error the replacement falls through to the receipt handoff,
+   * which recovers the drain on its own.
    */
   private async salvageOrphanedPredecessor(
     streamId: string,
@@ -9751,10 +9733,9 @@ class GenerationJobManagerClass {
 
   /**
    * Record a dead owner's drain on its behalf and, while the generation still looks
-   * running, abort it through the normal abort path so the host hook saves the partial
-   * output and subscribers get a terminal frame. Resolves undefined when the drain could
-   * not be presumed (the owner renewed, or is strict), and null when the generation had
-   * already stopped and only its drain was recovered.
+   * running, abort it so the host hook saves the partial. Resolves undefined when the
+   * drain could not be presumed (the owner renewed, or is strict), and null when the
+   * generation had already stopped and only its drain was recovered.
    */
   private async abortOrphanedGeneration(
     streamId: string,
@@ -9808,12 +9789,8 @@ class GenerationJobManagerClass {
   }
 
   /**
-   * Finish a running generation whose lease-aware owner died, without a replacement turn:
-   * the same salvage a replacement does (drain recovered on the owner's behalf, partial
-   * saved by the host hook, terminal frame to subscribers). Only a lapsed lease counts,
-   * exactly as for a replacement; a live owner's lease never runs below `ttl - refresh`.
-   * The durable salvage claim makes racing replicas do it once. Resolves true when this
-   * call finished the generation.
+   * The same salvage a replacement does, without a replacement turn. Only a lapsed lease
+   * counts; the durable salvage claim makes racing replicas do it once.
    */
   private finishOrphanedGeneration(
     streamId: string,

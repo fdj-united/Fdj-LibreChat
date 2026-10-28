@@ -464,8 +464,7 @@ describe('SSE stream tenant isolation', () => {
           .get('/agents/chat/stream/stream-123')
           .then((res) => res);
         await jest.advanceTimersByTimeAsync(0);
-        /** The request needs several I/O turns to reach the route when earlier tests left
-         * sockets open, so wait for the subscription rather than a single tick. */
+        /** Earlier tests may leave sockets open, so wait for the subscription, not one tick. */
         for (let turn = 0; turn < 50 && finish == null; turn++) {
           await new Promise((resolve) => setImmediate(resolve));
         }
@@ -527,8 +526,7 @@ describe('SSE stream tenant isolation', () => {
           .get('/agents/chat/stream/stream-123')
           .then((res) => res);
         await jest.advanceTimersByTimeAsync(0);
-        /** The request needs several I/O turns to reach the route when earlier tests left
-         * sockets open, so wait for the subscription rather than a single tick. */
+        /** Earlier tests may leave sockets open, so wait for the subscription, not one tick. */
         for (let turn = 0; turn < 50 && finish == null; turn++) {
           await new Promise((resolve) => setImmediate(resolve));
         }
@@ -563,8 +561,7 @@ describe('SSE stream tenant isolation', () => {
           .get('/agents/chat/stream/stream-123')
           .then((res) => res);
         await jest.advanceTimersByTimeAsync(0);
-        /** The request needs several I/O turns to reach the route when earlier tests left
-         * sockets open, so wait for the subscription rather than a single tick. */
+        /** Earlier tests may leave sockets open, so wait for the subscription, not one tick. */
         for (let turn = 0; turn < 50 && finish == null; turn++) {
           await new Promise((resolve) => setImmediate(resolve));
         }

@@ -4708,7 +4708,7 @@ describe('GenerationJobManager Integration Tests', () => {
       });
       const elapsed = Date.now() - startedAt;
 
-      /** One abort-ACK timeout (3 s) plus at most one lease TTL; today this fails after 30 s. */
+      /** One abort-ACK timeout (3 s) plus at most one lease TTL; without the lease this fails after 30 s. */
       expect(elapsed).toBeLessThan(3000 + LEASE.ttlMs + 2000);
       expect(await ioredisClient!.exists(abortAckKey(streamId, job.createdAt))).toBe(1);
       expect(await ioredisClient!.exists(drainKey(streamId, job.createdAt, executionId))).toBe(1);

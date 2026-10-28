@@ -13,26 +13,21 @@ const USER_SAVE_CONTEXT =
 /**
  * Build the host hook that persists the partial response of a generation whose owner
  * died (SIGKILL, OOM, node loss), before a successor's replacement deletes its chunk log.
+ * Mirrors the Stop route's abort persistence, with the user, tenant and retention context
+ * taken from the job hash. Both writes are upserts keyed by messageId, so a repeated
+ * salvage converges; a failure is rethrown and the successor's turn still proceeds.
  *
- * It mirrors the Stop route's abort persistence (routes/agents/index.js `beforePublish`):
- * - the user message is saved first when it is not in Mongo yet (the owner writes it
- *   fire-and-forget at start, so an early kill can leave the response without a parent);
- * - the response is saved when it has persistable content, or, with no content, when a
- *   `created` event already announced its messageId to the client (an empty unfinished
- *   row, so a follow-up parented on that id is not rejected);
- * - both writes are attempted, and any failure is logged at error level and rethrown.
- *   The manager treats a throw as "persistence failed"; the successor's turn proceeds.
- *
- * There is no request here: the user, tenant and retention context come from the job
- * hash. Both writes are upserts keyed by messageId, so a repeated salvage converges.
+ * The user message is saved first when missing: the owner writes it fire-and-forget, so
+ * an early kill can leave the response without a parent. A response without content is
+ * saved only when the client already saw its messageId, so a follow-up parented on that
+ * id is not rejected.
  *
  * @param {object} deps
  * @param {Function} deps.saveMessage - `saveMessage(context, message, metadata)` from `~/models`.
- * @param {Function} [deps.getMessages] - `getMessages(filter, select)` from `~/models`; used
- *   to skip rewriting a user message that already exists. Without it the user message is
- *   upserted, as the Stop route does.
+ * @param {Function} [deps.getMessages] - Skips rewriting a user message that already exists;
+ *   without it the user message is upserted, as the Stop route does.
  * @param {(tenantId?: string) => Promise<object | undefined>} [deps.getInterfaceConfig] -
- *   Resolves the interface config that drives retention when the job carries no expiry.
+ *   Drives retention when the job carries no expiry.
  * @returns {(streamId: string, result: import('@librechat/api').AbortResult) => Promise<void>}
  */
 function createOrphanedGenerationHandler({ saveMessage, getMessages, getInterfaceConfig }) {
