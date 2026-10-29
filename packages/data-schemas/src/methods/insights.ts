@@ -147,10 +147,9 @@ function startOfZonedDate(key: string, timeZone: string) {
   return new Date(instant);
 }
 
-function resolveRange(options: InsightsOptions) {
+function resolveRange(options: InsightsOptions, maxRangeDays: number) {
   const now = new Date();
   const range = options.range ?? defaultRange;
-  const maxRangeDays = getInsightsConfig(options.insights).maxRangeDays;
 
   if (range === 'today') {
     const timeZone = validTimeZone(options.timeZone);
@@ -309,9 +308,9 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
     const page = Math.max(1, Math.floor(options.page ?? 1));
     const pageSize = Math.min(50, Math.max(5, Math.floor(options.pageSize ?? 10)));
     const agentIds = [...new Set(options.agentIds ?? [])].sort((a, b) => a.localeCompare(b));
-    const { from, to } = resolveRange(options);
-    const timeZone = validTimeZone(options.timeZone);
     const config = getInsightsConfig(options.insights);
+    const { from, to } = resolveRange(options, config.maxRangeDays);
+    const timeZone = validTimeZone(options.timeZone);
     const churnedCutoff = new Date(to.getTime() - churnedUserWindowDays * dayMs);
     const churnedActivityFrom = new Date(from.getTime() - churnedUserWindowDays * dayMs);
     const tenant = tenantMatch(options.tenantId);
