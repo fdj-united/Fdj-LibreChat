@@ -97,23 +97,23 @@ function DailyChart({ data, locale }: { data: TInsightsResponse; locale: string 
           className="h-44 w-full"
           preserveAspectRatio="none"
         >
-          {(maximum <= 1 ? [0, 1] : [0, 0.5, 1]).map((fraction) => (
-            <g key={fraction}>
+          {[...new Set([0, Math.round(maximum / 2), maximum])].map((value) => (
+            <g key={value}>
               <line
                 x1="40"
-                y1={145 - fraction * 115}
+                y1={145 - (value / maximum) * 115}
                 x2={width - 20}
-                y2={145 - fraction * 115}
+                y2={145 - (value / maximum) * 115}
                 className="stroke-border-light"
               />
               <text
                 x="30"
-                y={149 - fraction * 115}
+                y={149 - (value / maximum) * 115}
                 textAnchor="end"
                 className="fill-text-secondary"
                 fontSize="11"
               >
-                {formatter.format(Math.round(maximum * fraction))}
+                {formatter.format(value)}
               </text>
             </g>
           ))}
@@ -213,29 +213,29 @@ function ActivityChart({ data, locale }: { data: TInsightsEngagement; locale: st
             )
             .join('; ')}
         </desc>
-        {(maximum <= 1 ? [0, 1] : [0, 0.5, 1]).map((fraction) => (
-          <g key={fraction}>
+        {[...new Set([0, Math.round(maximum / 2), maximum])].map((value) => (
+          <g key={value}>
             <line
               x1="40"
-              y1={145 - fraction * 115}
+              y1={145 - (value / maximum) * 115}
               x2={width - 20}
-              y2={145 - fraction * 115}
+              y2={145 - (value / maximum) * 115}
               className="stroke-border-light"
             />
             <text
               x="30"
-              y={149 - fraction * 115}
+              y={149 - (value / maximum) * 115}
               textAnchor="end"
               className="fill-text-secondary"
               fontSize="11"
             >
-              {formatter.format(Math.round(maximum * fraction))}
+              {formatter.format(value)}
             </text>
           </g>
         ))}
         {data.activityDistribution.map((row, index) => {
           const x = 50 + index * step;
-          const height = (row.users / maximum) * 100;
+          const height = (row.users / maximum) * 115;
           const share = percent.format(data.activeUsers ? row.users / data.activeUsers : 0);
           return (
             <g key={row.bucket}>
