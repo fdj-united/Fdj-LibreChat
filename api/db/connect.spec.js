@@ -1,5 +1,10 @@
 jest.mock('@librechat/api', () => ({
-  isEnabled: jest.fn(),
+  optionalEnabled: jest.fn((value) => {
+    if (typeof value !== 'string' || value.trim() === '') {
+      return undefined;
+    }
+    return value.toLowerCase().trim() === 'true';
+  }),
   instrumentMongooseQueryMetrics: jest.fn(),
 }));
 
