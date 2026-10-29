@@ -20,11 +20,17 @@ const insightsData: TInsightsResponse = {
   churnedUsers: [],
 };
 
+const mockRefetch = jest.fn();
+const mockDateRangePicker = jest.fn(
+  (_props: { maxRangeLength: number; onSelectDateRange: (start: Date, end: Date) => void }) => null,
+);
+
 const mockUseInsightsQuery = jest.fn((params: TInsightsParams) => ({
   data: insightsData,
   isLoading: false,
   isFetching: false,
   error: null,
+  refetch: mockRefetch,
   params,
 }));
 
@@ -58,7 +64,8 @@ jest.mock('~/components/Chat/Menus/OpenSidebar', () => ({
 }));
 
 jest.mock('~/components/ui', () => ({
-  LocalizedDateRangePicker: () => null,
+  LocalizedDateRangePicker: (props: Parameters<typeof mockDateRangePicker>[0]) =>
+    mockDateRangePicker(props),
 }));
 
 function lastQueryParams(): TInsightsParams {
@@ -82,13 +89,36 @@ describe('InsightsView agent selection', () => {
   beforeEach(() => {
     delete mockStartupConfig.insights;
     mockUseInsightsQuery.mockClear();
+    mockRefetch.mockClear();
+    mockDateRangePicker.mockClear();
     mockUseInsightsQuery.mockImplementation((params) => ({
       data: insightsData,
       isLoading: false,
       isFetching: false,
       error: null,
+      refetch: mockRefetch,
       params,
     }));
+  });
+
+  it('keeps seven days as the default and supports Today and explicit Refresh', async () => {
+    const user = userEvent.setup();
+    renderView();
+    expect(lastQueryParams().range).toBe('7d');
+    await user.click(screen.getByRole('button', { name: 'com_insights_range_today' }));
+    expect(lastQueryParams().range).toBe('today');
+    await user.click(screen.getByRole('button', { name: 'com_insights_refresh' }));
+    expect(mockRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the configured custom range limit and passes a range longer than 30 days', async () => {
+    mockStartupConfig.insights = getInsightsConfig({ maxRangeDays: 90 });
+    renderView();
+    const picker = mockDateRangePicker.mock.calls.at(-1)![0];
+    expect(picker.maxRangeLength).toBe(90);
+    picker.onSelectDateRange(new Date('2026-08-01T00:00:00Z'), new Date('2026-09-15T23:59:59Z'));
+    await waitFor(() => expect(lastQueryParams().fromTimestamp).toBe('2026-08-01T00:00:00.000Z'));
+    expect(lastQueryParams().range).toBe('custom');
   });
 
   it('hides first-message content even if a stale response still includes it', () => {
@@ -119,6 +149,7 @@ describe('InsightsView agent selection', () => {
       isLoading: false,
       isFetching: false,
       error: null,
+      refetch: mockRefetch,
       params,
     }));
     renderView();
@@ -134,6 +165,7 @@ describe('InsightsView agent selection', () => {
       isLoading: false,
       isFetching: false,
       error: null,
+      refetch: mockRefetch,
       params,
     }));
     const user = userEvent.setup();
@@ -152,6 +184,7 @@ describe('InsightsView agent selection', () => {
       isLoading: false,
       isFetching: false,
       error: null,
+      refetch: mockRefetch,
       params,
     }));
     const user = userEvent.setup();

@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Check, Info, Minus, Search } from 'lucide-react';
+import { AlertCircle, Check, Info, Minus, Search, RefreshCw } from 'lucide-react';
 import {
   Button,
   Input,
@@ -13,7 +13,6 @@ import {
 import {
   getInsightsConfig,
   INSIGHTS_UNCATEGORIZED,
-  INSIGHTS_MAX_RANGE_DAYS,
   INSIGHTS_SEARCH_MAX_LENGTH,
   INSIGHTS_SEARCH_MIN_LENGTH,
 } from 'librechat-data-provider';
@@ -28,10 +27,11 @@ import type { TranslationKeys } from '~/hooks';
 import { clearAgentFilters, shouldRecoverAgentFilters } from './agentFilters';
 import { useGetStartupConfig, useInsightsQuery } from '~/data-provider';
 import { useAuthContext, useDocumentTitle, useLocalize } from '~/hooks';
+import { getRollingDateRange, getTodayDateRange } from './dateRange';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { LocalizedDateRangePicker } from '~/components/ui';
-import { getRollingDateRange } from './dateRange';
-import Charts from './charts';
+import Charts, { EngagementMetrics } from './charts';
+import MetricInfo from './info';
 import { cn } from '~/utils';
 import Panel from './panel';
 
@@ -49,6 +49,7 @@ type KpiCardData = {
 };
 
 const ranges: Array<{ value: ShortcutRange; labelKey: TranslationKeys; days: number }> = [
+  { value: 'today', labelKey: 'com_insights_range_today', days: 0 },
   { value: '24h', labelKey: 'com_insights_range_24_hours', days: 1 },
   { value: '7d', labelKey: 'com_insights_range_7_days', days: 7 },
   { value: '30d', labelKey: 'com_insights_range_30_days', days: 30 },
@@ -108,9 +109,10 @@ function responseStatus(error: unknown) {
   return (error as { response?: { status?: number } } | undefined)?.response?.status;
 }
 
-function getShortcutDateRange(range: ShortcutRange) {
+function getShortcutDateRange(range: ShortcutRange, now = new Date()) {
+  if (range === 'today') return getTodayDateRange(now);
   const days = ranges.find((item) => item.value === range)?.days ?? 7;
-  return getRollingDateRange(new Date(), days);
+  return getRollingDateRange(now, days);
 }
 
 function EmptyState({ message }: { message: string }) {
@@ -237,23 +239,15 @@ function KpiCard({ card, locale }: { card: KpiCardData; locale: string }) {
   const localize = useLocalize();
   return (
     <Panel>
-      <h2 className="inline-flex items-center gap-1.5 text-sm font-normal text-text-muted">
-        {card.title}
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-normal text-text-secondary">{card.title}</h3>
         {card.description && (
-          <TooltipAnchor
-            description={card.description}
-            render={
-              <button
-                type="button"
-                aria-label={card.description}
-                className="text-text-muted hover:text-text-secondary"
-              >
-                <Info className="size-3.5" aria-hidden="true" />
-              </button>
-            }
+          <MetricInfo
+            label={localize('com_insights_about_metric', { name: card.title })}
+            text={card.description}
           />
         )}
-      </h2>
+      </div>
       <div className="mt-3 text-4xl font-semibold tabular-nums leading-none text-text-primary">
         {formatValue(card.value, locale)}
       </div>
@@ -558,6 +552,7 @@ export default function InsightsView() {
     [startupConfig?.insights],
   );
   const [range, setRange] = useState<ShortcutRange>('7d');
+  const [rangeAnchor, setRangeAnchor] = useState(() => new Date());
   const [customDateRange, setCustomDateRange] = useState<CustomDateRange>();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -605,8 +600,8 @@ export default function InsightsView() {
     timeZone,
   ]);
   const displayDateRange = useMemo(
-    () => customDateRange ?? getShortcutDateRange(range),
-    [customDateRange, range],
+    () => customDateRange ?? getShortcutDateRange(range, rangeAnchor),
+    [customDateRange, range, rangeAnchor],
   );
   const insights = useInsightsQuery(insightsParams, {
     enabled: !!user && insightsFeatureEnabled,
@@ -687,18 +682,21 @@ export default function InsightsView() {
       {
         id: 'users',
         title: localize('com_insights_total_users'),
+        description: localize('com_insights_users_definition'),
         value: data.summary.totalUsers,
         sparkline: data.daily.map((row) => ({ date: row.date, value: row.users })),
       },
       {
         id: 'messages',
         title: localize('com_insights_messages'),
+        description: localize('com_insights_messages_definition'),
         value: data.summary.totalMessages,
         sparkline: data.daily.map((row) => ({ date: row.date, value: row.messages })),
       },
       {
         id: 'tokens',
         title: localize('com_insights_total_tokens'),
+        description: localize('com_insights_tokens_definition'),
         value: data.summary.totalTokens,
         sparkline: data.daily.map((row) => ({ date: row.date, value: row.totalTokens })),
       },
@@ -889,6 +887,7 @@ export default function InsightsView() {
                     dateRangeSelectionTimeout.current = undefined;
                   }
                   setRange(item.value);
+                  setRangeAnchor(new Date());
                   setCustomDateRange(undefined);
                   setPage(1);
                 }}
@@ -906,17 +905,35 @@ export default function InsightsView() {
                 cancel: localize('com_ui_cancel'),
                 endDate: localize('com_insights_end_date'),
                 invalidRange: localize('com_insights_invalid_date_range', {
-                  days: INSIGHTS_MAX_RANGE_DAYS,
+                  days: insightsConfig.maxRangeDays,
                 }),
                 startDate: localize('com_insights_start_date'),
               }}
               locale={locale}
-              maxRangeLength={INSIGHTS_MAX_RANGE_DAYS}
+              maxRangeLength={insightsConfig.maxRangeDays}
               onSelectDateRange={handleSelectDateRange}
               placeholder={localize('com_insights_date_range_placeholder')}
               startDate={displayDateRange.startDate}
             />
           </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={insights.isFetching}
+            onClick={() => {
+              setRangeAnchor(new Date());
+              void insights.refetch();
+            }}
+          >
+            <RefreshCw
+              className={cn(
+                'mr-2 size-4',
+                insights.isFetching && 'animate-spin motion-reduce:animate-none',
+              )}
+              aria-hidden="true"
+            />
+            {localize('com_insights_refresh')}
+          </Button>
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -937,10 +954,26 @@ export default function InsightsView() {
               {/** Use explicit responsive counts: one column on narrow screens,
                *  two through mid-range, and four at xl. This avoids auto-fit's
                *  three-plus-one orphan without making mobile cards too narrow. */}
+              <h2 className="text-sm font-semibold text-text-secondary">
+                {localize('com_insights_adoption')}
+              </h2>
+              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+                {kpiCards
+                  .filter((card) => card.id === 'users' || card.id === 'conversations')
+                  .map((card) => (
+                    <KpiCard key={card.id} card={card} locale={locale} />
+                  ))}
+              </div>
+              <h2 className="mt-2 text-sm font-semibold text-text-secondary">
+                {localize('com_insights_engagement')}
+              </h2>
               <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {kpiCards.map((card) => (
-                  <KpiCard key={card.id} card={card} locale={locale} />
-                ))}
+                {kpiCards
+                  .filter((card) => card.id === 'messages' || card.id === 'tokens')
+                  .map((card) => (
+                    <KpiCard key={card.id} card={card} locale={locale} />
+                  ))}
+                {data.engagement && <EngagementMetrics data={data.engagement} locale={locale} />}
               </div>
               <Charts data={data} config={insightsConfig.charts} locale={locale} />
               <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(100%,580px),1fr))] gap-3">

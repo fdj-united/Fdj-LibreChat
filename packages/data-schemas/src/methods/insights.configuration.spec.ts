@@ -76,7 +76,7 @@ it('omits private message text from both the database read and response', async 
   expect(legacy).not.toHaveProperty('breakdowns');
 });
 
-it('keeps breakdown totals consistent with primary-agent attribution and existing scope rules', async () => {
+it('keeps category scope and skips retired breakdown aggregation', async () => {
   const createdAt = new Date(Date.now() - 3600000);
   const base = { tenantId: 'tenant-a', user, createdAt };
   await mongoose.models.Conversation.collection.insertMany([
@@ -116,19 +116,6 @@ it('keeps breakdown totals consistent with primary-agent attribution and existin
     }),
   });
   expect(result.summary.totalConversations).toBe(3);
-  expect(result.breakdowns?.agents).toEqual([
-    { id: 'agent-a', label: 'Alpha', conversations: 1 },
-    { id: 'agent-b', label: 'Beta', conversations: 1 },
-    { id: 'agent-c', label: 'Gamma', conversations: 1 },
-  ]);
-  expect(result.breakdowns?.categories).toEqual([
-    { id: 'HR', label: 'HR', conversations: 2 },
-    { id: INSIGHTS_UNCATEGORIZED, label: INSIGHTS_UNCATEGORIZED, conversations: 1 },
-  ]);
+  expect(result).not.toHaveProperty('breakdowns');
   expect(result.categories).toEqual([INSIGHTS_UNCATEGORIZED, 'HR'].sort());
-  for (const rows of Object.values(result.breakdowns ?? {})) {
-    expect(rows.reduce((sum, row) => sum + row.conversations, 0)).toBe(
-      result.summary.totalConversations,
-    );
-  }
 });
