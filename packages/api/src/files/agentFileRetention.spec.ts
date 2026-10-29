@@ -278,7 +278,9 @@ describe('startAgentFileRetentionSweep', () => {
     jest.useFakeTimers();
     const nonLeader = baseDeps();
     nonLeader.isLeader = jest.fn().mockResolvedValue(false);
-    nonLeader.runAsSystem = jest.fn((callback) => callback());
+    nonLeader.runAsSystem = jest.fn((callback) => callback()) as unknown as NonNullable<
+      StartAgentFileRetentionDeps['runAsSystem']
+    >;
 
     const nonLeaderHandle = startAgentFileRetentionSweep(
       { rules: [{ agentId: 'a', retentionHours: 8 }], intervalMs: 1000 },
@@ -291,7 +293,9 @@ describe('startAgentFileRetentionSweep', () => {
 
     const leader = baseDeps();
     leader.isLeader = jest.fn().mockResolvedValue(true);
-    leader.runAsSystem = jest.fn((callback) => callback());
+    leader.runAsSystem = jest.fn((callback) => callback()) as unknown as NonNullable<
+      StartAgentFileRetentionDeps['runAsSystem']
+    >;
     const leaderHandle = startAgentFileRetentionSweep(
       { rules: [{ agentId: 'a', retentionHours: 8 }], intervalMs: 1000 },
       leader,

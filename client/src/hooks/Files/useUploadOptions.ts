@@ -30,7 +30,8 @@ export default function useUploadOptions() {
   const ephemeralAgent = useRecoilValue(
     ephemeralAgentByConvoId(conversationId ?? Constants.NEW_CONVO),
   );
-  const { provider, tools } = useAgentToolPermissions(agentId, ephemeralAgent);
+  const { provider, tools, providerUploadAllowedByAgent, contextUploadAllowedByAgent } =
+    useAgentToolPermissions(agentId, ephemeralAgent);
   const {
     data: fileConfig = null,
     isError: isFileConfigError,
@@ -79,6 +80,8 @@ export default function useUploadOptions() {
         fileSearchEnabled: capabilities.fileSearchEnabled,
         codeEnabled: capabilities.codeEnabled,
         contextEnabled: capabilities.contextEnabled,
+        providerUploadAllowedByAgent,
+        contextUploadAllowedByAgent,
         fileSearchAllowedByAgent,
         codeAllowedByAgent,
         fileConfig,
@@ -92,6 +95,8 @@ export default function useUploadOptions() {
       capabilities.fileSearchEnabled,
       capabilities.codeEnabled,
       capabilities.contextEnabled,
+      providerUploadAllowedByAgent,
+      contextUploadAllowedByAgent,
       fileSearchAllowedByAgent,
       codeAllowedByAgent,
       fileConfig,
@@ -105,5 +110,7 @@ export default function useUploadOptions() {
     isConfigPending,
     isConfigResolved,
     isUnifiedMode,
+    providerUploadAllowedByAgent,
+    contextUploadAllowedByAgent,
   };
 }

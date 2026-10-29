@@ -45,6 +45,7 @@ const deploymentSkillMethods = createDeploymentSkillMethods({
   getSkillByName: db.getSkillByName,
   listSkillsByAccess: db.listSkillsByAccess,
   listAlwaysApplySkills: db.listAlwaysApplySkills,
+  findExistingSkillIdsForTenant: db.findExistingSkillIdsForTenant,
   listSkillFiles: db.listSkillFiles,
   getSkillFileByPath: db.getSkillFileByPath,
   updateSkillFileContent: db.updateSkillFileContent,

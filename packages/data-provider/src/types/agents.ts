@@ -1040,8 +1040,11 @@ export type Agent = {
   git_identity?: AgentGitIdentity | null;
   /** When true, provider-direct file uploads are hidden and rejected for this agent. */
   disable_provider_upload?: boolean;
+  /** When true, context file uploads are hidden and rejected for this agent. */
+  disable_context_upload?: boolean;
   artifacts?: ArtifactModes;
   recursion_limit?: number;
+  eager_execution?: boolean;
   isPublic?: boolean;
   /**
    * Whether the requesting user holds EDIT on this agent, so a single VIEW-scoped fetch can
@@ -1104,8 +1107,10 @@ export type AgentCreateParams = {
   | 'code_workspace_id'
   | 'repositoryInstructions'
   | 'disable_provider_upload'
+  | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
+  | 'eager_execution'
   | 'category'
   | 'support_contact'
   | 'tool_options'
@@ -1141,8 +1146,10 @@ export type AgentUpdateParams = {
   | 'code_workspace_id'
   | 'repositoryInstructions'
   | 'disable_provider_upload'
+  | 'disable_context_upload'
   | 'artifacts'
   | 'recursion_limit'
+  | 'eager_execution'
   | 'category'
   | 'support_contact'
   | 'tool_options'
@@ -1161,6 +1168,7 @@ export type AgentListParams = {
   search?: string;
   cursor?: string;
   promoted?: 0 | 1;
+  verified?: 0 | 1;
 };
 
 export type AgentListResponse = {

@@ -54,6 +54,7 @@ describe('spendTokens', () => {
     const spendMethods = createSpendTokensMethods(mongoose, {
       createTransaction: transactionMethods.createTransaction,
       createStructuredTransaction: transactionMethods.createStructuredTransaction,
+      maybeApplyAutoRefill: transactionMethods.maybeApplyAutoRefill,
     });
     spendTokens = spendMethods.spendTokens;
     spendStructuredTokens = spendMethods.spendStructuredTokens;

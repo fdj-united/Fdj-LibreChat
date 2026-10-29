@@ -541,6 +541,8 @@ export type UploadOptionContext = {
   fileSearchEnabled: boolean;
   codeEnabled: boolean;
   contextEnabled: boolean;
+  providerUploadAllowedByAgent: boolean;
+  contextUploadAllowedByAgent: boolean;
   fileSearchAllowedByAgent: boolean;
   codeAllowedByAgent: boolean;
   fileConfig: FileConfig | null;
@@ -628,7 +630,7 @@ export const getViableUploadOptions = (
     types.every((type) => predicate(type as string));
 
   const options: (EToolResources | undefined)[] = [];
-  if (every((type) => isProviderAttachType(type, ctx))) {
+  if (ctx.providerUploadAllowedByAgent && every((type) => isProviderAttachType(type, ctx))) {
     options.push(undefined);
   }
   if (
@@ -645,7 +647,11 @@ export const getViableUploadOptions = (
   ) {
     options.push(EToolResources.execute_code);
   }
-  if (ctx.contextEnabled && every((type) => isContextType(type, ctx.fileConfig))) {
+  if (
+    ctx.contextEnabled &&
+    ctx.contextUploadAllowedByAgent &&
+    every((type) => isContextType(type, ctx.fileConfig))
+  ) {
     options.push(EToolResources.context);
   }
   return options;
