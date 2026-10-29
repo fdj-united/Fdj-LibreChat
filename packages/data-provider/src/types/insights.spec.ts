@@ -5,6 +5,8 @@ describe('Insights configuration', () => {
     const config = getInsightsConfig();
     expect(config.privacy.includeFirstMessage).toBe(true);
     expect(config.filters.categories).toBe(false);
+    expect(config.metrics.engagement).toBe(false);
+    expect(config.maxRangeDays).toBe(30);
     expect(config.charts).toEqual({
       dailyUsage: false,
       usageByAgent: false,
@@ -34,5 +36,15 @@ describe('Insights configuration', () => {
     expect(getInsightsCategory('HR')).toBe('HR');
     expect(getInsightsCategory('constructor')).toBe('constructor');
     expect(getInsightsCategory('')).toBe(INSIGHTS_UNCATEGORIZED);
+  });
+
+  it('accepts an explicit owner dashboard and longer bounded date window', () => {
+    const config = getInsightsConfig({ metrics: { engagement: true }, maxRangeDays: 90 });
+    expect(config.metrics.engagement).toBe(true);
+    expect(config.maxRangeDays).toBe(90);
+  });
+
+  it.each([0, -1, 366, 1.5])('rejects invalid maxRangeDays %s', (maxRangeDays) => {
+    expect(() => getInsightsConfig({ maxRangeDays })).toThrow();
   });
 });

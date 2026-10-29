@@ -493,6 +493,8 @@ describe('GET /api/config', () => {
           ...baseAppConfig.config,
           insights: {
             privacy: { includeFirstMessage: false },
+            metrics: { engagement: true },
+            maxRangeDays: 90,
             charts: { usageByCategory: true },
             categoryAliases: { privateCategory: 'Private team' },
           },
@@ -500,6 +502,8 @@ describe('GET /api/config', () => {
       });
       const response = await request(createApp(mockUser)).get('/api/config');
       expect(response.body.insights.privacy.includeFirstMessage).toBe(false);
+      expect(response.body.insights.metrics.engagement).toBe(true);
+      expect(response.body.insights.maxRangeDays).toBe(90);
       expect(response.body.insights.charts.usageByCategory).toBe(true);
       expect(response.body.insights.charts.usageByAgent).toBe(false);
       expect(response.body.insights).not.toHaveProperty('categoryAliases');

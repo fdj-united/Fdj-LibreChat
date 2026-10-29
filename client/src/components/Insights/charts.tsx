@@ -1,21 +1,19 @@
-import { useId, useMemo, useState } from 'react';
-import { INSIGHTS_UNCATEGORIZED } from 'librechat-data-provider';
+import { useId, useState } from 'react';
 import {
-  Button,
   Select,
   SelectItem,
   SelectValue,
   SelectContent,
   SelectTrigger,
+  useMediaQuery,
 } from '@librechat/client';
 import type {
   TInsightsConfig,
   TInsightsResponse,
-  TInsightsBreakdown,
-  TInsightsDailyPoint,
+  TInsightsEngagement,
 } from 'librechat-data-provider';
 import { useLocalize } from '~/hooks';
-import { cn } from '~/utils';
+import MetricInfo from './info';
 import Panel from './panel';
 
 type Metric = 'conversations' | 'users' | 'messages' | 'totalTokens';
@@ -25,42 +23,57 @@ const metrics = [
   { value: 'messages', label: 'com_insights_messages' },
   { value: 'totalTokens', label: 'com_insights_total_tokens' },
 ] as const;
-const colors = [
-  'text-status-info',
-  'text-status-success',
-  'text-status-warning',
-  'text-text-secondary',
-  'text-status-info-strong',
-  'text-text-primary',
-];
 
-function DailyChart({ daily, locale }: { daily: TInsightsDailyPoint[]; locale: string }) {
+function tickAnchor(index: number, last: number) {
+  if (index === 0) return 'start';
+  return index === last ? 'end' : 'middle';
+}
+
+function ChartHeading({ title, description }: { title: string; description: string }) {
   const localize = useLocalize();
-  const titleId = useId();
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <h3 className="text-base font-semibold">{title}</h3>
+      <MetricInfo
+        label={localize('com_insights_about_metric', { name: title })}
+        text={description}
+      />
+    </div>
+  );
+}
+
+function DailyChart({ data, locale }: { data: TInsightsResponse; locale: string }) {
+  const localize = useLocalize();
+  const narrow = useMediaQuery('(max-width: 640px)');
+  const width = narrow ? 320 : 640;
   const [metric, setMetric] = useState<Metric>('conversations');
   const formatter = new Intl.NumberFormat(locale);
-  const dateFormatter = new Intl.DateTimeFormat(locale, {
+  const dates = new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     timeZone: 'UTC',
   });
+  const daily = data.daily;
   const maximum = Math.max(1, ...daily.map((day) => day[metric]));
   const points = daily.map((day, index) => ({
     ...day,
-    x: daily.length === 1 ? 320 : 40 + (index / (daily.length - 1)) * 560,
-    y: 165 - (day[metric] / maximum) * 135,
+    x: daily.length === 1 ? width / 2 : 40 + (index / (daily.length - 1)) * (width - 60),
+    y: 145 - (day[metric] / maximum) * 115,
   }));
   const metricLabel = localize(metrics.find((item) => item.value === metric)!.label);
   const ticks = [...new Set([0, Math.floor((daily.length - 1) / 2), daily.length - 1])];
-
   return (
     <Panel>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 id={titleId} className="text-base font-semibold">
-          {localize('com_insights_daily_usage')}
-        </h2>
+      <ChartHeading
+        title={localize('com_insights_daily_usage')}
+        description={localize('com_insights_usage_definition')}
+      />
+      <div className="mb-3 mt-2 flex items-center justify-between gap-3">
+        <span className="text-sm text-text-secondary">
+          {localize('com_insights_selected_period')}
+        </span>
         <Select value={metric} onValueChange={(value) => setMetric(value as Metric)}>
-          <SelectTrigger className="w-44" aria-label={localize('com_insights_metric')}>
+          <SelectTrigger className="h-8 w-40" aria-label={localize('com_insights_metric')}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -73,217 +86,244 @@ function DailyChart({ daily, locale }: { daily: TInsightsDailyPoint[]; locale: s
         </Select>
       </div>
       {points.length === 0 ? (
-        <p className="py-8 text-text-secondary">{localize('com_insights_no_data')}</p>
+        <p className="flex h-44 items-center justify-center text-sm text-text-secondary">
+          {localize('com_insights_no_data')}
+        </p>
       ) : (
-        <>
-          <svg viewBox="0 0 640 200" role="img" aria-label={metricLabel} className="w-full">
-            <line x1="40" y1="165" x2="600" y2="165" className="stroke-border-medium" />
-            <line x1="40" y1="30" x2="600" y2="30" className="stroke-border-light" />
-            <text x="36" y="25" className="fill-text-secondary" fontSize="11">
-              {formatter.format(maximum)}
-            </text>
-            <text x="36" y="180" className="fill-text-secondary" fontSize="11">
-              0
-            </text>
-            <polyline
-              points={points.map((point) => `${point.x},${point.y}`).join(' ')}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className="text-status-info"
-            />
-            {points.map((point) => (
-              <circle
-                key={point.date}
-                cx={point.x}
-                cy={point.y}
-                r="4"
-                tabIndex={0}
-                aria-label={`${point.date}: ${formatter.format(point[metric])}`}
-                className="fill-current text-status-info"
-              >
-                <title>{`${point.date}: ${formatter.format(point[metric])}`}</title>
-              </circle>
-            ))}
-            {ticks.map((index) => (
+        <svg
+          viewBox={`0 0 ${width} 180`}
+          role="img"
+          aria-label={metricLabel}
+          className="h-44 w-full"
+          preserveAspectRatio="none"
+        >
+          {[...new Set([0, Math.round(maximum / 2), maximum])].map((value) => (
+            <g key={value}>
+              <line
+                x1="40"
+                y1={145 - (value / maximum) * 115}
+                x2={width - 20}
+                y2={145 - (value / maximum) * 115}
+                className="stroke-border-light"
+              />
               <text
-                key={index}
-                x={points[index].x}
-                y="195"
-                textAnchor="middle"
-                fontSize="11"
+                x="30"
+                y={149 - (value / maximum) * 115}
+                textAnchor="end"
                 className="fill-text-secondary"
+                fontSize="11"
               >
-                {dateFormatter.format(new Date(daily[index].date))}
+                {formatter.format(value)}
               </text>
-            ))}
-          </svg>
-          <details className="mt-3 text-sm">
-            <summary className="cursor-pointer text-text-secondary">
-              {localize('com_insights_view_chart_data')}
-            </summary>
-            <table className="mt-2 w-full text-left tabular-nums">
-              <thead>
-                <tr>
-                  <th>{localize('com_insights_date')}</th>
-                  <th>{metricLabel}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {daily.map((day) => (
-                  <tr key={day.date}>
-                    <td>{day.date}</td>
-                    <td>{formatter.format(day[metric])}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </details>
-        </>
+            </g>
+          ))}
+          <polyline
+            points={points.map((point) => `${point.x},${point.y}`).join(' ')}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            vectorEffect="non-scaling-stroke"
+            className="text-status-info"
+          />
+          {points.map((point) => (
+            <circle
+              key={point.date}
+              cx={point.x}
+              cy={point.y}
+              r="2.5"
+              tabIndex={0}
+              aria-label={`${point.date}: ${formatter.format(point[metric])}`}
+              className="fill-current text-status-info"
+            >
+              <title>{`${point.date}: ${formatter.format(point[metric])}`}</title>
+            </circle>
+          ))}
+          {ticks.map((index) => (
+            <text
+              key={index}
+              x={points[index].x}
+              y="172"
+              textAnchor={tickAnchor(index, daily.length - 1)}
+              fontSize="11"
+              className="fill-text-secondary"
+            >
+              {dates.format(new Date(daily[index].date))}
+            </text>
+          ))}
+        </svg>
       )}
+      <details className="mt-3 text-sm">
+        <summary className="cursor-pointer text-text-secondary">
+          {localize('com_insights_view_chart_data')}
+        </summary>
+        <table className="mt-2 w-full text-left tabular-nums">
+          <thead>
+            <tr>
+              <th>{localize('com_insights_date')}</th>
+              <th>{metricLabel}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {daily.map((day) => (
+              <tr key={day.date}>
+                <td>{day.date}</td>
+                <td>{formatter.format(day[metric])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
     </Panel>
   );
 }
 
-function BreakdownChart({
-  title,
-  description,
-  rows,
-  config,
-  locale,
-}: {
-  title: string;
-  description?: string;
-  rows: TInsightsBreakdown[];
-  config: TInsightsConfig['charts'];
-  locale: string;
-}) {
+function ActivityChart({ data, locale }: { data: TInsightsEngagement; locale: string }) {
   const localize = useLocalize();
-  const titleId = useId();
-  const [view, setView] = useState(config.defaultBreakdownView);
+  const narrow = useMediaQuery('(max-width: 640px)');
+  const width = narrow ? 320 : 640;
+  const step = (width - 80) / 5;
+  const barWidth = step * 0.6;
+  const id = useId();
   const formatter = new Intl.NumberFormat(locale);
-  const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 });
-  const { items, total } = useMemo(() => {
-    const sorted = [...rows].sort(
-      (a, b) => b.conversations - a.conversations || a.id.localeCompare(b.id),
-    );
-    const leading = sorted.slice(0, config.topN);
-    const remaining = sorted.slice(config.topN).reduce((sum, row) => sum + row.conversations, 0);
-    const items = leading.map((row) => ({ ...row, combined: false }));
-    if (remaining > 0) {
-      items.push({
-        id: '__insights_remaining__',
-        label: '',
-        conversations: remaining,
-        combined: true,
-      });
-    }
-    return { items, total: rows.reduce((sum, row) => sum + row.conversations, 0) };
-  }, [rows, config.topN]);
-  const label = (row: (typeof items)[number]) => {
-    if (row.combined) return localize('com_insights_other_combined');
-    if (row.id === INSIGHTS_UNCATEGORIZED) return localize('com_insights_uncategorized');
-    return row.label;
-  };
-  const circumference = 2 * Math.PI * 70;
-  let offset = 0;
-
+  const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 });
+  const maximum = Math.max(1, ...data.activityDistribution.map((row) => row.users));
   return (
     <Panel>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 id={titleId} className="text-base font-semibold">
-          {title}
-        </h2>
-        <div className="flex gap-1" role="group" aria-label={localize('com_insights_chart_view')}>
-          {(['bar', 'doughnut'] as const).map((mode) => (
-            <Button
-              key={mode}
-              type="button"
-              size="sm"
-              variant={view === mode ? 'outline' : 'ghost'}
-              aria-pressed={view === mode}
-              onClick={() => setView(mode)}
-            >
-              {localize(mode === 'bar' ? 'com_insights_graph' : 'com_insights_pie')}
-            </Button>
-          ))}
-        </div>
-      </div>
-      <p className="mb-3 text-xs text-text-secondary">
-        {localize('com_insights_breakdown_definition')}
+      <ChartHeading
+        title={localize('com_insights_activity_distribution')}
+        description={localize('com_insights_distribution_definition')}
+      />
+      <p className="mb-3 mt-2 text-sm text-text-secondary">
+        {localize('com_insights_conversations_per_user')}
       </p>
-      {description && <p className="mb-3 text-xs text-text-secondary">{description}</p>}
-      {total === 0 ? (
-        <p className="py-8 text-text-secondary">{localize('com_insights_no_data')}</p>
-      ) : (
-        <div className="flex flex-col items-stretch justify-center gap-5 sm:flex-row sm:items-center">
-          {view === 'doughnut' && (
-            <svg
-              viewBox="0 0 200 200"
-              className="w-56 shrink-0 self-center"
-              role="img"
-              aria-labelledby={titleId}
+      <svg
+        viewBox={`0 0 ${width} 180`}
+        role="img"
+        aria-labelledby={id}
+        aria-describedby={`${id}-values`}
+        className="h-44 w-full"
+        preserveAspectRatio="none"
+      >
+        <title id={id}>{localize('com_insights_activity_distribution')}</title>
+        <desc id={`${id}-values`}>
+          {data.activityDistribution
+            .map(
+              (row) =>
+                `${row.bucket}: ${formatter.format(row.users)} (${percent.format(data.activeUsers ? row.users / data.activeUsers : 0)})`,
+            )
+            .join('; ')}
+        </desc>
+        {[...new Set([0, Math.round(maximum / 2), maximum])].map((value) => (
+          <g key={value}>
+            <line
+              x1="40"
+              y1={145 - (value / maximum) * 115}
+              x2={width - 20}
+              y2={145 - (value / maximum) * 115}
+              className="stroke-border-light"
+            />
+            <text
+              x="30"
+              y={149 - (value / maximum) * 115}
+              textAnchor="end"
+              className="fill-text-secondary"
+              fontSize="11"
             >
-              {items.map((row, index) => {
-                const size = (row.conversations / total) * circumference;
-                const start = offset;
-                offset += size;
-                return (
-                  <circle
-                    key={row.id}
-                    cx="100"
-                    cy="100"
-                    r="70"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="30"
-                    strokeDasharray={`${size} ${circumference - size}`}
-                    strokeDashoffset={-start}
-                    transform="rotate(-90 100 100)"
-                    className={colors[index % colors.length]}
-                  >
-                    <title>{`${label(row)}: ${formatter.format(row.conversations)} (${percent.format(row.conversations / total)})`}</title>
-                  </circle>
-                );
-              })}
-              <text x="100" y="100" textAnchor="middle" className="fill-text-primary" fontSize="20">
-                {formatter.format(total)}
+              {formatter.format(value)}
+            </text>
+          </g>
+        ))}
+        {data.activityDistribution.map((row, index) => {
+          const x = 50 + index * step;
+          const height = (row.users / maximum) * 115;
+          const share = percent.format(data.activeUsers ? row.users / data.activeUsers : 0);
+          return (
+            <g key={row.bucket}>
+              <rect
+                x={x}
+                y={145 - height}
+                width={barWidth}
+                height={height}
+                rx="3"
+                tabIndex={0}
+                aria-label={`${row.bucket}: ${formatter.format(row.users)} (${share})`}
+                className="fill-current text-status-info"
+              >
+                <title>{`${row.bucket}: ${formatter.format(row.users)} (${share})`}</title>
+              </rect>
+              <text
+                x={x + barWidth / 2}
+                y={136 - height}
+                textAnchor="middle"
+                fontSize="12"
+                className="fill-text-primary"
+              >
+                {share}
               </text>
-            </svg>
-          )}
-          <ol className="min-w-0 flex-1 space-y-3 text-sm" aria-label={title}>
-            {items.map((row, index) => (
-              <li key={row.id}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        'size-3 shrink-0 rounded-sm bg-current',
-                        colors[index % colors.length],
-                      )}
-                    />
-                    <span className="break-words">{label(row)}</span>
-                  </span>
-                  <span className="tabular-nums text-text-secondary">
-                    {formatter.format(row.conversations)} (
-                    {percent.format(row.conversations / total)})
-                  </span>
-                </div>
-                {view === 'bar' && (
-                  <div className="mt-1 h-3 overflow-hidden rounded-sm bg-surface-tertiary">
-                    <div
-                      className={cn('h-full bg-current', colors[index % colors.length])}
-                      style={{ width: `${(row.conversations / total) * 100}%` }}
-                    />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
+              <text
+                x={x + barWidth / 2}
+                y="172"
+                textAnchor="middle"
+                fontSize="11"
+                className="fill-text-secondary"
+              >
+                {row.bucket}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <p className="mt-3 text-sm text-text-secondary">
+        {localize('com_insights_distribution_users', { count: data.activeUsers })}
+      </p>
     </Panel>
+  );
+}
+
+export function EngagementMetrics({ data, locale }: { data: TInsightsEngagement; locale: string }) {
+  const localize = useLocalize();
+  const average = data.activeConversations ? data.questions / data.activeConversations : 0;
+  const rate = data.activeConversations
+    ? data.singleQuestionConversations / data.activeConversations
+    : 0;
+  const cards = [
+    {
+      key: 'questions_per_conversation',
+      value: new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(average),
+      definition: 'com_insights_questions_definition' as const,
+      detail: localize('com_insights_active_conversation_count', {
+        count: data.activeConversations,
+      }),
+    },
+    {
+      key: 'single_question_rate',
+      value: new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(
+        rate,
+      ),
+      definition: 'com_insights_single_question_definition' as const,
+      detail: localize('com_insights_single_question_count', {
+        single: data.singleQuestionConversations,
+        total: data.activeConversations,
+      }),
+    },
+  ];
+  return (
+    <>
+      {cards.map((card) => (
+        <Panel key={card.key}>
+          <ChartHeading
+            title={localize(
+              card.key === 'questions_per_conversation'
+                ? 'com_insights_questions_per_conversation'
+                : 'com_insights_single_question_rate',
+            )}
+            description={localize(card.definition)}
+          />
+          <p className="mt-3 text-4xl font-semibold tabular-nums">{card.value}</p>
+          <p className="mt-3 text-sm text-text-secondary">{card.detail}</p>
+        </Panel>
+      ))}
+    </>
   );
 }
 
@@ -296,31 +336,11 @@ export default function Charts({
   config: TInsightsConfig['charts'];
   locale: string;
 }) {
-  const localize = useLocalize();
+  if (!config.dailyUsage && !data.engagement) return null;
   return (
-    <>
-      {config.dailyUsage && <DailyChart daily={data.daily} locale={locale} />}
-      {(config.usageByAgent || config.usageByCategory) && (
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-          {config.usageByAgent && (
-            <BreakdownChart
-              title={localize('com_insights_usage_by_agent')}
-              rows={data.breakdowns?.agents ?? []}
-              config={config}
-              locale={locale}
-            />
-          )}
-          {config.usageByCategory && (
-            <BreakdownChart
-              title={localize('com_insights_usage_by_category')}
-              description={localize('com_insights_current_category_definition')}
-              rows={data.breakdowns?.categories ?? []}
-              config={config}
-              locale={locale}
-            />
-          )}
-        </div>
-      )}
-    </>
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {config.dailyUsage && <DailyChart data={data} locale={locale} />}
+      {data.engagement && <ActivityChart data={data.engagement} locale={locale} />}
+    </div>
   );
 }

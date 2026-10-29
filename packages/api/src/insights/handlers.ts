@@ -47,7 +47,7 @@ const stringValues = (input: unknown): string[] => {
   ].sort((a, b) => a.localeCompare(b));
 };
 
-const validRanges = new Set<TInsightsParams['range']>(['24h', '7d', '30d', 'custom']);
+const validRanges = new Set<TInsightsParams['range']>(['today', '24h', '7d', '30d', 'custom']);
 
 const insightsRange = (value: unknown): TInsightsParams['range'] | undefined => {
   const range = stringValue(value) as TInsightsParams['range'] | undefined;
