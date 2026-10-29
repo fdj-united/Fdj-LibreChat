@@ -24,6 +24,11 @@ const metrics = [
   { value: 'totalTokens', label: 'com_insights_total_tokens' },
 ] as const;
 
+function tickAnchor(index: number, last: number) {
+  if (index === 0) return 'start';
+  return index === last ? 'end' : 'middle';
+}
+
 function ChartHeading({ title, description }: { title: string; description: string }) {
   const localize = useLocalize();
   return (
@@ -138,7 +143,7 @@ function DailyChart({ data, locale }: { data: TInsightsResponse; locale: string 
               key={index}
               x={points[index].x}
               y="172"
-              textAnchor={index === 0 ? 'start' : index === daily.length - 1 ? 'end' : 'middle'}
+                textAnchor={tickAnchor(index, daily.length - 1)}
               fontSize="11"
               className="fill-text-secondary"
             >
