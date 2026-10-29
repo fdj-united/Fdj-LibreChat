@@ -8,11 +8,10 @@ insights:
     includeFirstMessage: false
   filters:
     categories: true
+  maxRangeDays: 90
+  metrics:
+    engagement: true
   charts:
     dailyUsage: true
-    usageByAgent: true
-    usageByCategory: true
-    defaultBreakdownView: doughnut
-    topN: 2
   categoryAliases:
     hr: HR
