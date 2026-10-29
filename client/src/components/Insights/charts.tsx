@@ -143,7 +143,7 @@ function DailyChart({ data, locale }: { data: TInsightsResponse; locale: string 
               key={index}
               x={points[index].x}
               y="172"
-                textAnchor={tickAnchor(index, daily.length - 1)}
+              textAnchor={tickAnchor(index, daily.length - 1)}
               fontSize="11"
               className="fill-text-secondary"
             >
