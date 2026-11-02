@@ -122,6 +122,91 @@ describe('Agent list access', () => {
     );
   });
 
+  it('uses read:agents for tenant-scoped discovery only when explicitly enabled', async () => {
+    const deps = makeDeps({
+      hasCapability: jest
+        .fn()
+        .mockImplementation((_user, capability) =>
+          Promise.resolve(capability === SystemCapabilities.READ_AGENTS),
+        ),
+    });
+
+    await expect(
+      getAgentListAccess(user, PermissionBits.VIEW, deps, { allowReadAllAgents: true }),
+    ).resolves.toEqual({
+      accessibleIds: null,
+      editableIds: [objectId.toString()],
+    });
+    expect(deps.hasCapability).toHaveBeenCalledWith(user, SystemCapabilities.READ_AGENTS);
+  });
+
+  it('does not let read:agents bypass an EDIT-scoped list', async () => {
+    const deps = makeDeps({
+      hasCapability: jest
+        .fn()
+        .mockImplementation((_user, capability) =>
+          Promise.resolve(capability === SystemCapabilities.READ_AGENTS),
+        ),
+    });
+
+    await expect(
+      getAgentListAccess(user, PermissionBits.EDIT, deps, { allowReadAllAgents: true }),
+    ).resolves.toEqual({
+      accessibleIds: [objectId.toString()],
+      editableIds: null,
+    });
+    expect(deps.hasCapability).not.toHaveBeenCalledWith(user, SystemCapabilities.READ_AGENTS);
+  });
+
+  it('does not consult read:agents when tenant-scoped discovery is disabled', async () => {
+    const deps = makeDeps({
+      hasCapability: jest
+        .fn()
+        .mockImplementation((_user, capability) =>
+          Promise.resolve(capability === SystemCapabilities.READ_AGENTS),
+        ),
+    });
+
+    await expect(getAgentListAccess(user, PermissionBits.VIEW, deps)).resolves.toEqual({
+      accessibleIds: [objectId.toString()],
+      editableIds: [objectId.toString()],
+    });
+    expect(deps.hasCapability).not.toHaveBeenCalledWith(user, SystemCapabilities.READ_AGENTS);
+  });
+
+  it('falls back to ACL results when the read:agents lookup fails', async () => {
+    const deps = makeDeps({
+      hasCapability: jest.fn().mockImplementation((_user, capability) => {
+        if (capability === SystemCapabilities.READ_AGENTS) {
+          return Promise.reject(new Error('read capability lookup failed'));
+        }
+        return Promise.resolve(false);
+      }),
+    });
+
+    await expect(
+      getAgentListAccess(user, PermissionBits.VIEW, deps, { allowReadAllAgents: true }),
+    ).resolves.toEqual({
+      accessibleIds: [objectId.toString()],
+      editableIds: [objectId.toString()],
+    });
+  });
+
+  it('fails closed on edit grants when ACL lookup fails for a read-all viewer', async () => {
+    const deps = makeDeps({
+      hasCapability: jest
+        .fn()
+        .mockImplementation((_user, capability) =>
+          Promise.resolve(capability === SystemCapabilities.READ_AGENTS),
+        ),
+      findAccessibleResources: jest.fn().mockRejectedValue(new Error('ACL unavailable')),
+    });
+
+    await expect(
+      getAgentListAccess(user, PermissionBits.VIEW, deps, { allowReadAllAgents: true }),
+    ).resolves.toEqual({ accessibleIds: null, editableIds: [] });
+  });
+
   it('falls back to the ACL rather than bypassing on capability-check failure', async () => {
     const deps = makeDeps({
       hasCapability: jest.fn().mockRejectedValue(new Error('lookup failed')),
