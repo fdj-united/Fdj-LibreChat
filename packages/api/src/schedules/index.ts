@@ -5,6 +5,7 @@ export * from './engine';
 export * from './erasure';
 export * from './fire';
 export * from './handlers';
+export * from './openid';
 export * from './readiness';
 export * from './trigger';
 export * from './types';

@@ -35,6 +35,7 @@ const {
   configMiddleware,
   messageUserLimiter,
 } = require('~/server/middleware');
+const scheduledOpenIdTokens = require('~/server/services/ScheduledOpenIdTokens');
 const SteerController = require('~/server/controllers/agents/steer');
 const {
   AgentQueuedTurnEnqueueController,
@@ -145,6 +146,14 @@ router.use((req, _res, next) => {
   req._isAgentTrigger = isAgentTriggerRequest(req);
   captureScheduleFireContext(req);
   next();
+});
+router.use((req, _res, next) => {
+  scheduledOpenIdTokens
+    .hydrate(req)
+    .catch((error) =>
+      logger.warn('[ScheduledOpenId] Unable to hydrate OpenID tokens', error?.message),
+    )
+    .finally(next);
 });
 router.use(checkBan);
 router.use(uaParser);
