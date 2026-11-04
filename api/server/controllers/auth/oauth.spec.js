@@ -8,7 +8,8 @@ const mockSendOpenIDAuthResponse = jest.fn();
 const mockGetLogStores = jest.fn();
 const mockCheckBan = jest.fn();
 const mockGenerateToken = jest.fn();
-const mockLogger = { info: jest.fn(), error: jest.fn() };
+const mockLogger = { info: jest.fn(), error: jest.fn(), warn: jest.fn() };
+const mockSaveScheduledOpenIdToken = jest.fn(() => Promise.resolve());
 
 jest.mock('librechat-data-provider', () => ({
   CacheKeys: { ADMIN_OAUTH_EXCHANGE: 'admin-oauth-exchange' },
@@ -36,6 +37,10 @@ jest.mock('~/server/services/AuthService', () => ({
 
 jest.mock('~/server/services/OpenIDRefreshRecovery', () => ({
   sendOpenIDAuthResponse: (...args) => mockSendOpenIDAuthResponse(...args),
+}));
+
+jest.mock('~/server/services/ScheduledOpenIdTokens', () => ({
+  save: (...args) => mockSaveScheduledOpenIdToken(...args),
 }));
 
 jest.mock(
@@ -173,7 +178,22 @@ describe('createOAuthHandler', () => {
       req,
       res,
     });
+    expect(mockSaveScheduledOpenIdToken).toHaveBeenCalledWith('user-123', 'openid-refresh-token');
     expect(res.redirect).toHaveBeenCalledWith('http://localhost:3080');
+  });
+
+  it('still completes the OpenID login when storing the scheduled-run token fails', async () => {
+    process.env.OPENID_REUSE_TOKENS = 'true';
+    mockIsAdminPanelRedirect.mockReturnValue(false);
+    mockSaveScheduledOpenIdToken.mockRejectedValueOnce(new Error('mongo down'));
+    const handler = createOAuthHandler('http://localhost:3080');
+    const res = buildRes();
+    const next = jest.fn();
+
+    await handler(buildReq(), res, next);
+
+    expect(res.redirect).toHaveBeenCalledWith('http://localhost:3080');
+    expect(next).not.toHaveBeenCalled();
   });
 
   it('forwards the refresh token from req.authInfo for non-openid admin providers', async () => {

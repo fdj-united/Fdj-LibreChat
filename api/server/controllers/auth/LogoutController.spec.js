@@ -7,6 +7,7 @@ const mockGetOpenIdConfig = jest.fn();
 const mockClearCloudFrontCookies = jest.fn();
 const mockDeleteAllRefreshTokenBridges = jest.fn();
 const mockRevokeOpenIDRefreshTokenChain = jest.fn();
+const mockRemoveScheduledOpenIdToken = jest.fn();
 
 jest.mock('cookie');
 jest.mock('@librechat/api', () => ({
@@ -26,6 +27,9 @@ jest.mock('~/server/services/RefreshTokenBridge', () => ({
 }));
 jest.mock('~/server/services/OpenIDRefreshRecovery', () => ({
   revokeOpenIDRefreshTokenChain: (...args) => mockRevokeOpenIDRefreshTokenChain(...args),
+}));
+jest.mock('~/server/services/ScheduledOpenIdTokens', () => ({
+  remove: (...args) => mockRemoveScheduledOpenIdToken(...args),
 }));
 jest.mock('~/strategies', () => ({ getOpenIdConfig: () => mockGetOpenIdConfig() }));
 
@@ -282,6 +286,7 @@ describe('LogoutController', () => {
         userId: 'user1',
         tenantId: 'tenantA',
       });
+      expect(mockRemoveScheduledOpenIdToken).toHaveBeenCalledWith('user1');
       expect(mockRevokeOpenIDRefreshTokenChain).toHaveBeenCalledWith({
         req,
         user: req.user,

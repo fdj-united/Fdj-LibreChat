@@ -81,6 +81,9 @@ jest.mock('~/server/controllers/agents/queuedTurns', () => ({
 }));
 jest.mock('~/models', () => ({}));
 jest.mock('~/server/services/Schedules', () => ({}));
+jest.mock('~/server/services/ScheduledOpenIdTokens', () => ({
+  hydrate: () => Promise.resolve(null),
+}));
 
 const agentsRouter = require('../index');
 const app = express();
