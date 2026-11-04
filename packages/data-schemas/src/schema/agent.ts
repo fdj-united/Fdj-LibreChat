@@ -185,6 +185,10 @@ const agentSchema: Schema<IAgent> = new Schema<IAgent>(
       type: Schema.Types.Mixed,
       default: undefined,
     },
+    metadata: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
   },
   {
     timestamps: true,

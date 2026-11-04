@@ -348,6 +348,33 @@ describe('agentCreateSchema with subagents', () => {
   });
 });
 
+describe('agent metadata', () => {
+  const base = { provider: 'openAI', model: 'gpt-4o-mini', tools: [] };
+
+  it('accepts optional metadata and strips unknown top-level fields', () => {
+    const result = agentCreateSchema.parse({
+      ...base,
+      metadata: { jiraUseCaseLink: 'https://jira.example/browse/ABC-1', extra: 1 },
+      superAdminAccess: true,
+    });
+
+    expect(result.metadata).toEqual({
+      jiraUseCaseLink: 'https://jira.example/browse/ABC-1',
+      extra: 1,
+    });
+    expect(result).not.toHaveProperty('superAdminAccess');
+  });
+
+  it('allows omitted and empty metadata', () => {
+    expect(agentCreateSchema.parse(base).metadata).toBeUndefined();
+    expect(agentUpdateSchema.parse({}).metadata).toBeUndefined();
+    expect(agentUpdateSchema.parse({ metadata: {} }).metadata).toEqual({});
+    expect(agentUpdateSchema.parse({ metadata: { jiraUseCaseLink: '' } }).metadata).toEqual({
+      jiraUseCaseLink: '',
+    });
+  });
+});
+
 describe('stateful code environments', () => {
   it.each(['user', 'agent-user', 'conversation'])('accepts %s', (environment) => {
     const result = agentCreateSchema.safeParse({

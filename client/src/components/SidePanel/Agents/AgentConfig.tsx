@@ -9,6 +9,7 @@ import { useAgentFileEntries } from './Tools/hooks';
 import { useAgentPanelContext } from '~/Providers';
 import { useProviderIcon } from '~/hooks/Endpoint';
 import ToolsSection from './Tools/ToolsSection';
+import JiraUseCaseLink from './JiraUseCaseLink';
 import ProviderUpload from './ProviderUpload';
 import ContextUpload from './ContextUpload';
 import Instructions from './Instructions';
@@ -166,6 +167,8 @@ export default function AgentConfig() {
       <div className="mb-3">
         <ProviderUpload />
       </div>
+
+      <JiraUseCaseLink />
 
       {/* SUPPORT CONTACT */}
       <div className="mb-3 flex flex-col">
