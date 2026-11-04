@@ -74,7 +74,7 @@ jest.mock(
 );
 
 describe('Content Security Policy', () => {
-  jest.setTimeout(30_000);
+  jest.setTimeout(60_000);
 
   let mongoServer;
   let app;
@@ -111,7 +111,7 @@ describe('Content Security Policy', () => {
     /* index.js listens at module scope and exports only the app, so capture the server to close it. */
     const listenSpy = jest.spyOn(express.application, 'listen');
     app = require('~/server');
-    await healthCheckPoll(app);
+    await readyCheckPoll(app);
     server = listenSpy.mock.results[0].value;
     listenSpy.mockRestore();
   });
@@ -227,11 +227,12 @@ describe('Content Security Policy', () => {
   });
 });
 
-// Polls the /health endpoint every 30ms for up to 10 seconds to wait for the server to start completely
-async function healthCheckPoll(app, retries = 0) {
-  const maxRetries = Math.floor(10000 / 30);
+// `/health` is liveness only. Post-listen migrations still hold the Mongo
+// connection, so tearing it down after a health 200 races those builds.
+async function readyCheckPoll(app, retries = 0) {
+  const maxRetries = Math.floor(30000 / 30);
   try {
-    const response = await request(app).get('/health');
+    const response = await request(app).get('/readyz');
     if (response.status === 200) {
       return;
     }
@@ -241,8 +242,8 @@ async function healthCheckPoll(app, retries = 0) {
 
   if (retries < maxRetries) {
     await new Promise((resolve) => setTimeout(resolve, 30));
-    await healthCheckPoll(app, retries + 1);
+    await readyCheckPoll(app, retries + 1);
   } else {
-    throw new Error('App did not become healthy within 10 seconds.');
+    throw new Error('App did not become ready within 30 seconds.');
   }
 }

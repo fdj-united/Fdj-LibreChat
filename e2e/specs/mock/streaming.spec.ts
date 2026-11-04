@@ -23,19 +23,20 @@ test.describe('stream transport fidelity', () => {
     await page.goto(NEW_CHAT_PATH, { timeout: 10000 });
     await selectMockEndpoint(page, MOCK_ENDPOINTS[0]);
 
-    const response = await sendMessageAndWaitForCompletion(page, `E2E_ORDERED_REPLY:${label}`);
+    const response = await sendMessageAndWaitForCompletion(page, `E2E_ORDERED_REPLY:${label}`, {
+      expectedText: expected,
+    });
     expect(response.ok()).toBeTruthy();
 
     const assistantContent = messagesView(page)
       .locator('.message-render')
       .last()
       .locator('.message-content');
-    await expect(assistantContent).toContainText('piece-010', { timeout: 30000 });
-    await expect(assistantContent).toHaveText(expected, { timeout: 30000 });
+    await expect(assistantContent).toHaveText(expected);
 
     await page.reload({ timeout: 10000 });
     await expect(
       messagesView(page).locator('.message-render').last().locator('.message-content'),
-    ).toHaveText(expected, { timeout: 30000 });
+    ).toHaveText(expected);
   });
 });

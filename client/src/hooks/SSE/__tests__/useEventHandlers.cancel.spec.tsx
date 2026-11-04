@@ -1,8 +1,8 @@
 import { createElement } from 'react';
 import { createStore, Provider } from 'jotai';
 import { act, renderHook } from '@testing-library/react';
-import { dataService, EModelEndpoint } from 'librechat-data-provider';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { dataService, EModelEndpoint, Constants } from 'librechat-data-provider';
 import type { EventSubmission, TConversation, TMessage } from 'librechat-data-provider';
 import type { ReactNode } from 'react';
 import { useIsReplacingConversationCodeEnvironment } from '~/data-provider/CodeEnvironments';
@@ -16,10 +16,11 @@ jest.mock('recoil', () => ({
   useSetRecoilState: () => jest.fn(),
   useRecoilCallback: () => jest.fn(),
 }));
+const mockParams = jest.fn(() => ({ conversationId: 'saved' }));
 jest.mock('react-router-dom', () => ({
-  useParams: () => ({ conversationId: 'saved' }),
+  useParams: () => mockParams(),
   useNavigate: () => jest.fn(),
-  useLocation: () => ({ pathname: '/c/saved' }),
+  useLocation: () => ({ pathname: `/c/${mockParams().conversationId}` }),
 }));
 jest.mock('~/store', () => ({
   __esModule: true,
@@ -100,7 +101,10 @@ const submission = {
 } as EventSubmission;
 
 describe('local cancellation decision reconciliation', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockParams.mockReturnValue({ conversationId: 'saved' });
+  });
   afterEach(() => jest.restoreAllMocks());
 
   it.each(['streamed', 'minimal', 'navigated'])(
@@ -118,7 +122,12 @@ describe('local cancellation decision reconciliation', () => {
           createElement(QueryClientProvider, { client: queryClient }, children),
         );
       const messages = kind === 'minimal' ? [] : [user, response];
+      const currentOther = { conversationId: 'other', ...attempted } as TConversation;
       let current = { ...submission.conversation, ...attempted } as TConversation;
+      if (kind === 'navigated') {
+        mockParams.mockReturnValue({ conversationId: 'other' });
+        current = currentOther;
+      }
       const setConversation = jest.fn((update) => {
         current = typeof update === 'function' ? update(current) : update;
       });
@@ -140,8 +149,6 @@ describe('local cancellation decision reconciliation', () => {
         }),
         { wrapper },
       );
-      const currentOther = { conversationId: 'other', ...attempted } as TConversation;
-      if (kind === 'navigated') current = currentOther;
 
       await act(async () => {
         await result.current.handlers.abortConversation('saved', submission, messages);
@@ -156,4 +163,43 @@ describe('local cancellation decision reconciliation', () => {
       else expect(current.codeWorkspaces).toEqual(attempted.codeWorkspaces);
     },
   );
+
+  it('still settles a first-turn abort while the route is /c/new', async () => {
+    mockParams.mockReturnValue({ conversationId: String(Constants.NEW_CONVO) });
+    const store = createStore();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        Provider,
+        { store },
+        createElement(QueryClientProvider, { client: queryClient }, children),
+      );
+    const messages = [user, response];
+    let current = { ...submission.conversation, ...attempted } as TConversation;
+    const setConversation = jest.fn((update) => {
+      current = typeof update === 'function' ? update(current) : update;
+    });
+    const setIsSubmitting = jest.fn();
+    const { result } = renderHook(
+      () =>
+        useEventHandlers({
+          getMessages: () => messages,
+          setMessages: jest.fn(),
+          setCompleted: jest.fn(),
+          setConversation,
+          setIsSubmitting,
+          setShowStopButton: jest.fn(),
+          newConversation: jest.fn(),
+        }),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.abortConversation('saved', submission, messages);
+    });
+    expect(setIsSubmitting).toHaveBeenCalledWith(false);
+    expect(current.codeWorkspaces).toEqual(attempted.codeWorkspaces);
+  });
 });

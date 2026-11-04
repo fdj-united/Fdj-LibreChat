@@ -16,6 +16,7 @@ import type { ITransaction } from '~/schema/transaction';
 import { getTenantId, SYSTEM_TENANT_ID } from '~/config/tenantContext';
 import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 import { supportsTransactions } from '~/utils/transactions';
+import { createIndexesWithRetry } from '~/utils/retry';
 import logger from '~/config/winston';
 
 const cancelRate = 1.15;
@@ -335,15 +336,15 @@ export function createTransactionMethods(
   async function ensureBalanceDocumentExists(user: string): Promise<void> {
     const Balance = mongoose.models.Balance as Model<IBalance>;
     const tenantId = getTenantId();
-    const setStage: Record<string, unknown> = {
-      user: { $ifNull: ['$user', user] },
-      tokenCredits: { $ifNull: ['$tokenCredits', 0] },
+    const setOnInsert: Record<string, unknown> = {
+      user,
+      tokenCredits: 0,
     };
     if (tenantId && tenantId !== SYSTEM_TENANT_ID) {
-      setStage.tenantId = { $ifNull: ['$tenantId', tenantId] };
+      setOnInsert.tenantId = tenantId;
     }
     try {
-      await Balance.findOneAndUpdate({ user }, [{ $set: setStage }], { upsert: true });
+      await Balance.findOneAndUpdate({ user }, { $setOnInsert: setOnInsert }, { upsert: true });
     } catch (error) {
       if (!isDuplicateKeyError(error)) {
         throw error;
@@ -462,25 +463,27 @@ export function createTransactionMethods(
   }): Promise<{ resultingBalance: number; applied: boolean; transactionId: string }> {
     const Balance = mongoose.models.Balance as Model<IBalance>;
     await ensureBalanceDocumentExists(user);
-    const updated = await Balance.findOneAndUpdate(
+    let updated = await Balance.findOneAndUpdate(
       { user, recentIdempotencyKeys: { $ne: idempotencyKey } },
-      [
-        {
-          $set: {
-            tokenCredits: {
-              $max: [0, { $add: [{ $ifNull: ['$tokenCredits', 0] }, incrementValue] }],
-            },
-            recentIdempotencyKeys: {
-              $slice: [
-                { $concatArrays: [{ $ifNull: ['$recentIdempotencyKeys', []] }, [idempotencyKey]] },
-                -MAX_RECENT_IDEMPOTENCY_KEYS,
-              ],
-            },
+      {
+        $inc: { tokenCredits: incrementValue },
+        $push: {
+          recentIdempotencyKeys: {
+            $each: [idempotencyKey],
+            $slice: -MAX_RECENT_IDEMPOTENCY_KEYS,
           },
         },
-      ],
+      },
       { new: true },
     ).lean<IBalance>();
+    if (updated != null && updated.tokenCredits < 0) {
+      updated =
+        (await Balance.findOneAndUpdate(
+          { user, tokenCredits: { $lt: 0 } },
+          { $set: { tokenCredits: 0 } },
+          { new: true },
+        ).lean<IBalance>()) ?? updated;
+    }
     const existing = updated
       ? null
       : await Balance.findOne({ user }).sort(oldestFirst).lean<IBalance>();
@@ -563,7 +566,7 @@ export function createTransactionMethods(
   }
 
   async function ensureTransactionIdempotencyIndex(): Promise<void> {
-    await mongoose.models.Transaction.createIndexes();
+    await createIndexesWithRetry(mongoose.models.Transaction);
   }
 
   function isAutoRefillDue(record: IBalance, now: Date): boolean {
@@ -946,18 +949,20 @@ export function createTransactionMethods(
     try {
       claimed = await Balance.findOneAndUpdate(
         filter,
-        [
-          {
-            $set: {
-              tokenCredits: {
-                $max: [0, { $add: [{ $ifNull: ['$tokenCredits', 0] }, txData.rawAmount ?? 0] }],
-              },
-              lastRefill: new Date(),
-            },
-          },
-        ],
+        {
+          $inc: { tokenCredits: txData.rawAmount ?? 0 },
+          $set: { lastRefill: new Date() },
+        },
         { new: true },
       ).lean<IBalance>();
+      if (claimed != null && claimed.tokenCredits < 0) {
+        claimed =
+          (await Balance.findOneAndUpdate(
+            { user: userId, tokenCredits: { $lt: 0 } },
+            { $set: { tokenCredits: 0 } },
+            { new: true },
+          ).lean<IBalance>()) ?? claimed;
+      }
     } catch (error) {
       if (requestLeaseClaimed && pendingRequest) {
         try {

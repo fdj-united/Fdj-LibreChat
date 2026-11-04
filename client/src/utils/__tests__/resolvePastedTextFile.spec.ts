@@ -26,6 +26,8 @@ const uploadCtx = (over: Partial<UploadOptionContext> = {}): UploadOptionContext
   fileSearchEnabled: false,
   codeEnabled: false,
   contextEnabled: true,
+  providerUploadAllowedByAgent: true,
+  contextUploadAllowedByAgent: true,
   fileSearchAllowedByAgent: true,
   codeAllowedByAgent: true,
   fileConfig,

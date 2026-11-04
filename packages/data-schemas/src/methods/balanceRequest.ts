@@ -1,5 +1,6 @@
 import type { FilterQuery, Model } from 'mongoose';
 import type { IBalanceRequest, PendingBalanceRequestWithUser } from '~/types';
+import { createIndexesWithRetry } from '~/utils/retry';
 import logger from '~/config/winston';
 
 /** Mongo duplicate-key error code, thrown when the partial unique
@@ -273,7 +274,7 @@ export function createBalanceRequestMethods(mongoose: typeof import('mongoose'))
    * (dedup) and TTL (retention) guarantees this collection depends on.
    */
   async function ensureBalanceRequestIndexes(): Promise<void> {
-    await model().createIndexes();
+    await createIndexesWithRetry(model());
   }
 
   return {

@@ -1309,6 +1309,7 @@ export default function useResumableSSE(
     prunePtcTraces,
     attachmentHandler,
     resetContentHandler,
+    cancelPendingDeltaFlush,
     flushPendingDeltas,
   } = useEventHandlers({
     setMessages,
@@ -2129,6 +2130,9 @@ export default function useResumableSSE(
                 generationProtocolVersion,
               },
             );
+            /** A queued delta flush reading the older streaming copy must never
+             * land on top of the server-final write. */
+            cancelPendingDeltaFlush();
             let finalHandled = false;
             try {
               finalHandler(data, currentSubmission as EventSubmission);
@@ -3955,6 +3959,7 @@ export default function useResumableSSE(
       clearStepMaps,
       messageHandler,
       errorHandler,
+      cancelPendingDeltaFlush,
       flushPendingDeltas,
       setIsSubmitting,
       getMessages,

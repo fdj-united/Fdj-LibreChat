@@ -77,6 +77,7 @@ jest.mock('~/hooks', () => ({
 
 jest.mock('~/utils', () => ({
   cn: (...classes: Array<string | false | undefined>) => classes.filter(Boolean).join(' '),
+  getModelDisplayName: (modelId: string) => modelId,
 }));
 
 function TestForm({

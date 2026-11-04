@@ -7,6 +7,10 @@ function makeLogger() {
   return { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 }
 
+async function runAsSystem<T>(callback: () => Promise<T>): Promise<T> {
+  return callback();
+}
+
 function candidate(overrides: Partial<RetentionCandidate> = {}): RetentionCandidate {
   return {
     file_id: overrides.file_id ?? 'f1',
@@ -278,7 +282,7 @@ describe('startAgentFileRetentionSweep', () => {
     jest.useFakeTimers();
     const nonLeader = baseDeps();
     nonLeader.isLeader = jest.fn().mockResolvedValue(false);
-    nonLeader.runAsSystem = jest.fn((callback) => callback());
+    nonLeader.runAsSystem = jest.fn(runAsSystem) as StartAgentFileRetentionDeps['runAsSystem'];
 
     const nonLeaderHandle = startAgentFileRetentionSweep(
       { rules: [{ agentId: 'a', retentionHours: 8 }], intervalMs: 1000 },
@@ -291,7 +295,7 @@ describe('startAgentFileRetentionSweep', () => {
 
     const leader = baseDeps();
     leader.isLeader = jest.fn().mockResolvedValue(true);
-    leader.runAsSystem = jest.fn((callback) => callback());
+    leader.runAsSystem = jest.fn(runAsSystem) as StartAgentFileRetentionDeps['runAsSystem'];
     const leaderHandle = startAgentFileRetentionSweep(
       { rules: [{ agentId: 'a', retentionHours: 8 }], intervalMs: 1000 },
       leader,

@@ -9,6 +9,7 @@ jest.mock('react-router-dom', () => ({
 }));
 
 jest.mock('recoil', () => ({
+  atom: () => ({}),
   atomFamily: () => () => ({}),
   useRecoilValue: () => false,
   useRecoilCallback: () => () => undefined,
@@ -79,6 +80,8 @@ jest.mock('../Footer', () => ({
 jest.mock('../Header', () => ({ readOnly }: { readOnly?: boolean }) => (
   <div data-read-only={String(readOnly)} data-testid="header" />
 ));
+jest.mock('../OutOfCreditNotice', () => () => null);
+jest.mock('~/components/MCP/MCPConfirmationDialog', () => () => null);
 
 jest.mock('~/utils', () => ({
   cn: (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' '),

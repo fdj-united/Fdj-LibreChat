@@ -26,6 +26,8 @@ type AgentGenerationStart = {
 
 type CompletionOptions = {
   timeout?: number;
+  /** When set, the persisted assistant text must match before completion. */
+  expectedText?: string;
 };
 
 const DEFAULT_COMPLETION_TIMEOUT = 20_000;
@@ -137,6 +139,22 @@ export async function sendMessage(page: Page, text: string): Promise<Response> {
   return response;
 }
 
+function persistedAssistantText(message: TMessage): string {
+  if (typeof message.text === 'string' && message.text.length > 0) {
+    return message.text;
+  }
+  return (message.content ?? [])
+    .map((part) => {
+      if (part == null || part.type !== ContentTypes.TEXT || !('text' in part)) {
+        return '';
+      }
+      const text = part.text;
+      return typeof text === 'string' ? text : (text?.value ?? '');
+    })
+    .filter((text) => text.length > 0)
+    .join('\n');
+}
+
 function formatPersistedMessages(messages: TMessage[]): string {
   return JSON.stringify(
     messages.map(
@@ -246,16 +264,27 @@ export async function sendMessageAndWaitForCompletion(
               message.parentMessageId != null &&
               userMessageIds.has(message.parentMessageId),
           );
-          return (
+          const persistComplete =
             userMessageIds.size > 0 &&
             assistantMessages.length > 0 &&
-            assistantMessages.every((message) => message.unfinished === false)
+            assistantMessages.every((message) => message.unfinished === false);
+          if (!persistComplete) {
+            return false;
+          }
+          if (options.expectedText == null) {
+            return true;
+          }
+          return assistantMessages.some(
+            (message) => persistedAssistantText(message) === options.expectedText,
           );
         },
         {
           timeout: options.timeout ?? DEFAULT_COMPLETION_TIMEOUT,
           intervals: [250, 500, 1_000],
-          message: 'new assistant response should be durably finalized',
+          message:
+            options.expectedText == null
+              ? 'new assistant response should be durably finalized'
+              : 'new assistant response should persist the expected text',
         },
       )
       .toBe(true);

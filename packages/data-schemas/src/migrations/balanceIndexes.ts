@@ -1,5 +1,5 @@
 import type { Collection } from 'mongodb';
-import { retryWithBackoff } from '~/utils/retry';
+import { buildIndexWithRetry } from '~/utils/retry';
 import logger from '~/config/winston';
 
 interface DuplicateGroup {
@@ -319,7 +319,12 @@ export async function ensureBalanceIndexes(
     );
   }
 
-  const name = await retryWithBackoff(
+  const Balance = mongoose.models.Balance;
+  if (typeof Balance?.init === 'function') {
+    await Balance.init().catch(() => undefined);
+  }
+
+  const name = await buildIndexWithRetry(
     () => collection.createIndex({ user: 1, tenantId: 1 }, { unique: true }),
     'balances.{user:1,tenantId:1}',
   );

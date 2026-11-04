@@ -1,5 +1,5 @@
 import type { Connection } from 'mongoose';
-import { retryWithBackoff } from '~/utils/retry';
+import { buildIndexWithRetry } from '~/utils/retry';
 import logger from '~/config/winston';
 
 type IndexSpec = Record<string, 1 | -1>;
@@ -68,16 +68,37 @@ const COLLECTION_INDEXES: Record<string, IndexDefinition[]> = {
   ],
 };
 
+const ARTIFACT_INDEX_MODELS = [
+  'ArtifactApp',
+  'ArtifactVersion',
+  'ArtifactSourceTombstone',
+] as const;
+
+/** Mongoose starts each model's automatic index build in the background.
+ *  An explicit `createIndex` that overlaps it is a second concurrent build,
+ *  which single-build engines reject. Letting `init()` settle first keeps
+ *  the migration from waiting on (or colliding with) that slot. */
+async function settleAutomaticIndexes(connection: Connection): Promise<void> {
+  for (const modelName of ARTIFACT_INDEX_MODELS) {
+    const model = connection.models[modelName];
+    if (typeof model?.init === 'function') {
+      await model.init().catch(() => undefined);
+    }
+  }
+}
+
 export async function ensureArtifactAppIndexes(
   connection: Connection,
 ): Promise<{ created: string[]; errors: string[] }> {
+  await connection.asPromise();
+  await settleAutomaticIndexes(connection);
   const result = { created: [] as string[], errors: [] as string[] };
 
   for (const [collectionName, indexes] of Object.entries(COLLECTION_INDEXES)) {
     const collection = connection.db!.collection(collectionName);
     for (const { spec, options } of indexes) {
       try {
-        const name = await retryWithBackoff(
+        const name = await buildIndexWithRetry(
           () => collection.createIndex(spec, options),
           `${collectionName}.${JSON.stringify(spec)}`,
         );

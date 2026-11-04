@@ -1358,10 +1358,25 @@ export default function useEventHandlers({
 
   const abortConversation = useCallback(
     async (conversationId = '', submission: EventSubmission, messages?: TMessage[]) => {
-      const runAbortKey = `${conversationId}:${messages?.[messages.length - 1]?.messageId ?? ''}`;
       const { endpoint: _endpoint, endpointType } =
         (submission.conversation as TConversation | null) ?? {};
       const endpoint = endpointType ?? _endpoint;
+      /** Local abort handlers write the active conversation. After navigation
+       *  they would clobber the route the user is now looking at. A first turn
+       *  stays on `/c/new` (or pending) while the abort key is the real id, so
+       *  that route is still this run. Assistants still need the server abort
+       *  below. */
+      if (
+        paramId &&
+        conversationId &&
+        paramId !== conversationId &&
+        paramId !== Constants.NEW_CONVO &&
+        paramId !== Constants.PENDING_CONVO &&
+        !isAssistantsEndpoint(endpoint)
+      ) {
+        return;
+      }
+      const runAbortKey = `${conversationId}:${messages?.[messages.length - 1]?.messageId ?? ''}`;
       if (
         !isAssistantsEndpoint(endpoint) &&
         messages?.[messages.length - 1] != null &&
@@ -1466,6 +1481,7 @@ export default function useEventHandlers({
     },
     [
       token,
+      paramId,
       getMessages,
       setMessages,
       finalHandler,

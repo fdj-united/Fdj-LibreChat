@@ -1,5 +1,6 @@
 import React from 'react';
 import { useSetAtom } from 'jotai';
+import { MemoryRouter } from 'react-router-dom';
 import { RecoilRoot, useSetRecoilState } from 'recoil';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -14,7 +15,9 @@ const renderPresentation = (element: React.ReactElement) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(element, {
     wrapper: ({ children }) => (
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      <MemoryRouter>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </MemoryRouter>
     ),
   });
 };
@@ -67,6 +70,12 @@ jest.mock('~/components/SidePanel', () => ({
 jest.mock('~/Providers', () => ({
   ArtifactsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   EditorProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useArtifactsContext: () => ({ isSubmitting: false }),
+}));
+
+jest.mock('~/components/ArtifactApps/ArtifactCatalogRegistrar', () => ({
+  __esModule: true,
+  default: () => null,
 }));
 
 jest.mock('~/hooks/Artifacts/useResetArtifactsOnConversationChange', () => ({

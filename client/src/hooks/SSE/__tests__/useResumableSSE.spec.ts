@@ -224,6 +224,7 @@ const mockStepHandler = jest.fn();
 const mockTitleHandler = jest.fn();
 const mockSetIsSubmitting = jest.fn();
 const mockClearStepMaps = jest.fn();
+const mockCancelPendingDeltaFlush = jest.fn();
 
 jest.mock('~/hooks/SSE/useEventHandlers', () => {
   const actual = jest.requireActual('~/hooks/SSE/useEventHandlers');
@@ -242,6 +243,7 @@ jest.mock('~/hooks/SSE/useEventHandlers', () => {
       syncStepMessage: jest.fn(),
       prunePtcTraces: jest.fn(),
       clearStepMaps: mockClearStepMaps,
+      cancelPendingDeltaFlush: mockCancelPendingDeltaFlush,
       flushPendingDeltas: jest.fn(),
       messageHandler: jest.fn(),
       setIsSubmitting: mockSetIsSubmitting,
@@ -370,6 +372,7 @@ describe('useResumableSSE', () => {
     mockStepHandler.mockClear();
     mockTitleHandler.mockClear();
     mockClearStepMaps.mockClear();
+    mockCancelPendingDeltaFlush.mockClear();
     mockSetIsSubmitting.mockClear();
     mockSetQueryData.mockClear();
     mockGetQueryData.mockReset();
@@ -2992,6 +2995,10 @@ describe('useResumableSSE', () => {
     expect(mockFinalHandler).toHaveBeenCalledWith(
       finalPayload,
       expect.objectContaining(submission),
+    );
+    expect(mockCancelPendingDeltaFlush).toHaveBeenCalled();
+    expect(mockCancelPendingDeltaFlush.mock.invocationCallOrder[0]).toBeLessThan(
+      mockFinalHandler.mock.invocationCallOrder[0],
     );
     expect(mockFetchQuery).not.toHaveBeenCalled();
     expect(mockSetRunEnd).toHaveBeenCalledWith(
