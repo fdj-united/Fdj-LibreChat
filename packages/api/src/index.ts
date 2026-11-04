@@ -25,6 +25,7 @@ export * from './mcp/MCPManager';
 export * from './mcp/ConfirmationStore';
 export * from './mcp/connection';
 export * from './mcp/toolsChanged';
+export * from './mcp/snapshots';
 export * from './mcp/oauth';
 export * from './mcp/auth';
 export * from './mcp/zod';

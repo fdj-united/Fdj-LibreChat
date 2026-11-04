@@ -15,6 +15,8 @@ const mockCacheMCPServerTools = jest.fn();
 const mockGetServerToolFunctionsSnapshot = jest.fn();
 const mockClearCatalogRecoveryState = jest.fn();
 const mockInvalidateCachedTools = jest.fn();
+const mockGetAppConfig = jest.fn().mockResolvedValue({});
+const mockSaveMCPToolSnapshot = jest.fn();
 
 jest.mock('@librechat/api', () => ({
   ...jest.requireActual('@librechat/api'),
@@ -47,6 +49,10 @@ jest.mock('~/server/services/Config', () => ({
   getMCPServerTools: mockGetMCPServerTools,
   cacheMCPServerTools: mockCacheMCPServerTools,
   invalidateCachedTools: mockInvalidateCachedTools,
+  getAppConfig: (...args) => mockGetAppConfig(...args),
+}));
+jest.mock('~/server/services/MCPToolSnapshots', () => ({
+  save: (...args) => mockSaveMCPToolSnapshot(...args),
 }));
 jest.mock('~/server/services/MCPAuthorizationFenceRetry', () => ({
   persistMCPAuthorizationFenceRetry: jest.fn().mockResolvedValue('retry-v1'),
@@ -803,6 +809,60 @@ describe('reinitMCPServer — OAuth attempt lifetime', () => {
       oauthUrl: 'https://oauth.example.com/authorize',
       oauthExpiresAt: expiresAt,
     });
+  });
+});
+
+describe('reinitMCPServer — deferred OAuth tool snapshots', () => {
+  const user = { id: 'user-123', role: 'USER' };
+  const serverName = 'Jira';
+  const serverConfig = {
+    type: 'streamable-http',
+    url: 'https://jira.example.com/mcp',
+    requiresOAuth: true,
+  };
+  const availableTools = {
+    [`search${Constants.mcp_delimiter}${serverName}`]: {
+      type: 'function',
+      function: { name: `search${Constants.mcp_delimiter}${serverName}`, parameters: {} },
+    },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetConnection.mockResolvedValue({ fetchTools: jest.fn().mockResolvedValue([]) });
+    mockUpdateMCPServerTools.mockResolvedValue(availableTools);
+  });
+
+  it('stores the discovered tools for an OAuth server when the setting is on', async () => {
+    mockGetAppConfig.mockResolvedValueOnce({ mcpSettings: { deferOAuthUntilToolCall: true } });
+
+    await reinitMCPServer({ user, serverName, serverConfig });
+
+    expect(mockSaveMCPToolSnapshot).toHaveBeenCalledWith(user.id, serverName, availableTools);
+  });
+
+  it('does not store snapshots when the setting is off or the server has no OAuth', async () => {
+    mockGetAppConfig.mockResolvedValue({ mcpSettings: { deferOAuthUntilToolCall: true } });
+
+    await reinitMCPServer({
+      user,
+      serverName,
+      serverConfig: { ...serverConfig, requiresOAuth: false },
+    });
+    mockGetAppConfig.mockResolvedValue({});
+    await reinitMCPServer({ user, serverName, serverConfig });
+
+    expect(mockSaveMCPToolSnapshot).not.toHaveBeenCalled();
+    mockGetAppConfig.mockResolvedValue({});
+  });
+
+  it('keeps the reinitialization result when the snapshot cannot be stored', async () => {
+    mockGetAppConfig.mockResolvedValueOnce({ mcpSettings: { deferOAuthUntilToolCall: true } });
+    mockSaveMCPToolSnapshot.mockRejectedValueOnce(new Error('mongo down'));
+
+    const result = await reinitMCPServer({ user, serverName, serverConfig });
+
+    expect(result.availableTools).toEqual(availableTools);
   });
 });
 

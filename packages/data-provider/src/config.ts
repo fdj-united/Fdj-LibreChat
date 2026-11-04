@@ -3219,6 +3219,12 @@ export const configSchema = z.object({
     .object({
       allowedDomains: z.array(z.string()).optional(),
       allowedAddresses: allowedAddressesSchema,
+      /**
+       * Defers OAuth for MCP servers until one of their tools is called. Turns expose the user's
+       * last discovered tool definitions instead of connecting (and prompting) up front; a server
+       * never discovered for the user still prompts once, which stores its definitions. Off by default.
+       */
+      deferOAuthUntilToolCall: z.boolean().optional(),
       catalogRecovery: z
         .object({
           discoveryBackoffMs: z

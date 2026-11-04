@@ -10,6 +10,7 @@ const {
   isMCPInitializationError,
   prepareMCPAuthorizationMutation,
   recordScheduledMCPToolAuthFailure,
+  isLazyOAuthServer,
 } = require('@librechat/api');
 const { CacheKeys, Constants } = require('librechat-data-provider');
 const { getMCPManager, getMCPServersRegistry, getFlowStateManager } = require('~/config');
@@ -29,12 +30,31 @@ const {
   getMCPToolsCacheGeneration,
   updateMCPServerTools,
   invalidateCachedTools,
+  getAppConfig,
 } = require('~/server/services/Config');
+const mcpToolSnapshots = require('~/server/services/MCPToolSnapshots');
 const { getLogStores } = require('~/cache');
 const {
   clearMCPAuthorizationFenceRetry,
   persistMCPAuthorizationFenceRetry,
 } = require('~/server/services/MCPAuthorizationFenceRetry');
+
+/** Snapshot persistence never fails a reinitialization; a missing snapshot only costs a prompt. */
+async function saveMCPToolSnapshot(user, serverName, availableTools) {
+  try {
+    const appConfig = await getAppConfig({
+      role: user.role,
+      tenantId: user.tenantId,
+      userId: user.id,
+    });
+    if (appConfig?.mcpSettings?.deferOAuthUntilToolCall !== true) {
+      return;
+    }
+    await mcpToolSnapshots.save(user.id, serverName, availableTools);
+  } catch (error) {
+    logger.warn('[MCP Reinitialize] Unable to store tool snapshot', { error: error?.message });
+  }
+}
 
 const MCP_REINITIALIZE_FAILURE_REASONS = {
   MISSING_CUSTOM_USER_VARS: 'missing_custom_user_vars',
@@ -406,6 +426,10 @@ async function reinitMCPServer({
       if (availableTools == null) {
         tools = null;
       }
+    }
+
+    if (availableTools && user?.id && !ephemeralServer && isLazyOAuthServer(serverConfig)) {
+      await saveMCPToolSnapshot(user, serverName, availableTools);
     }
 
     logger.debug('[MCP Reinitialize] Sending response', {
