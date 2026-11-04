@@ -220,6 +220,14 @@ describe('Agent Management contract', () => {
       expect(response).not.toHaveProperty('is_promoted');
     });
 
+    it('projects agent metadata for governance retrieval', () => {
+      const metadata = { jiraUseCaseLink: 'https://jira.example/browse/ABC-1' };
+      const response = projectAgentManagementResponse({ ...persistedAgent, metadata });
+
+      expect(response.metadata).toEqual(metadata);
+      expect(agentManagementResponseSchema.parse(response)).toEqual(response);
+    });
+
     it('omits legacy string avatars that are not part of the management contract', () => {
       const response = projectAgentManagementResponse({
         ...persistedAgent,

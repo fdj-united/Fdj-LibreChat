@@ -2408,6 +2408,10 @@
           "category": {
             "type": "string"
           },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
+          },
           "provider": {
             "type": "string"
           },
@@ -2846,6 +2850,10 @@
           },
           "category": {
             "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
           },
           "provider": {
             "type": "string"
@@ -3301,6 +3309,10 @@
           },
           "category": {
             "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
           },
           "provider": {
             "type": "string"
