@@ -69,6 +69,8 @@ export type AgentForm = {
   recursion_limit?: number;
   eager_execution?: boolean;
   support_contact?: SupportContact;
+  jiraUseCaseLink?: string;
+  metadata?: Agent['metadata'];
   category: string;
   // Avatar management fields
   avatar_file?: File | null;
