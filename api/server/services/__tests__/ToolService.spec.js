@@ -147,6 +147,12 @@ jest.mock('~/server/services/Tools/search', () => ({
 jest.mock('~/server/services/Tools/mcp', () => ({
   reinitMCPServer: jest.fn(),
 }));
+const mockLoadMCPToolSnapshot = jest.fn().mockResolvedValue(null);
+jest.mock('~/server/services/MCPToolSnapshots', () => ({
+  load: (...args) => mockLoadMCPToolSnapshot(...args),
+  save: jest.fn(),
+  remove: jest.fn(),
+}));
 jest.mock('~/server/services/Files/process', () => ({
   processFileURL: jest.fn(),
   uploadImageBuffer: jest.fn(),
@@ -1701,6 +1707,91 @@ describe('ToolService - Action Capability Gating', () => {
         'step_oauth_login_ELI',
         'step_oauth_login_Vespa',
       ]);
+    });
+
+    describe('with mcpSettings.deferOAuthUntilToolCall', () => {
+      const serverName = 'Jira';
+      const mcpTool = `search${Constants.mcp_delimiter}${serverName}`;
+      const snapshotTools = {
+        [mcpTool]: { type: 'function', function: { name: mcpTool, parameters: {} } },
+      };
+
+      function createDeferredReq() {
+        const req = createMockReq([AgentCapabilities.tools]);
+        req.config.mcpSettings = { deferOAuthUntilToolCall: true };
+        return req;
+      }
+
+      beforeEach(() => {
+        mockGetEndpointsConfig.mockResolvedValue(createEndpointsConfig([AgentCapabilities.tools]));
+        mockResolveConfigServers.mockResolvedValue({
+          [serverName]: {
+            type: 'streamable-http',
+            url: 'https://mcp.example.com/jira',
+            requiresOAuth: true,
+          },
+        });
+        mockGetMCPServerTools.mockResolvedValue(null);
+        mockFlowManager.getFlowState.mockResolvedValue(null);
+        mockLoadToolDefinitions.mockImplementationOnce(async (params, deps) => {
+          const tools = await deps.getOrFetchMCPServerTools(params.userId, serverName);
+          return {
+            toolDefinitions: [],
+            toolRegistry: new Map(),
+            hasDeferredTools: false,
+            mcpResolution: { resolvedToolCount: tools ? 1 : 0 },
+          };
+        });
+      });
+
+      afterEach(() => {
+        mockLoadMCPToolSnapshot.mockReset().mockResolvedValue(null);
+      });
+
+      it('exposes the stored tools without connecting or prompting', async () => {
+        mockLoadMCPToolSnapshot.mockResolvedValue(snapshotTools);
+
+        const result = await loadAgentTools({
+          req: createDeferredReq(),
+          res: { writableEnded: false },
+          agent: { id: 'agent_123', tools: [mcpTool] },
+          definitionsOnly: true,
+        });
+
+        expect(mockLoadMCPToolSnapshot).toHaveBeenCalledWith('user_123', serverName);
+        expect(reinitMCPServer).not.toHaveBeenCalled();
+        expect(mockSendEvent).not.toHaveBeenCalled();
+        expect(result.mcpAvailableTools).toEqual({ [serverName]: snapshotTools });
+      });
+
+      it('falls back to regular discovery when no snapshot is stored', async () => {
+        reinitMCPServer.mockResolvedValueOnce({ availableTools: snapshotTools });
+
+        const result = await loadAgentTools({
+          req: createDeferredReq(),
+          res: { writableEnded: false },
+          agent: { id: 'agent_123', tools: [mcpTool] },
+          definitionsOnly: true,
+        });
+
+        expect(reinitMCPServer).toHaveBeenCalledTimes(1);
+        expect(result.mcpAvailableTools).toEqual({ [serverName]: snapshotTools });
+      });
+
+      it('keeps connecting up front when the setting is off', async () => {
+        mockLoadMCPToolSnapshot.mockResolvedValue(snapshotTools);
+        reinitMCPServer.mockResolvedValueOnce({ availableTools: snapshotTools });
+
+        await loadAgentTools({
+          req: createMockReq([AgentCapabilities.tools]),
+          res: { writableEnded: false },
+          agent: { id: 'agent_123', tools: [mcpTool] },
+          definitionsOnly: true,
+        });
+
+        expect(mockLoadMCPToolSnapshot).not.toHaveBeenCalled();
+        expect(reinitMCPServer).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('does not count an empty post-OAuth catalog as tools available or reload definitions', async () => {

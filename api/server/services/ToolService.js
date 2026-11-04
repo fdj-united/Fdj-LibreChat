@@ -66,6 +66,8 @@ const {
   getTransactionsConfig,
   checkToolRolePermission,
   resolveToolRolePermissions,
+  isLazyOAuthServer,
+  loadDeferredMCPServerTools,
 } = require('@librechat/api');
 const {
   Time,
@@ -112,6 +114,7 @@ const { manifestToolMap, toolkits } = require('~/app/clients/tools/manifest');
 const repositoryInstructionLoader = createRepositoryInstructionLoader();
 const { createOnSearchResults } = require('~/server/services/Tools/search');
 const { reinitMCPServer } = require('~/server/services/Tools/mcp');
+const mcpToolSnapshots = require('~/server/services/MCPToolSnapshots');
 const {
   createMCPPermissionContext,
   resolveMcpServerContext,
@@ -997,6 +1000,9 @@ async function loadToolDefinitionsWrapper({
   const oauthStepIndexes = new Map();
   /** @type {Record<string, import('@librechat/api').LCAvailableTools>} */
   const mcpAvailableTools = {};
+  const deferOAuthUntilToolCall = appConfig?.mcpSettings?.deferOAuthUntilToolCall === true;
+  /** Servers resolved without OAuth this turn; sign-in is left to the tool call. */
+  const deferredOAuthServers = new Set();
   const requestScopedConnections = getMCPRequestContext(req, res);
   const oboIdentityContext = createAuthIdentityContext({
     user: req.user,
@@ -1173,6 +1179,17 @@ async function loadToolDefinitionsWrapper({
     }
 
     const cached = await getMCPServerTools(userId, serverName, serverConfig);
+    if (deferOAuthUntilToolCall && isLazyOAuthServer(serverConfig)) {
+      const deferredTools =
+        cached ??
+        (await loadDeferredMCPServerTools({ userId, serverName, snapshots: mcpToolSnapshots }));
+      if (deferredTools) {
+        deferredOAuthServers.add(serverName);
+        rememberMCPAvailableTools(serverName, deferredTools);
+        return deferredTools;
+      }
+    }
+
     if (cached) {
       rememberMCPAvailableTools(serverName, cached);
       await addPendingOAuthServer();
@@ -1218,6 +1235,9 @@ async function loadToolDefinitionsWrapper({
     }
 
     const oauthStart = async (authURL, options) => {
+      if (deferredOAuthServers.has(serverName)) {
+        return;
+      }
       pendingOAuthServers.add(serverName);
       if (typeof authURL === 'string' && authURL.length > 0) {
         pendingOAuthStarts.set(serverName, { authURL, options });
@@ -1348,7 +1368,7 @@ async function loadToolDefinitionsWrapper({
   /** OAuth discovery must not reconnect (or prompt for) a server whose
    *  definitions the collision filter deliberately rejected. */
   for (const serverName of getMCPServerNamesFromTools(defsFilteredTools, mcpServerNames)) {
-    if (pendingOAuthServers.has(serverName)) {
+    if (pendingOAuthServers.has(serverName) || deferredOAuthServers.has(serverName)) {
       continue;
     }
 
