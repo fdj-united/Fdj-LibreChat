@@ -9,6 +9,7 @@ const {
 const { syncUserEntraGroupMemberships } = require('~/server/services/PermissionService');
 const { setAuthTokens } = require('~/server/services/AuthService');
 const { sendOpenIDAuthResponse } = require('~/server/services/OpenIDRefreshRecovery');
+const scheduledOpenIdTokens = require('~/server/services/ScheduledOpenIdTokens');
 const getLogStores = require('~/cache/getLogStores');
 const { checkBan } = require('~/server/middleware');
 const { generateToken } = require('~/models');
@@ -95,6 +96,13 @@ function createOAuthHandler(redirectUri = domains.client) {
         ) {
           req.session.openidLogoutIdToken = req.user.tokenset?.id_token;
         }
+      }
+      if (req.user?.provider === 'openid') {
+        await scheduledOpenIdTokens
+          .save(req.user._id?.toString(), req.user.tokenset?.refresh_token)
+          .catch((error) =>
+            logger.warn('[OAuth] Unable to store scheduled-run OpenID token', error?.message),
+          );
       }
       res.redirect(redirectUri);
     } catch (err) {

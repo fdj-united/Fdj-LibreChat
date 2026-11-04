@@ -4,6 +4,7 @@ const { logger, DEFAULT_REFRESH_TOKEN_EXPIRY } = require('@librechat/data-schema
 const { logoutUser } = require('~/server/services/AuthService');
 const { deleteAllRefreshTokenBridges } = require('~/server/services/RefreshTokenBridge');
 const { revokeOpenIDRefreshTokenChain } = require('~/server/services/OpenIDRefreshRecovery');
+const scheduledOpenIdTokens = require('~/server/services/ScheduledOpenIdTokens');
 const { getOpenIdConfig } = require('~/strategies');
 
 /** Parses and validates OPENID_MAX_LOGOUT_URL_LENGTH, returning defaultValue on invalid input */
@@ -66,6 +67,7 @@ const logoutController = async (req, res) => {
         userId,
         tenantId: req.user?.tenantId,
       });
+      await scheduledOpenIdTokens.remove(userId);
       if (req.session) {
         delete req.session.openidTokens;
         delete req.session.openidLogoutIdToken;

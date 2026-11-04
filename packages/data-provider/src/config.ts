@@ -3295,6 +3295,11 @@ export const configSchema = z.object({
       oauthStateTtlMs: z.number().int().min(60_000).max(3_600_000).optional(),
       /** OpenID discovery retries; an unset field falls back to its `OPENID_DISCOVERY_RETRY_*` env var, then the schema default. */
       openidDiscovery: openIdDiscoverySchema.partial().optional(),
+      /**
+       * Persists an encrypted OpenID refresh token at login so scheduled runs can resolve
+       * `{{LIBRECHAT_OPENID_*}}` placeholders without a browser session. Off by default.
+       */
+      openidScheduledTokens: z.boolean().optional(),
     })
     .default({ socialLogins: defaultSocialLogins }),
   balance: balanceSchema.optional(),
