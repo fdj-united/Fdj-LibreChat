@@ -221,4 +221,50 @@ describe('createScheduledOpenIdTokens', () => {
     expect(await storedRecord(userId)).toBeNull();
     expect(cache.store.size).toBe(0);
   });
+
+  describe('attach', () => {
+    it('gives an owner loaded from storage the refreshed tokens', async () => {
+      const userId = new Types.ObjectId().toString();
+      const { service } = setup();
+      await service.save(userId, 'refresh-1');
+      const owner: TestUser = { id: userId, provider: 'openid', openidId: 'oid-1' };
+
+      const result = await service.attach(owner);
+
+      expect(result).toBe(owner);
+      expect(owner.federatedTokens).toMatchObject({
+        access_token: 'fresh-access',
+        id_token: 'fresh-id',
+      });
+    });
+
+    it('returns the owner unchanged when nothing is stored or the user is not OpenID', async () => {
+      const userId = new Types.ObjectId().toString();
+      const { service, refreshTokenGrant } = setup();
+      const openIdOwner: TestUser = { id: userId, provider: 'openid', openidId: 'oid-1' };
+      const localOwner: TestUser = { id: userId, provider: 'local' };
+
+      await expect(service.attach(openIdOwner)).resolves.toBe(openIdOwner);
+      await expect(service.attach(localOwner)).resolves.toBe(localOwner);
+      await expect(service.attach(null)).resolves.toBeNull();
+
+      expect(openIdOwner.federatedTokens).toBeUndefined();
+      expect(refreshTokenGrant).not.toHaveBeenCalled();
+    });
+
+    it('does not fail the caller when the IdP is unreachable', async () => {
+      const userId = new Types.ObjectId().toString();
+      const { service } = setup({
+        refreshTokenGrant: async () => {
+          throw new Error('fetch failed');
+        },
+      });
+      await service.save(userId, 'refresh-1');
+      const owner: TestUser = { id: userId, provider: 'openid', openidId: 'oid-1' };
+
+      await expect(service.attach(owner)).resolves.toBe(owner);
+      expect(owner.federatedTokens).toBeUndefined();
+      expect(await storedRecord(userId)).not.toBeNull();
+    });
+  });
 });

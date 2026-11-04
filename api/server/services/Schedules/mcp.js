@@ -6,6 +6,7 @@ const { getModelsConfig } = require('~/server/controllers/ModelController');
 const { getGraphApiToken } = require('~/server/services/GraphTokenService');
 const { exchangeOboToken } = require('~/server/services/OboTokenService');
 const { createOboTrustChecker } = require('~/server/services/OboPolicyService');
+const scheduledOpenIdTokens = require('~/server/services/ScheduledOpenIdTokens');
 const { getLogStores } = require('~/cache');
 const methods = require('~/models');
 
@@ -23,7 +24,7 @@ function createMCPPreflight(options = {}) {
     resolveAgentGraphAccess: methods.resolveAgentGraphAccess,
     getAgentGraphNodes: methods.getAgentGraphNodes,
     getModelsConfig: (user) => getModelsConfig({ user }),
-    getUser: (id) => methods.findUser({ _id: id }),
+    getUser: async (id) => scheduledOpenIdTokens.attach(await methods.findUser({ _id: id })),
     getAppConfig,
     ensureConfigServers: (config, limit) =>
       getMCPServersRegistry().ensureConfigServers(config, limit),
