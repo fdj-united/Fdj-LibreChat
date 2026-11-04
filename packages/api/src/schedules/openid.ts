@@ -65,6 +65,7 @@ export interface ScheduledOpenIdTokens {
   remove: (userId: string) => Promise<void>;
   resolve: (userId: string) => Promise<ScheduledOpenIdResult>;
   hydrate: (req: ScheduledOpenIdRequest) => Promise<ScheduledOpenIdResult | null>;
+  attach: <T extends ScheduledOpenIdUser>(user: T | null) => Promise<T | null>;
 }
 
 function getUserId(user?: ScheduledOpenIdUser): string | undefined {
@@ -208,11 +209,16 @@ export function createScheduledOpenIdTokens(deps: ScheduledOpenIdDeps): Schedule
    * obtained, so placeholder resolution keeps its existing re-authentication failure.
    */
   async function hydrate(req: ScheduledOpenIdRequest): Promise<ScheduledOpenIdResult | null> {
-    const user = req.user;
-    if (!user || !isScheduleFireRequest(req) || !isOpenIdUser(user)) {
+    if (!req.user || !isScheduleFireRequest(req)) {
       return null;
     }
-    if (hasUsableAccessToken(user.federatedTokens)) {
+    return attachTokens(req.user);
+  }
+
+  async function attachTokens(
+    user: ScheduledOpenIdUser | null,
+  ): Promise<ScheduledOpenIdResult | null> {
+    if (!user || !isOpenIdUser(user) || hasUsableAccessToken(user.federatedTokens)) {
       return null;
     }
     const userId = getUserId(user);
@@ -226,5 +232,21 @@ export function createScheduledOpenIdTokens(deps: ScheduledOpenIdDeps): Schedule
     return result;
   }
 
-  return { save, remove, resolve, hydrate };
+  /**
+   * Attaches fresh OpenID tokens to an owner loaded from storage for unattended work, such as the
+   * schedule MCP preflight. Returns the same user either way: without tokens, placeholder
+   * resolution keeps reporting that the owner must sign in again.
+   */
+  async function attach<T extends ScheduledOpenIdUser>(user: T | null): Promise<T | null> {
+    try {
+      await attachTokens(user);
+    } catch (error) {
+      logger.warn('[ScheduledOpenId] Unable to attach stored OpenID tokens', {
+        error: (error as Error)?.message,
+      });
+    }
+    return user;
+  }
+
+  return { save, remove, resolve, hydrate, attach };
 }
