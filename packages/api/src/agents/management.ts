@@ -293,6 +293,7 @@ export function projectAgentManagementResponse(
     subagents: source.subagents,
     support_contact: source.support_contact,
     category: source.category,
+    metadata: source.metadata,
   });
 }
 
