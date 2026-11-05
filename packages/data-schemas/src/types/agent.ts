@@ -81,4 +81,5 @@ export interface IAgent extends Omit<Document, 'model'> {
   tenantId?: string;
   /** Review/verification metadata */
   review_metadata?: IReviewMetadata;
+  metadata?: Record<string, unknown>;
 }

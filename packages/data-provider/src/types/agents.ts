@@ -1120,6 +1120,7 @@ export type AgentCreateParams = {
   | 'skills_scope'
   | 'subagents'
   | 'memory_scope'
+  | 'metadata'
 >;
 
 export type AgentUpdateParams = {
@@ -1159,6 +1160,7 @@ export type AgentUpdateParams = {
   | 'skills_scope'
   | 'subagents'
   | 'memory_scope'
+  | 'metadata'
 >;
 
 export type AgentListParams = {
