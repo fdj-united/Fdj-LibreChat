@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Check, Info, Minus, Search } from 'lucide-react';
+import { AlertCircle, Check, Info, Minus, Search, RefreshCw } from 'lucide-react';
 import {
   Button,
   Input,
@@ -11,7 +11,8 @@ import {
   useMediaQuery,
 } from '@librechat/client';
 import {
-  INSIGHTS_MAX_RANGE_DAYS,
+  getInsightsConfig,
+  INSIGHTS_UNCATEGORIZED,
   INSIGHTS_SEARCH_MAX_LENGTH,
   INSIGHTS_SEARCH_MIN_LENGTH,
 } from 'librechat-data-provider';
@@ -26,10 +27,13 @@ import type { TranslationKeys } from '~/hooks';
 import { clearAgentFilters, shouldRecoverAgentFilters } from './agentFilters';
 import { useGetStartupConfig, useInsightsQuery } from '~/data-provider';
 import { useAuthContext, useDocumentTitle, useLocalize } from '~/hooks';
+import { getRollingDateRange, getTodayDateRange } from './dateRange';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { LocalizedDateRangePicker } from '~/components/ui';
-import { getRollingDateRange } from './dateRange';
+import Charts, { EngagementMetrics } from './charts';
+import MetricInfo from './info';
 import { cn } from '~/utils';
+import Panel from './panel';
 
 type ShortcutRange = Exclude<InsightsRange, 'custom'>;
 type Localize = ReturnType<typeof useLocalize>;
@@ -45,6 +49,7 @@ type KpiCardData = {
 };
 
 const ranges: Array<{ value: ShortcutRange; labelKey: TranslationKeys; days: number }> = [
+  { value: 'today', labelKey: 'com_insights_range_today', days: 0 },
   { value: '24h', labelKey: 'com_insights_range_24_hours', days: 1 },
   { value: '7d', labelKey: 'com_insights_range_7_days', days: 7 },
   { value: '30d', labelKey: 'com_insights_range_30_days', days: 30 },
@@ -104,26 +109,10 @@ function responseStatus(error: unknown) {
   return (error as { response?: { status?: number } } | undefined)?.response?.status;
 }
 
-function getShortcutDateRange(range: ShortcutRange) {
+function getShortcutDateRange(range: ShortcutRange, now = new Date()) {
+  if (range === 'today') return getTodayDateRange(now);
   const days = ranges.find((item) => item.value === range)?.days ?? 7;
-  return getRollingDateRange(new Date(), days);
-}
-
-function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <section
-      className={cn(
-        'min-w-0 rounded-lg border border-border-light bg-surface-primary p-5',
-        /** Dark mode only: Click UI gives dashboard widgets their own surface and
-         *  stroke, a step lighter than the page behind them. Light mode keeps the
-         *  shared surface/border tokens. */
-        'dark:border-chart-widget-stroke dark:bg-chart-widget-surface',
-        className,
-      )}
-    >
-      {children}
-    </section>
-  );
+  return getRollingDateRange(now, days);
 }
 
 function EmptyState({ message }: { message: string }) {
@@ -250,23 +239,15 @@ function KpiCard({ card, locale }: { card: KpiCardData; locale: string }) {
   const localize = useLocalize();
   return (
     <Panel>
-      <h2 className="inline-flex items-center gap-1.5 text-sm font-normal text-text-muted">
-        {card.title}
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-normal text-text-secondary">{card.title}</h3>
         {card.description && (
-          <TooltipAnchor
-            description={card.description}
-            render={
-              <button
-                type="button"
-                aria-label={card.description}
-                className="text-text-muted hover:text-text-secondary"
-              >
-                <Info className="size-3.5" aria-hidden="true" />
-              </button>
-            }
+          <MetricInfo
+            label={localize('com_insights_about_metric', { name: card.title })}
+            text={card.description}
           />
         )}
-      </h2>
+      </div>
       <div className="mt-3 text-4xl font-semibold tabular-nums leading-none text-text-primary">
         {formatValue(card.value, locale)}
       </div>
@@ -437,6 +418,7 @@ function LatestConversations({
   setSearch,
   localize,
   locale,
+  includeFirstMessage,
 }: {
   rows: TInsightsConversation[];
   search: string;
@@ -448,6 +430,7 @@ function LatestConversations({
   setSearch: React.Dispatch<React.SetStateAction<string>>;
   localize: Localize;
   locale: string;
+  includeFirstMessage: boolean;
 }) {
   return (
     <Panel className="overflow-hidden">
@@ -480,7 +463,9 @@ function LatestConversations({
               <th className="w-[120px] px-2 py-2 font-medium">{localize('com_insights_date')}</th>
               <th className="w-[192px] px-2 py-2 font-medium">{localize('com_insights_user')}</th>
               <th className="w-[160px] px-2 py-2 font-medium">{localize('com_insights_agent')}</th>
-              <th className="px-2 py-2 font-medium">{localize('com_insights_first_message')}</th>
+              {includeFirstMessage && (
+                <th className="px-2 py-2 font-medium">{localize('com_insights_first_message')}</th>
+              )}
               <th className="w-20 px-2 py-2 text-right font-medium">
                 {localize('com_insights_messages')}
               </th>
@@ -502,11 +487,13 @@ function LatestConversations({
                   <UserCell {...conversation} localize={localize} />
                 </td>
                 <td className="truncate px-2 py-3 text-text-secondary">{conversation.agentName}</td>
-                <td className="max-w-xl px-2 py-3">
-                  <span className="line-clamp-2">
-                    {conversation.firstMessage || localize('com_insights_no_message')}
-                  </span>
-                </td>
+                {includeFirstMessage && (
+                  <td className="max-w-xl px-2 py-3">
+                    <span className="line-clamp-2">
+                      {conversation.firstMessage || localize('com_insights_no_message')}
+                    </span>
+                  </td>
+                )}
                 <td className="px-2 py-3 text-right tabular-nums">
                   {formatExactValue(conversation.messages, locale)}
                 </td>
@@ -560,7 +547,12 @@ export default function InsightsView() {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const { user } = useAuthContext();
   const { data: startupConfig, isLoading: configLoading } = useGetStartupConfig();
+  const insightsConfig = useMemo(
+    () => getInsightsConfig(startupConfig?.insights),
+    [startupConfig?.insights],
+  );
   const [range, setRange] = useState<ShortcutRange>('7d');
+  const [rangeAnchor, setRangeAnchor] = useState(() => new Date());
   const [customDateRange, setCustomDateRange] = useState<CustomDateRange>();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -573,6 +565,10 @@ export default function InsightsView() {
     () => [...new Set(urlSearchParams.getAll('agentIds').filter(Boolean))].sort(),
     [urlSearchParams],
   );
+  const selectedCategories = useMemo(
+    () => [...new Set(urlSearchParams.getAll('categories').filter(Boolean))].sort(),
+    [urlSearchParams],
+  );
   const insightsParams = useMemo<TInsightsParams>(() => {
     const params: TInsightsParams = {
       page,
@@ -580,6 +576,9 @@ export default function InsightsView() {
       search,
       timeZone,
       ...(selectedAgentIds.length > 0 ? { agentIds: selectedAgentIds } : {}),
+      ...(insightsConfig.filters.categories && selectedCategories.length > 0
+        ? { categories: selectedCategories }
+        : {}),
     };
     if (customDateRange) {
       return {
@@ -590,10 +589,19 @@ export default function InsightsView() {
       };
     }
     return { ...params, range };
-  }, [customDateRange, page, range, search, selectedAgentIds, timeZone]);
+  }, [
+    customDateRange,
+    page,
+    range,
+    search,
+    selectedAgentIds,
+    selectedCategories,
+    insightsConfig.filters.categories,
+    timeZone,
+  ]);
   const displayDateRange = useMemo(
-    () => customDateRange ?? getShortcutDateRange(range),
-    [customDateRange, range],
+    () => customDateRange ?? getShortcutDateRange(range, rangeAnchor),
+    [customDateRange, range, rangeAnchor],
   );
   const insights = useInsightsQuery(insightsParams, {
     enabled: !!user && insightsFeatureEnabled,
@@ -601,7 +609,10 @@ export default function InsightsView() {
   });
   const data = insights.data;
   const insightsStatus = responseStatus(insights.error);
-  const isRecoveringAgentFilters = shouldRecoverAgentFilters(insightsStatus, selectedAgentIds);
+  const isRecoveringAgentFilters = shouldRecoverAgentFilters(insightsStatus, [
+    ...selectedAgentIds,
+    ...(insightsConfig.filters.categories ? selectedCategories : []),
+  ]);
   const agentItems = useMemo(() => {
     if (!data) {
       return [];
@@ -671,18 +682,21 @@ export default function InsightsView() {
       {
         id: 'users',
         title: localize('com_insights_total_users'),
+        description: localize('com_insights_users_definition'),
         value: data.summary.totalUsers,
         sparkline: data.daily.map((row) => ({ date: row.date, value: row.users })),
       },
       {
         id: 'messages',
         title: localize('com_insights_messages'),
+        description: localize('com_insights_messages_definition'),
         value: data.summary.totalMessages,
         sparkline: data.daily.map((row) => ({ date: row.date, value: row.messages })),
       },
       {
         id: 'tokens',
         title: localize('com_insights_total_tokens'),
+        description: localize('com_insights_tokens_definition'),
         value: data.summary.totalTokens,
         sparkline: data.daily.map((row) => ({ date: row.date, value: row.totalTokens })),
       },
@@ -749,7 +763,39 @@ export default function InsightsView() {
           {isSmallScreen && <OpenSidebar />}
           <h1 className="text-base font-semibold">{localize('com_insights_title')}</h1>
         </div>
-        <div className="flex max-w-full flex-wrap items-center gap-2 md:flex-nowrap">
+        <div className="flex max-w-full flex-wrap items-center gap-2 xl:flex-nowrap">
+          {data && insightsConfig.filters.categories && (
+            <MultiSelect
+              placeholder={localize('com_insights_all_categories')}
+              items={(data.categories ?? []).map((category) => ({
+                value: category,
+                label:
+                  category === INSIGHTS_UNCATEGORIZED
+                    ? localize('com_insights_uncategorized')
+                    : category,
+              }))}
+              selectedValues={selectedCategories}
+              setSelectedValues={(values) => {
+                const next = new URLSearchParams(urlSearchParams);
+                next.delete('categories');
+                values.forEach((value) => next.append('categories', value));
+                setUrlSearchParams(next, { replace: true });
+                setPage(1);
+              }}
+              showSelectedValues
+              showItemCheckboxes
+              className="w-full min-w-0 sm:w-52"
+              renderSelectedValues={(values) => {
+                if (values.length === 0) return localize('com_insights_all_categories');
+                if (values.length === 1) {
+                  return values[0] === INSIGHTS_UNCATEGORIZED
+                    ? localize('com_insights_uncategorized')
+                    : values[0];
+                }
+                return localize('com_insights_categories_selected', { count: values.length });
+              }}
+            />
+          )}
           {data && (
             <MultiSelect
               placeholder={localize('com_ui_agents')}
@@ -841,6 +887,7 @@ export default function InsightsView() {
                     dateRangeSelectionTimeout.current = undefined;
                   }
                   setRange(item.value);
+                  setRangeAnchor(new Date());
                   setCustomDateRange(undefined);
                   setPage(1);
                 }}
@@ -858,17 +905,35 @@ export default function InsightsView() {
                 cancel: localize('com_ui_cancel'),
                 endDate: localize('com_insights_end_date'),
                 invalidRange: localize('com_insights_invalid_date_range', {
-                  days: INSIGHTS_MAX_RANGE_DAYS,
+                  days: insightsConfig.maxRangeDays,
                 }),
                 startDate: localize('com_insights_start_date'),
               }}
               locale={locale}
-              maxRangeLength={INSIGHTS_MAX_RANGE_DAYS}
+              maxRangeLength={insightsConfig.maxRangeDays}
               onSelectDateRange={handleSelectDateRange}
               placeholder={localize('com_insights_date_range_placeholder')}
               startDate={displayDateRange.startDate}
             />
           </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={insights.isFetching}
+            onClick={() => {
+              setRangeAnchor(new Date());
+              void insights.refetch();
+            }}
+          >
+            <RefreshCw
+              className={cn(
+                'mr-2 size-4',
+                insights.isFetching && 'animate-spin motion-reduce:animate-none',
+              )}
+              aria-hidden="true"
+            />
+            {localize('com_insights_refresh')}
+          </Button>
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -889,11 +954,28 @@ export default function InsightsView() {
               {/** Use explicit responsive counts: one column on narrow screens,
                *  two through mid-range, and four at xl. This avoids auto-fit's
                *  three-plus-one orphan without making mobile cards too narrow. */}
-              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {kpiCards.map((card) => (
-                  <KpiCard key={card.id} card={card} locale={locale} />
-                ))}
+              <h2 className="text-sm font-semibold text-text-secondary">
+                {localize('com_insights_adoption')}
+              </h2>
+              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+                {kpiCards
+                  .filter((card) => card.id === 'users' || card.id === 'conversations')
+                  .map((card) => (
+                    <KpiCard key={card.id} card={card} locale={locale} />
+                  ))}
               </div>
+              <h2 className="mt-2 text-sm font-semibold text-text-secondary">
+                {localize('com_insights_engagement')}
+              </h2>
+              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {kpiCards
+                  .filter((card) => card.id === 'messages' || card.id === 'tokens')
+                  .map((card) => (
+                    <KpiCard key={card.id} card={card} locale={locale} />
+                  ))}
+                {data.engagement && <EngagementMetrics data={data.engagement} locale={locale} />}
+              </div>
+              <Charts data={data} config={insightsConfig.charts} locale={locale} />
               <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(100%,580px),1fr))] gap-3">
                 <TopUsersTable rows={data.topUsers} localize={localize} locale={locale} />
                 <ChurnedUsersTable rows={data.churnedUsers} localize={localize} locale={locale} />
@@ -909,6 +991,7 @@ export default function InsightsView() {
                 setSearch={setSearchInput}
                 localize={localize}
                 locale={locale}
+                includeFirstMessage={insightsConfig.privacy.includeFirstMessage}
               />
             </>
           )}

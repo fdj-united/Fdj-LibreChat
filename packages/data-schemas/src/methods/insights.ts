@@ -1,5 +1,6 @@
 import {
-  INSIGHTS_MAX_RANGE_DAYS,
+  getInsightsConfig,
+  getInsightsCategory,
   INSIGHTS_SEARCH_MAX_LENGTH,
   INSIGHTS_SEARCH_MIN_LENGTH,
 } from 'librechat-data-provider';
@@ -11,6 +12,8 @@ import type {
   TInsightsParams,
   TInsightsResponse,
   TInsightsUser,
+  TInsightsConfig,
+  TInsightsEngagement,
 } from 'librechat-data-provider';
 import type { Model, PipelineStage } from 'mongoose';
 import type { IConversation, IMessage, IUser } from '~/types';
@@ -18,6 +21,7 @@ import type { IConversation, IMessage, IUser } from '~/types';
 export type InsightsOptions = TInsightsParams & {
   tenantId?: string;
   agents?: TInsightsAgent[];
+  insights?: TInsightsConfig;
 };
 
 export type InsightsResult = TInsightsResponse;
@@ -28,6 +32,13 @@ export type InsightsMethods = {
 
 type CountResult = { total: number };
 type ConversationDay = { date: string; conversations: number };
+type EngagementTotals = Omit<TInsightsEngagement, 'activityDistribution'> & {
+  one: number;
+  twoToFive: number;
+  sixToTen: number;
+  elevenToTwenty: number;
+  twentyOnePlus: number;
+};
 type DailyUsers = { date: string; users: number };
 type UserMessageTotals = { messages: number };
 type RecentConversation = { conversationId: string; agentId: string; date: Date; userId: string };
@@ -136,9 +147,14 @@ function startOfZonedDate(key: string, timeZone: string) {
   return new Date(instant);
 }
 
-function resolveRange(options: InsightsOptions) {
+function resolveRange(options: InsightsOptions, maxRangeDays: number) {
   const now = new Date();
   const range = options.range ?? defaultRange;
+
+  if (range === 'today') {
+    const timeZone = validTimeZone(options.timeZone);
+    return { from: startOfZonedDate(dateKey(now, timeZone), timeZone), to: now };
+  }
 
   if (range === 'custom' && options.fromTimestamp && options.toTimestamp) {
     const customFrom = new Date(options.fromTimestamp);
@@ -148,10 +164,10 @@ function resolveRange(options: InsightsOptions) {
       const timeZone = validTimeZone(options.timeZone);
       const startKey = dateKey(start, timeZone);
       const endKey = dateKey(end, timeZone);
-      if (calendarDayDifference(startKey, endKey) < INSIGHTS_MAX_RANGE_DAYS) {
+      if (calendarDayDifference(startKey, endKey) < maxRangeDays) {
         return { from: start, to: end };
       }
-      const firstAllowedKey = addCalendarDaysToKey(endKey, -(INSIGHTS_MAX_RANGE_DAYS - 1));
+      const firstAllowedKey = addCalendarDaysToKey(endKey, -(maxRangeDays - 1));
       return { from: startOfZonedDate(firstAllowedKey, timeZone), to: end };
     }
   }
@@ -292,7 +308,8 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
     const page = Math.max(1, Math.floor(options.page ?? 1));
     const pageSize = Math.min(50, Math.max(5, Math.floor(options.pageSize ?? 10)));
     const agentIds = [...new Set(options.agentIds ?? [])].sort((a, b) => a.localeCompare(b));
-    const { from, to } = resolveRange(options);
+    const config = getInsightsConfig(options.insights);
+    const { from, to } = resolveRange(options, config.maxRangeDays);
     const timeZone = validTimeZone(options.timeZone);
     const churnedCutoff = new Date(to.getTime() - churnedUserWindowDays * dayMs);
     const churnedActivityFrom = new Date(from.getTime() - churnedUserWindowDays * dayMs);
@@ -366,6 +383,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
       dailyUsers,
       topMessageUsers,
       churnedUserRows,
+      engagementRows,
     ] = await Promise.all([
       Conversation.aggregate<ConversationDay>([
         ...conversationPipeline,
@@ -455,6 +473,67 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
         { $sort: { lastSeen: -1, _id: 1 } },
         { $limit: churnedUserLimit },
       ]),
+      config.metrics.engagement
+        ? Message.aggregate<EngagementTotals>([
+            ...messageScope({ ...messageMatch, isCreatedByUser: true }, agentIds, options.tenantId),
+            {
+              $group: {
+                _id: { user: '$user', conversationId: '$conversationId' },
+                questions: { $sum: 1 },
+              },
+            },
+            {
+              $group: {
+                _id: '$_id.user',
+                conversations: { $sum: 1 },
+                questions: { $sum: '$questions' },
+                singleQuestionConversations: {
+                  $sum: { $cond: [{ $eq: ['$questions', 1] }, 1, 0] },
+                },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                activeUsers: { $sum: 1 },
+                activeConversations: { $sum: '$conversations' },
+                questions: { $sum: '$questions' },
+                singleQuestionConversations: { $sum: '$singleQuestionConversations' },
+                one: { $sum: { $cond: [{ $eq: ['$conversations', 1] }, 1, 0] } },
+                twoToFive: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $gte: ['$conversations', 2] }, { $lte: ['$conversations', 5] }] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                sixToTen: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $gte: ['$conversations', 6] }, { $lte: ['$conversations', 10] }] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                elevenToTwenty: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [{ $gte: ['$conversations', 11] }, { $lte: ['$conversations', 20] }],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                twentyOnePlus: { $sum: { $cond: [{ $gte: ['$conversations', 21] }, 1, 0] } },
+              },
+            },
+          ])
+        : Promise.resolve([] as EngagementTotals[]),
     ]);
 
     const latestConversationOwners = latestRows
@@ -502,7 +581,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
               },
             },
           ]),
-      latestConversationMatches.length === 0
+      latestConversationMatches.length === 0 || !config.privacy.includeFirstMessage
         ? Promise.resolve([] as FirstMessage[])
         : Message.aggregate<FirstMessage>([
             ...messageScope(
@@ -574,6 +653,12 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
 
     const users = new Map(userRows.map((user) => [user._id.toString(), user]));
     const agentNames = new Map((options.agents ?? []).map((agent) => [agent.id, agent.name]));
+    const agentCategories = new Map(
+      (options.agents ?? []).map((agent) => [
+        agent.id,
+        getInsightsCategory(agent.category, config.categoryAliases),
+      ]),
+    );
     const latestSummaries = new Map(
       latestMessageSummaries.map((summary) => [conversationOwnerKey(summary._id), summary]),
     );
@@ -610,6 +695,26 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
 
     return {
       agents: options.agents ?? [],
+      ...(config.filters.categories
+        ? { categories: [...new Set(agentCategories.values())].sort() }
+        : {}),
+      ...(config.metrics.engagement
+        ? {
+            engagement: {
+              activeUsers: engagementRows[0]?.activeUsers ?? 0,
+              activeConversations: engagementRows[0]?.activeConversations ?? 0,
+              questions: engagementRows[0]?.questions ?? 0,
+              singleQuestionConversations: engagementRows[0]?.singleQuestionConversations ?? 0,
+              activityDistribution: [
+                { bucket: '1' as const, users: engagementRows[0]?.one ?? 0 },
+                { bucket: '2–5' as const, users: engagementRows[0]?.twoToFive ?? 0 },
+                { bucket: '6–10' as const, users: engagementRows[0]?.sixToTen ?? 0 },
+                { bucket: '11–20' as const, users: engagementRows[0]?.elevenToTwenty ?? 0 },
+                { bucket: '21+' as const, users: engagementRows[0]?.twentyOnePlus ?? 0 },
+              ],
+            },
+          }
+        : {}),
       summary: {
         totalUsers: userCount[0]?.total ?? 0,
         totalConversations,
@@ -646,7 +751,9 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
             date: row.date.toISOString(),
             name: user?.name || user?.username || '',
             email: user?.email ?? '',
-            firstMessage: firstByConversation.get(ownerKey) ?? '',
+            ...(config.privacy.includeFirstMessage
+              ? { firstMessage: firstByConversation.get(ownerKey) ?? '' }
+              : {}),
             messages: summary?.messages ?? 0,
             totalTokens: summary?.totalTokens ?? 0,
           };

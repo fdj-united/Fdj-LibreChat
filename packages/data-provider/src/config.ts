@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ZodError } from 'zod';
 import type { TEndpointsConfig, TModelsConfig, TConfig } from './types';
+import type { TInsightsDisplayConfig } from './types/insights';
 import type { ArtifactAppsConfig } from './artifactApps';
 import {
   filtersConfigSchema,
@@ -23,6 +24,7 @@ import {
   MIN_BALANCE_RESERVATION_TTL_MS,
   DEFAULT_BALANCE_RESERVATION_TTL_MS,
 } from './balance';
+import { insightsConfigSchema } from './types/insights';
 
 export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_DEFAULT = 24 * 1024;
 export const AGENT_BACKGROUND_COMPLETION_RESULT_MAX_CHARS_HARD_MAX = 64 * 1024;
@@ -2559,6 +2561,7 @@ export type TStartupConfig = {
   langfuseFanoutEnabled?: boolean;
   langfuseConnectionAccess?: boolean;
   insightsEnabled?: boolean;
+  insights?: TInsightsDisplayConfig;
   /** Manual context compaction, gated by the same `summarization.enabled`
    *  switch that governs the automatic detour. */
   compactionEnabled?: boolean;
@@ -3201,6 +3204,7 @@ export type TFileRetentionConfig = z.infer<typeof fileRetentionSchema>;
 
 export const configSchema = z.object({
   version: z.string(),
+  insights: insightsConfigSchema,
   permissions: z.object({ maxWriteAttempts: permissionWriteAttemptsSchema }).optional(),
   cache: z.boolean().default(true),
   artifactApps: artifactAppsConfigSchema,
