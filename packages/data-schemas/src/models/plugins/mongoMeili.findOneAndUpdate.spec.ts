@@ -39,6 +39,7 @@ const mockWaitForTask = jest.fn();
 const mockGetDocument = jest.fn();
 const mockIndex = jest.fn().mockReturnValue({
   getRawInfo: jest.fn(),
+  getSettings: jest.fn().mockResolvedValue({ filterableAttributes: ['user'] }),
   updateSettings: jest.fn(),
   addDocuments: mockAddDocuments,
   addDocumentsInBatches: jest.fn(),
