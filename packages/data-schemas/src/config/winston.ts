@@ -126,6 +126,10 @@ if (useDebugConsole) {
 const logger: winston.Logger = winston.createLogger({
   level: level(),
   levels: logLevels,
+  // Without a root format winston serializes the whole info object (including a logged
+  // error's request/response/agent graph) before any transport format runs. Strip the
+  // heavy fields first so a raw HTTP error costs bytes, not gigabytes.
+  format: stripHeavyErrorFields(),
   transports,
 });
 
