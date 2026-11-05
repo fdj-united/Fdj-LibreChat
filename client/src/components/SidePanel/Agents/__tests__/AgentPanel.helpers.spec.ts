@@ -77,6 +77,37 @@ describe('composeAgentUpdatePayload', () => {
     expect(payload.avatar).toBeUndefined();
   });
 
+  it('writes a trimmed jiraUseCaseLink into metadata', () => {
+    const form = createForm();
+    form.jiraUseCaseLink = '  https://jira.example/browse/ABC-1  ';
+
+    const { payload } = composeAgentUpdatePayload(form, 'agent_123');
+
+    expect(payload.metadata).toEqual({ jiraUseCaseLink: 'https://jira.example/browse/ABC-1' });
+  });
+
+  it('writes an empty jiraUseCaseLink when the field is blank', () => {
+    const form = createForm();
+    form.jiraUseCaseLink = '   ';
+
+    const { payload } = composeAgentUpdatePayload(form, 'agent_123');
+
+    expect(payload.metadata).toEqual({ jiraUseCaseLink: '' });
+  });
+
+  it('preserves existing metadata keys when saving the jira link', () => {
+    const form = createForm();
+    form.metadata = { ownerTeam: 'governance', jiraUseCaseLink: 'stale' };
+    form.jiraUseCaseLink = 'https://jira.example/browse/ABC-2';
+
+    const { payload } = composeAgentUpdatePayload(form, 'agent_123');
+
+    expect(payload.metadata).toEqual({
+      ownerTeam: 'governance',
+      jiraUseCaseLink: 'https://jira.example/browse/ABC-2',
+    });
+  });
+
   it('never adds avatar during upload actions', () => {
     const form = createForm();
     form.avatar_action = 'upload';

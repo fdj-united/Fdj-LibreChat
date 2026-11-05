@@ -113,6 +113,10 @@ export const agentSupportContactSchema: z.ZodOptional<
   })
   .optional();
 
+export const agentMetadataSchema: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>> = z
+  .record(z.unknown())
+  .optional();
+
 /** Graph edge schema for agent handoffs */
 export const graphEdgeSchema: z.ZodObject<
   {
@@ -565,6 +569,7 @@ export const agentBaseSchema: z.ZodObject<
       >
     >;
     category: z.ZodOptional<z.ZodString>;
+    metadata: typeof agentMetadataSchema;
   },
   'strip'
 > = z.object({
@@ -601,6 +606,7 @@ export const agentBaseSchema: z.ZodObject<
   subagents: agentSubagentsSchema,
   support_contact: agentSupportContactSchema,
   category: z.string().optional(),
+  metadata: agentMetadataSchema,
 });
 
 /** Create schema extends base with required fields for creation */
@@ -748,6 +754,7 @@ export const agentCreateSchema: z.ZodObject<
       >
     >;
     category: z.ZodOptional<z.ZodString>;
+    metadata: typeof agentMetadataSchema;
   } & {
     provider: z.ZodString;
     model: z.ZodNullable<z.ZodString>;
@@ -886,6 +893,7 @@ export const agentUpdateSchema: z.ZodObject<
       >
     >;
     category: z.ZodOptional<z.ZodString>;
+    metadata: typeof agentMetadataSchema;
   } & {
     avatar: z.ZodOptional<
       z.ZodUnion<

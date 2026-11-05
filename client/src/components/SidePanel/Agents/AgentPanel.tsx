@@ -100,6 +100,8 @@ export function composeAgentUpdatePayload(
     eager_execution,
     category,
     support_contact,
+    jiraUseCaseLink,
+    metadata,
     tool_options,
     skills,
     skills_enabled,
@@ -149,6 +151,9 @@ export function composeAgentUpdatePayload(
     normalizedGitIdentity = null;
   }
 
+  const existingMetadata =
+    metadata != null && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+
   return {
     payload: {
       name,
@@ -175,6 +180,10 @@ export function composeAgentUpdatePayload(
       eager_execution,
       category,
       support_contact,
+      metadata: {
+        ...existingMetadata,
+        jiraUseCaseLink: jiraUseCaseLink?.trim() ?? '',
+      },
       tool_options: normalizedToolOptions,
       skills,
       skills_enabled,
