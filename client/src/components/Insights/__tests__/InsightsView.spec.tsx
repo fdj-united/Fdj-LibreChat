@@ -2,7 +2,7 @@ import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { getInsightsConfig } from 'librechat-data-provider';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import type { TInsightsParams, TInsightsResponse } from 'librechat-data-provider';
 import type { TInsightsConfig } from 'librechat-data-provider';
 import InsightsView from '../InsightsView';
@@ -79,6 +79,41 @@ function renderView() {
     </MemoryRouter>,
   );
 }
+
+describe('Insights recorded cost', () => {
+  it.each([
+    ['available', 12.3456, 0, 'com_insights_cost', '$12.3456'],
+    ['partial', 12.3456, 1, 'com_insights_cost_subtotal', '$12.3456'],
+    ['unavailable', null, 1, 'com_insights_cost', 'com_insights_cost_unavailable'],
+  ] as const)(
+    'renders %s cost without presenting unavailable usage as zero',
+    (status, total, excludedAgents, title, value) => {
+      mockStartupConfig.insights = getInsightsConfig({ cost: { enabled: true } });
+      mockUseInsightsQuery.mockImplementation((params) => ({
+        data: {
+          ...insightsData,
+          cost: { status, total, excludedAgents, currency: 'USD', daily: [] },
+        },
+        isLoading: false,
+        isFetching: false,
+        error: null,
+        refetch: mockRefetch,
+        params,
+      }));
+      renderView();
+      const heading = screen.getByRole('heading', { name: title });
+      const panel = within(heading.closest('section')!);
+      expect(panel.getByText(value, { exact: true })).toBeInTheDocument();
+      if (status === 'unavailable') {
+        expect(panel.queryByText('$0.00')).not.toBeInTheDocument();
+        expect(panel.getByText('com_insights_cost_unavailable_description')).toBeInTheDocument();
+        expect(panel.queryByRole('img')).not.toBeInTheDocument();
+      }
+      if (status === 'partial')
+        expect(panel.getByText('com_insights_cost_excluded')).toBeInTheDocument();
+    },
+  );
+});
 
 async function openAgentMenu(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByText('com_insights_all_agents:3'));

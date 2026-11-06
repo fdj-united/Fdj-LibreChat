@@ -10,6 +10,13 @@ export const insightsConfigSchema = z
     filters: z.object({ categories: z.boolean().default(false) }).default({}),
     maxRangeDays: z.number().int().min(1).max(365).default(INSIGHTS_MAX_RANGE_DAYS),
     metrics: z.object({ engagement: z.boolean().default(false) }).default({}),
+    cost: z
+      .object({
+        enabled: z.boolean().default(false),
+        unavailableProviders: z.array(z.string().trim().min(1)).default(['AI Studio']),
+        maxTimeMS: z.number().int().min(100).max(30000).default(5000),
+      })
+      .default({}),
     charts: z
       .object({
         dailyUsage: z.boolean().default(false),
@@ -27,7 +34,7 @@ export const insightsConfigSchema = z
 export type TInsightsConfig = z.infer<typeof insightsConfigSchema>;
 export type TInsightsDisplayConfig = Pick<
   TInsightsConfig,
-  'privacy' | 'filters' | 'charts' | 'metrics' | 'maxRangeDays'
+  'privacy' | 'filters' | 'charts' | 'metrics' | 'cost' | 'maxRangeDays'
 >;
 
 export const getInsightsConfig = (config?: DeepPartial<TInsightsConfig>): TInsightsConfig =>
@@ -36,8 +43,8 @@ export const getInsightsConfig = (config?: DeepPartial<TInsightsConfig>): TInsig
 export function getInsightsDisplayConfig(
   config?: DeepPartial<TInsightsConfig>,
 ): TInsightsDisplayConfig {
-  const { privacy, filters, charts, metrics, maxRangeDays } = getInsightsConfig(config);
-  return { privacy, filters, charts, metrics, maxRangeDays };
+  const { privacy, filters, charts, metrics, cost, maxRangeDays } = getInsightsConfig(config);
+  return { privacy, filters, charts, metrics, cost, maxRangeDays };
 }
 
 export function getInsightsCategory(
@@ -70,6 +77,15 @@ export type TInsightsAgent = {
   id: string;
   name: string;
   category?: string;
+  provider?: string;
+};
+
+export type TInsightsCost = {
+  status: 'available' | 'partial' | 'unavailable';
+  currency: 'USD';
+  total: number | null;
+  excludedAgents: number;
+  daily: Array<{ date: string; total: number }>;
 };
 
 export type TInsightsBreakdown = {
@@ -135,6 +151,7 @@ export type TInsightsResponse = {
     categories?: TInsightsBreakdown[];
   };
   summary: TInsightsSummary;
+  cost?: TInsightsCost;
   engagement?: TInsightsEngagement;
   daily: TInsightsDailyPoint[];
   topUsers: TInsightsUser[];

@@ -41,10 +41,12 @@ type SparklinePoint = { date: string; value: number };
 type CustomDateRange = { startDate: Date; endDate: Date };
 
 type KpiCardData = {
-  id: 'conversations' | 'users' | 'messages' | 'tokens';
+  id: 'conversations' | 'users' | 'messages' | 'tokens' | 'cost';
   title: string;
   description?: string;
-  value: number;
+  value: number | null;
+  currency?: boolean;
+  note?: string;
   sparkline: SparklinePoint[];
 };
 
@@ -66,6 +68,15 @@ function formatValue(value: number, locale: string) {
 
 function formatExactValue(value: number, locale: string) {
   return new Intl.NumberFormat(locale).format(value);
+}
+
+function formatCost(value: number, locale: string) {
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(value);
 }
 
 function formatDate(value: string, locale: string) {
@@ -136,10 +147,12 @@ function Sparkline({
   values,
   label,
   locale,
+  currency = false,
 }: {
   values: SparklinePoint[];
   label: string;
   locale: string;
+  currency?: boolean;
 }) {
   const patternId = useId().replace(/:/g, '');
   const [activeIndex, setActiveIndex] = useState<number>();
@@ -147,7 +160,7 @@ function Sparkline({
     if (values.length < 2) {
       return [];
     }
-    const maximum = Math.max(1, ...values.map((point) => point.value));
+    const maximum = Math.max(Number.EPSILON, ...values.map((point) => point.value));
     return values.map((point, index) => ({
       ...point,
       x: (index / (values.length - 1)) * 300,
@@ -227,7 +240,11 @@ function Sparkline({
             style={{ left: `${Math.max(14, Math.min(86, (activePoint.x / 300) * 100))}%` }}
           >
             {formatter.format(new Date(activePoint.date))}{' '}
-            <strong>{formatExactValue(activePoint.value, locale)}</strong>
+            <strong>
+              {currency
+                ? formatCost(activePoint.value, locale)
+                : formatExactValue(activePoint.value, locale)}
+            </strong>
           </span>
         </>
       )}
@@ -237,6 +254,10 @@ function Sparkline({
 
 function KpiCard({ card, locale }: { card: KpiCardData; locale: string }) {
   const localize = useLocalize();
+  let displayValue = localize('com_insights_cost_unavailable');
+  if (card.value != null) {
+    displayValue = card.currency ? formatCost(card.value, locale) : formatValue(card.value, locale);
+  }
   return (
     <Panel>
       <div className="flex items-center justify-between gap-3">
@@ -249,12 +270,14 @@ function KpiCard({ card, locale }: { card: KpiCardData; locale: string }) {
         )}
       </div>
       <div className="mt-3 text-4xl font-semibold tabular-nums leading-none text-text-primary">
-        {formatValue(card.value, locale)}
+        {displayValue}
       </div>
+      {card.note && <p className="mt-2 text-sm text-text-secondary">{card.note}</p>}
       <Sparkline
         values={card.sparkline}
         label={localize('com_insights_sparkline_accessibility', { label: card.title })}
         locale={locale}
+        currency={card.currency}
       />
     </Panel>
   );
@@ -671,6 +694,7 @@ export default function InsightsView() {
     if (!data) {
       return [];
     }
+    const costByDate = new Map(data.cost?.daily.map((day) => [day.date, day.total]));
     return [
       {
         id: 'conversations',
@@ -700,6 +724,35 @@ export default function InsightsView() {
         value: data.summary.totalTokens,
         sparkline: data.daily.map((row) => ({ date: row.date, value: row.totalTokens })),
       },
+      ...(data.cost
+        ? [
+            {
+              id: 'cost' as const,
+              title: localize(
+                data.cost.status === 'partial' ? 'com_insights_cost_subtotal' : 'com_insights_cost',
+              ),
+              description: localize('com_insights_cost_definition'),
+              value: data.cost.total,
+              currency: true,
+              ...(data.cost.excludedAgents > 0
+                ? {
+                    note: localize(
+                      data.cost.status === 'unavailable'
+                        ? 'com_insights_cost_unavailable_description'
+                        : 'com_insights_cost_excluded',
+                    ),
+                  }
+                : {}),
+              sparkline:
+                data.cost.total == null
+                  ? []
+                  : data.daily.map((day) => ({
+                      date: day.date,
+                      value: costByDate.get(day.date) ?? 0,
+                    })),
+            },
+          ]
+        : []),
     ];
   }, [data, localize]);
 
@@ -967,14 +1020,28 @@ export default function InsightsView() {
               <h2 className="mt-2 text-sm font-semibold text-text-secondary">
                 {localize('com_insights_engagement')}
               </h2>
-              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div
+                className={cn(
+                  'grid w-full grid-cols-1 gap-3 sm:grid-cols-2',
+                  data.cost ? 'xl:grid-cols-3' : 'xl:grid-cols-4',
+                )}
+              >
                 {kpiCards
-                  .filter((card) => card.id === 'messages' || card.id === 'tokens')
+                  .filter(
+                    (card) => card.id === 'messages' || card.id === 'tokens' || card.id === 'cost',
+                  )
                   .map((card) => (
                     <KpiCard key={card.id} card={card} locale={locale} />
                   ))}
-                {data.engagement && <EngagementMetrics data={data.engagement} locale={locale} />}
+                {!data.cost && data.engagement && (
+                  <EngagementMetrics data={data.engagement} locale={locale} />
+                )}
               </div>
+              {data.cost && data.engagement && (
+                <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+                  <EngagementMetrics data={data.engagement} locale={locale} />
+                </div>
+              )}
               <Charts data={data} config={insightsConfig.charts} locale={locale} />
               <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(100%,580px),1fr))] gap-3">
                 <TopUsersTable rows={data.topUsers} localize={localize} locale={locale} />

@@ -4,6 +4,8 @@ endpoints:
   openAI:
     titleConvo: false
 insights:
+  cost:
+    enabled: true
   privacy:
     includeFirstMessage: false
   filters:

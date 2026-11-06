@@ -6,6 +6,11 @@ describe('Insights configuration', () => {
     expect(config.privacy.includeFirstMessage).toBe(true);
     expect(config.filters.categories).toBe(false);
     expect(config.metrics.engagement).toBe(false);
+    expect(config.cost).toEqual({
+      enabled: false,
+      unavailableProviders: ['AI Studio'],
+      maxTimeMS: 5000,
+    });
     expect(config.maxRangeDays).toBe(30);
     expect(config.charts).toEqual({
       dailyUsage: false,
@@ -46,5 +51,11 @@ describe('Insights configuration', () => {
 
   it.each([0, -1, 366, 1.5])('rejects invalid maxRangeDays %s', (maxRangeDays) => {
     expect(() => getInsightsConfig({ maxRangeDays })).toThrow();
+  });
+
+  it('supports an explicit cost opt-in and rejects unbounded query timeouts', () => {
+    expect(getInsightsConfig({ cost: { enabled: true } }).cost.enabled).toBe(true);
+    expect(() => getInsightsConfig({ cost: { maxTimeMS: 0 } })).toThrow();
+    expect(() => getInsightsConfig({ cost: { maxTimeMS: 30001 } })).toThrow();
   });
 });

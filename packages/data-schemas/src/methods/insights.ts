@@ -17,6 +17,7 @@ import type {
 } from 'librechat-data-provider';
 import type { Model, PipelineStage } from 'mongoose';
 import type { IConversation, IMessage, IUser } from '~/types';
+import { getInsightsCost } from './cost';
 
 export type InsightsOptions = TInsightsParams & {
   tenantId?: string;
@@ -329,6 +330,16 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
     };
     const conversationPipeline = conversationScope(conversationMatch, agentIds);
     const messagePipeline = messageScope(messageMatch, agentIds, options.tenantId);
+    const costPromise = config.cost.enabled
+      ? getInsightsCost(mongoose, {
+          from,
+          to,
+          tenantId: options.tenantId,
+          timeZone,
+          agents: (options.agents ?? []).filter((agent) => agentIds.includes(agent.id)),
+          config: config.cost,
+        })
+      : Promise.resolve(undefined);
 
     const requestedSearch = options.search?.trim().slice(0, INSIGHTS_SEARCH_MAX_LENGTH) ?? '';
     const search = requestedSearch.length >= INSIGHTS_SEARCH_MIN_LENGTH ? requestedSearch : '';
@@ -384,6 +395,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
       topMessageUsers,
       churnedUserRows,
       engagementRows,
+      cost,
     ] = await Promise.all([
       Conversation.aggregate<ConversationDay>([
         ...conversationPipeline,
@@ -534,6 +546,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
             },
           ])
         : Promise.resolve([] as EngagementTotals[]),
+      costPromise,
     ]);
 
     const latestConversationOwners = latestRows
@@ -695,6 +708,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
 
     return {
       agents: options.agents ?? [],
+      ...(cost ? { cost } : {}),
       ...(config.filters.categories
         ? { categories: [...new Set(agentCategories.values())].sort() }
         : {}),
