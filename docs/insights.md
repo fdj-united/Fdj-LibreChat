@@ -11,6 +11,8 @@ insights:
   privacy:
     includeFirstMessage: false
   maxRangeDays: 90
+  cost:
+    enabled: true
   metrics:
     engagement: true
   filters:
@@ -67,6 +69,27 @@ half-width on desktop and stack on mobile; the usage plot has a fixed height.
 The agent/category pie panels and their aggregation have been removed. Legacy
 `charts.usageByAgent`, `usageByCategory`, `defaultBreakdownView` and `topN` settings
 remain accepted for deployment compatibility but no longer produce breakdowns.
+
+## Recorded cost
+
+`insights.cost.enabled` opts in to a recorded USD cost card next to Tokens.
+It defaults to false. The backend sums prompt/input and completion ledger
+charges (`-tokenValue / 1,000,000`), including stored cache-read/write pricing,
+title generation and subagent calls. It excludes credit top-ups and does not
+reprice historical usage with today's rates. The query joins transactions to
+authorized assistant messages and conversations, checking tenant and ownership
+and excluding temporary chats and child threads. It runs only on dashboard
+requests; no polling or additional chat-generation work is introduced.
+
+AI Studio agents show **N/A**, even if their ledger contains zero or nonzero
+charges. Mixed selections show a labelled known-cost subtotal and an exclusion
+notice; they never present that subtotal as the total for all selected agents.
+Agents with missing providers are also unavailable. The policy uses the agent's
+current provider. `insights.cost.unavailableProviders` defaults to `["AI Studio"]`.
+`insights.cost.maxTimeMS` bounds the database query (default 5000, range 100–30000).
+This is recorded ledger cost, not a provider invoice; unreported pipeline or tool
+charges remain outside it. A database failure produces the existing Insights error
+response rather than a zero-dollar result.
 
 ## Privacy and scope
 

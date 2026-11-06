@@ -10,6 +10,7 @@ type AgentRecord = {
   name?: string;
   tenantId?: string;
   category?: string;
+  provider?: string;
 };
 
 export type InsightsAccessUser = {
@@ -46,6 +47,7 @@ const toChoice = (agent: AgentRecord): TInsightsAgent => ({
   id: agent.id,
   name: agent.name?.trim() || agent.id,
   ...(agent.category ? { category: agent.category } : {}),
+  ...(agent.provider ? { provider: agent.provider } : {}),
 });
 
 export function createInsightsAgentAccessResolver(deps: InsightsAgentAccessDeps) {
@@ -53,7 +55,7 @@ export function createInsightsAgentAccessResolver(deps: InsightsAgentAccessDeps)
     const tenantFilter = user.tenantId
       ? { tenantId: user.tenantId }
       : { tenantId: { $exists: false } };
-    const agentsPromise = deps.getAgents(tenantFilter, '_id id name tenantId category');
+    const agentsPromise = deps.getAgents(tenantFilter, '_id id name tenantId category provider');
 
     if (user.role === SystemRoles.ADMIN) {
       return (await agentsPromise)

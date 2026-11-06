@@ -19,6 +19,17 @@ const createDeps = (): jest.Mocked<InsightsAgentAccessDeps> =>
   }) as jest.Mocked<InsightsAgentAccessDeps>;
 
 describe('createInsightsAgentAccessResolver', () => {
+  it('preserves the authorized agent provider for server-side cost availability', async () => {
+    const deps = createDeps();
+    deps.getAgents.mockResolvedValue([{ ...agentA, provider: 'AI Studio' }]);
+    deps.findAccessibleResources.mockResolvedValue([agentA._id]);
+    const result = await createInsightsAgentAccessResolver(deps)({
+      id: 'user-id',
+      role: 'USER',
+      tenantId: 'tenant-a',
+    });
+    expect(result).toEqual([{ id: 'agent-a', name: 'Zulu', provider: 'AI Studio' }]);
+  });
   it('returns every tenant agent for a literal admin', async () => {
     const deps = createDeps();
     const resolve = createInsightsAgentAccessResolver(deps);
@@ -31,7 +42,7 @@ describe('createInsightsAgentAccessResolver', () => {
 
     expect(deps.getAgents).toHaveBeenCalledWith(
       { tenantId: 'tenant-a' },
-      '_id id name tenantId category',
+      '_id id name tenantId category provider',
     );
     expect(deps.getUserPrincipals).not.toHaveBeenCalled();
     expect(result).toEqual([

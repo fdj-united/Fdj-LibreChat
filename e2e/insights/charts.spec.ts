@@ -13,9 +13,14 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
     if (!identity) throw new Error('Disposable test user was not registered');
     await db.collection('users').updateOne({ _id: identity._id }, { $set: { role: 'ADMIN' } });
     await db.collection('agents').insertMany([
-      { id: 'agent-chart-alpha', name: 'People Assistant', category: 'hr' },
-      { id: 'agent-chart-beta', name: 'Policy Assistant', category: 'HR' },
-      { id: 'agent-chart-gamma', name: 'Technical Assistant', category: 'Tech' },
+      { id: 'agent-chart-alpha', name: 'People Assistant', category: 'hr', provider: 'bedrock' },
+      { id: 'agent-chart-beta', name: 'Policy Assistant', category: 'HR', provider: 'azureOpenAI' },
+      {
+        id: 'agent-chart-gamma',
+        name: 'Technical Assistant',
+        category: 'Tech',
+        provider: 'AI Studio',
+      },
     ]);
     const inserted = await db.collection('users').insertMany(
       counts.map((_, index) => ({
@@ -91,6 +96,20 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
     });
     await db.collection('conversations').insertMany(conversations);
     await db.collection('messages').insertMany(messages);
+    await db.collection('transactions').insertMany(
+      messages
+        .filter((message) => !message.isCreatedByUser)
+        .flatMap((message) =>
+          ['prompt', 'completion'].map((tokenType) => ({
+            user: message.user,
+            conversationId: message.conversationId,
+            messageId: message.messageId,
+            createdAt: message.createdAt,
+            tokenType,
+            tokenValue: message.model === 'agent-chart-gamma' ? -999999999 : -50000,
+          })),
+        ),
+    );
   });
   const loaded = page.waitForResponse(
     (response) => response.url().includes('/api/insights?') && response.status() === 200,
@@ -102,6 +121,11 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
   expect(result.summary.totalConversations).toBe(total);
   expect(result.engagement?.activeConversations).toBe(total);
   expect(result.engagement?.activeUsers).toBe(15);
+  expect(result.cost?.status).toBe('partial');
+  expect(result.cost?.excludedAgents).toBe(1);
+  await expect(
+    page.getByRole('heading', { name: 'Recorded cost subtotal (USD)', exact: true }),
+  ).toBeVisible();
   expect(result.engagement?.activityDistribution.map((row) => row.users)).toEqual([3, 3, 3, 3, 3]);
   expect(result).not.toHaveProperty('breakdowns');
   expect(JSON.stringify(result)).not.toContain('PRIVATE_INSIGHTS_PREVIEW');
@@ -190,4 +214,44 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
     animations: 'disabled',
   });
   await daily.screenshot({ path: testInfo.outputPath('owner-dashboard-mobile-usage.png') });
+
+  await page.setViewportSize({ width: 1440, height: 1150 });
+  const studioResponse = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/insights?') &&
+      r.url().includes('agentIds=agent-chart-gamma') &&
+      r.status() === 200,
+  );
+  await page.goto('/insights?agentIds=agent-chart-gamma');
+  const studioResult: TInsightsResponse = await (await studioResponse).json();
+  expect(studioResult.cost).toMatchObject({ status: 'unavailable', total: null });
+  const costPanel = page
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name: 'Recorded cost (USD)', exact: true }) });
+  await expect(costPanel.getByText('N/A', { exact: true })).toBeVisible();
+  await expect(costPanel.getByRole('img')).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath('owner-dashboard-studio-na.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
+
+  const nativeResponse = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/insights?') &&
+      r.url().includes('agentIds=agent-chart-alpha') &&
+      r.status() === 200,
+  );
+  await page.goto('/insights?agentIds=agent-chart-alpha');
+  const nativeResult: TInsightsResponse = await (await nativeResponse).json();
+  expect(nativeResult.cost?.status).toBe('available');
+  expect(nativeResult.cost!.total).toBeGreaterThan(0);
+  await expect(
+    page.getByRole('heading', { name: 'Recorded cost (USD)', exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath('owner-dashboard-native-cost.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
 });
