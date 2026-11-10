@@ -335,17 +335,15 @@ const createMeiliMongooseModel = ({
     return await model.findById(doc._id).select(selection).exec();
   };
 
-  const deleteDocumentAndWait = async (doc: DocumentWithMeiliIndex): Promise<void> => {
-    const deletion = await index.deleteDocument(
-      String(doc[primaryKey as keyof DocumentWithMeiliIndex]),
-    );
-    const deletionTask = await client.waitForTask(deletion.taskUid, {
-      timeOutMs: meiliRequestTimeoutMs,
-      intervalMs: 100,
-    });
-    if (deletionTask.status !== 'succeeded') {
-      throw new Error(`Meili cleanup task ${deletion.taskUid} ended with ${deletionTask.status}`);
-    }
+  /**
+   * Per-document writes only enqueue. Meili persists its task queue, so an enqueued
+   * task survives restarts; waiting for it to finish (10 s, polling every 100 ms,
+   * three attempts) only fails whenever the index is busy, which re-submits the
+   * same document and polls Meili hundreds of times per second. The bulk sync and
+   * cleanup paths still wait, because they gate Mongo flag changes on the result.
+   */
+  const deleteDocumentDetached = async (doc: DocumentWithMeiliIndex): Promise<void> => {
+    await index.deleteDocument(String(doc[primaryKey as keyof DocumentWithMeiliIndex]));
   };
 
   /**
@@ -368,7 +366,7 @@ const createMeiliMongooseModel = ({
 
       if (!isIndexableDocument(doc, excludeFromIndexPath) || doc.unfinished) {
         await retryDetachedMeiliWrite(
-          () => deleteDocumentAndWait(doc),
+          () => deleteDocumentDetached(doc),
           '[mongoMeili] Failed to remove a non-indexable document.',
         );
         // eslint-disable-next-line no-restricted-syntax -- versioned internal bookkeeping must not re-enter document middleware
@@ -389,14 +387,7 @@ const createMeiliMongooseModel = ({
             mode === 'update'
               ? index.updateDocuments([object], { primaryKey })
               : index.addDocuments([object], { primaryKey });
-          const task = await enqueued;
-          const completedTask = await client.waitForTask(task.taskUid, {
-            timeOutMs: meiliRequestTimeoutMs,
-            intervalMs: 100,
-          });
-          if (completedTask.status !== 'succeeded') {
-            throw new Error(`Meili write task ${task.taskUid} ended with ${completedTask.status}`);
-          }
+          await enqueued;
         }, '[mongoMeili] Failed to submit a document to Meili.');
         // eslint-disable-next-line no-restricted-syntax -- versioned internal bookkeeping must not re-enter document middleware
         const acknowledgement = await doc.collection.updateOne(
@@ -417,7 +408,7 @@ const createMeiliMongooseModel = ({
       const latestDoc = await loadLatestDocument(doc);
       if (!latestDoc) {
         await retryDetachedMeiliWrite(
-          () => deleteDocumentAndWait(doc),
+          () => deleteDocumentDetached(doc),
           '[mongoMeili] Failed to remove a concurrently deleted document.',
         );
         return;
@@ -1084,10 +1075,24 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
     }
 
     try {
-      await index.updateSettings({
-        filterableAttributes: ['user'],
-      });
-      logger.debug(`[mongoMeili] Updated index ${indexName} settings to make 'user' filterable`);
+      /** A settings update is a full index task even when nothing changes; on a large
+       * index it blocks the whole task queue for minutes on every process start. Only
+       * send it when `user` is not filterable yet. */
+      let userFilterable = false;
+      try {
+        const settings = await index.getSettings();
+        userFilterable = settings.filterableAttributes?.includes('user') === true;
+      } catch (readError) {
+        logger.debug(`[mongoMeili] Could not read index ${indexName} settings:`, readError);
+      }
+      if (userFilterable) {
+        logger.debug(`[mongoMeili] Index ${indexName} already has 'user' filterable`);
+      } else {
+        await index.updateSettings({
+          filterableAttributes: ['user'],
+        });
+        logger.debug(`[mongoMeili] Updated index ${indexName} settings to make 'user' filterable`);
+      }
     } catch (settingsError) {
       logger.error(`[mongoMeili] Error updating index settings for ${indexName}:`, settingsError);
     }
