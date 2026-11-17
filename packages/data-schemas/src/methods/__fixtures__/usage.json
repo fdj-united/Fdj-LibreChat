@@ -1,0 +1,309 @@
+{
+  "contract": "answered-user-v1",
+  "agent": "agent-a",
+  "tenant": "tenant-a",
+  "conversations": [
+    {
+      "conversationId": "old",
+      "createdAt": "2026-10-20T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "initial_agent_id": "agent-a"
+    },
+    {
+      "conversationId": "new",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "initial_agent_id": "agent-a"
+    },
+    {
+      "conversationId": "other",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000002",
+      "tenantId": "tenant-a",
+      "initial_agent_id": "agent-b"
+    },
+    {
+      "conversationId": "pending",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "initial_agent_id": "agent-a"
+    },
+    {
+      "conversationId": "temp",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "initial_agent_id": "agent-a",
+      "isTemporary": true
+    },
+    {
+      "conversationId": "child",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "initial_agent_id": "agent-a",
+      "subagentThread": {}
+    },
+    {
+      "conversationId": "foreign",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-b",
+      "initial_agent_id": "agent-a"
+    }
+  ],
+  "messages": [
+    {
+      "messageId": "old-q",
+      "conversationId": "old",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 2
+    },
+    {
+      "messageId": "old-q-reply",
+      "conversationId": "old",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "old-q",
+      "model": "agent-a",
+      "tokenCount": 3
+    },
+    {
+      "messageId": "new-q",
+      "conversationId": "new",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 2
+    },
+    {
+      "messageId": "new-q-reply",
+      "conversationId": "new",
+      "createdAt": "2026-11-02T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "new-q",
+      "model": "agent-a",
+      "tokenCount": 3
+    },
+    {
+      "messageId": "new-second-reply",
+      "conversationId": "new",
+      "createdAt": "2026-11-03T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "new-q",
+      "model": "agent-a",
+      "tokenCount": 5
+    },
+    {
+      "messageId": "follow-up",
+      "conversationId": "new",
+      "createdAt": "2026-11-11T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 2
+    },
+    {
+      "messageId": "follow-up-reply",
+      "conversationId": "new",
+      "createdAt": "2026-11-12T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "follow-up",
+      "model": "agent-a",
+      "tokenCount": 5
+    },
+    {
+      "messageId": "cross-q",
+      "conversationId": "other",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000002",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 1
+    },
+    {
+      "messageId": "cross-q-reply",
+      "conversationId": "other",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000002",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "cross-q",
+      "model": "agent-a",
+      "tokenCount": 7
+    },
+    {
+      "messageId": "unanswered",
+      "conversationId": "pending",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 100
+    },
+    {
+      "messageId": "wrong-model",
+      "conversationId": "new",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 10
+    },
+    {
+      "messageId": "wrong-model-reply",
+      "conversationId": "new",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "wrong-model",
+      "model": "agent-b",
+      "tokenCount": 20
+    },
+    {
+      "messageId": "temp-q",
+      "conversationId": "temp",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 100
+    },
+    {
+      "messageId": "temp-q-reply",
+      "conversationId": "temp",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "temp-q",
+      "model": "agent-a",
+      "tokenCount": 100
+    },
+    {
+      "messageId": "child-q",
+      "conversationId": "child",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": true,
+      "tokenCount": 100
+    },
+    {
+      "messageId": "child-q-reply",
+      "conversationId": "child",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "child-q",
+      "model": "agent-a",
+      "tokenCount": 100
+    },
+    {
+      "messageId": "foreign-q",
+      "conversationId": "foreign",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-b",
+      "isCreatedByUser": true,
+      "tokenCount": 100
+    },
+    {
+      "messageId": "foreign-q-reply",
+      "conversationId": "foreign",
+      "createdAt": "2026-11-01T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-b",
+      "isCreatedByUser": false,
+      "parentMessageId": "foreign-q",
+      "model": "agent-a",
+      "tokenCount": 100
+    },
+    {
+      "messageId": "new-b-reply",
+      "conversationId": "new",
+      "createdAt": "2026-11-02T12:00:00.000Z",
+      "user": "000000000000000000000001",
+      "tenantId": "tenant-a",
+      "isCreatedByUser": false,
+      "parentMessageId": "new-q",
+      "model": "agent-b",
+      "tokenCount": 4
+    }
+  ],
+  "windows": [
+    {
+      "id": "x",
+      "from": "2026-11-01T00:00:00.000Z",
+      "toExclusive": "2026-11-02T00:00:00.000Z",
+      "expected": {
+        "totalConversations": 2,
+        "totalUsers": 2,
+        "totalMessages": 3,
+        "totalTokens": 23
+      },
+      "activeConversations": 3,
+      "singleQuestionConversations": 3
+    },
+    {
+      "id": "y",
+      "from": "2026-11-11T00:00:00.000Z",
+      "toExclusive": "2026-11-12T00:00:00.000Z",
+      "expected": {
+        "totalConversations": 0,
+        "totalUsers": 1,
+        "totalMessages": 1,
+        "totalTokens": 7
+      },
+      "activeConversations": 1,
+      "singleQuestionConversations": 1
+    },
+    {
+      "id": "all",
+      "from": "2026-11-01T00:00:00.000Z",
+      "toExclusive": "2026-11-17T00:00:00.000Z",
+      "expected": {
+        "totalConversations": 2,
+        "totalUsers": 2,
+        "totalMessages": 4,
+        "totalTokens": 30
+      },
+      "activeConversations": 3,
+      "singleQuestionConversations": 2
+    },
+    {
+      "id": "multi",
+      "from": "2026-11-01T00:00:00.000Z",
+      "toExclusive": "2026-11-17T00:00:00.000Z",
+      "agentIds": [
+        "agent-a",
+        "agent-b"
+      ],
+      "expected": {
+        "totalConversations": 3,
+        "totalUsers": 2,
+        "totalMessages": 5,
+        "totalTokens": 64
+      },
+      "activeConversations": 3,
+      "singleQuestionConversations": 2
+    }
+  ]
+}

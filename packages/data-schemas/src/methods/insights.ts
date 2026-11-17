@@ -56,6 +56,14 @@ type ConversationMessageSummary = UserMessageTotals & {
 };
 type UserConversationCount = { _id: string; conversations: number };
 type MessageDay = { date: string; messages: number; totalTokens: number };
+type MessageFacets = {
+  messageDays: MessageDay[];
+  userCount: CountResult[];
+  dailyUsers: DailyUsers[];
+  topMessageUsers: MessageSummary[];
+  engagementRows?: EngagementTotals[];
+};
+
 type FirstMessage = { _id: ConversationOwner; text: string };
 type UserSummary = {
   _id: { toString(): string };
@@ -72,12 +80,6 @@ const dayMs = 24 * 60 * 60 * 1000;
 
 function tenantMatch(tenantId?: string) {
   return tenantId ? { tenantId } : { tenantId: { $exists: false } };
-}
-
-function joinedTenantMatch(tenantId?: string) {
-  return tenantId
-    ? { 'insightsConversation.tenantId': tenantId }
-    : { 'insightsConversation.tenantId': { $exists: false } };
 }
 
 function validTimeZone(timeZone?: string) {
@@ -201,72 +203,87 @@ function conversationScope(match: Record<string, unknown>, agentIds: string[]): 
   ];
 }
 
+/** One saved user message, attributed through a selected agent's direct reply.
+ * Reply timestamps do not move the interaction out of the user's period.
+ * Conversation-indexed lookups avoid requiring a parentMessageId index.
+ */
 function messageScope(
   match: Record<string, unknown>,
   agentIds: string[],
   tenantId?: string,
+  includeText = false,
 ): PipelineStage[] {
-  const attributedMatch =
-    match.isCreatedByUser === true
-      ? match
-      : {
-          $and: [
-            match,
-            {
-              $or: [
-                { isCreatedByUser: true },
-                { isCreatedByUser: { $ne: true }, model: { $in: agentIds } },
-              ],
-            },
-          ],
-        };
   return [
-    { $match: attributedMatch },
+    { $match: { ...match, isCreatedByUser: true, messageId: { $type: 'string', $ne: '' } } },
+    {
+      $project: {
+        messageId: 1,
+        conversationId: 1,
+        user: 1,
+        createdAt: 1,
+        tokenCount: 1,
+        ...(includeText ? { text: 1 } : {}),
+      },
+    },
+    { $sort: { createdAt: 1, _id: 1 } },
+    {
+      $group: {
+        _id: { user: '$user', conversationId: '$conversationId', messageId: '$messageId' },
+        message: { $first: '$$ROOT' },
+      },
+    },
+    { $replaceRoot: { newRoot: '$message' } },
     {
       $lookup: {
         from: 'conversations',
         localField: 'conversationId',
         foreignField: 'conversationId',
+        let: { owner: '$user' },
+        pipeline: [
+          {
+            $match: {
+              ...tenantMatch(tenantId),
+              isTemporary: { $ne: true },
+              subagentThread: { $exists: false },
+              $expr: { $eq: ['$user', '$$owner'] },
+            },
+          },
+          { $project: { _id: 1 } },
+          { $limit: 1 },
+        ],
         as: 'insightsConversation',
       },
     },
-    { $unwind: '$insightsConversation' },
+    { $match: { 'insightsConversation.0': { $exists: true } } },
     {
-      $addFields: {
-        insightsOwnerMatches: { $eq: ['$user', '$insightsConversation.user'] },
+      $lookup: {
+        from: 'messages',
+        localField: 'conversationId',
+        foreignField: 'conversationId',
+        let: { parent: '$messageId', owner: '$user' },
+        pipeline: [
+          {
+            $match: {
+              ...tenantMatch(tenantId),
+              isCreatedByUser: false,
+              isTemporary: { $ne: true },
+              model: { $in: agentIds },
+              $expr: {
+                $and: [{ $eq: ['$parentMessageId', '$$parent'] }, { $eq: ['$user', '$$owner'] }],
+              },
+            },
+          },
+          { $project: { _id: 0, tokenCount: 1 } },
+        ],
+        as: 'insightsReplies',
       },
     },
+    { $match: { 'insightsReplies.0': { $exists: true } } },
     {
-      $match: {
-        ...joinedTenantMatch(tenantId),
-        'insightsConversation.isTemporary': { $ne: true },
-        'insightsConversation.subagentThread': { $exists: false },
-        'insightsConversation.user': { $nin: [null, ''] },
-        insightsOwnerMatches: true,
-        $or: [
-          { isCreatedByUser: true, 'insightsConversation.initial_agent_id': { $in: agentIds } },
-          {
-            isCreatedByUser: true,
-            'insightsConversation.initial_agent_id': { $exists: false },
-            'insightsConversation.agent_id': { $in: agentIds },
-          },
-          {
-            isCreatedByUser: { $ne: true },
-            model: { $in: agentIds },
-            $or: [
-              {
-                'insightsConversation.initial_agent_id': {
-                  $exists: true,
-                  $nin: [null, ''],
-                },
-              },
-              {
-                'insightsConversation.initial_agent_id': { $exists: false },
-                'insightsConversation.agent_id': { $exists: true, $nin: [null, ''] },
-              },
-            ],
-          },
-        ],
+      $set: {
+        tokenCount: {
+          $add: [{ $ifNull: ['$tokenCount', 0] }, { $sum: '$insightsReplies.tokenCount' }],
+        },
       },
     },
   ];
@@ -378,12 +395,8 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
       conversationDays,
       latestRows,
       searchedConversationCount,
-      messageDays,
-      userCount,
-      dailyUsers,
-      topMessageUsers,
+      messageFacetRows,
       churnedUserRows,
-      engagementRows,
     ] = await Promise.all([
       Conversation.aggregate<ConversationDay>([
         ...conversationPipeline,
@@ -417,44 +430,123 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
             { $count: 'total' },
           ])
         : Promise.resolve([] as CountResult[]),
-      Message.aggregate<MessageDay>([
+      Message.aggregate<MessageFacets>([
         ...messagePipeline,
         {
-          $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone } },
-            messages: { $sum: 1 },
-            totalTokens: { $sum: { $ifNull: ['$tokenCount', 0] } },
-          },
-        },
-        { $project: { _id: 0, date: '$_id', messages: 1, totalTokens: 1 } },
-        { $sort: { date: 1 } },
-      ]),
-      Message.aggregate<CountResult>([
-        ...messagePipeline,
-        { $group: { _id: '$user' } },
-        { $count: 'total' },
-      ]),
-      Message.aggregate<DailyUsers>([
-        ...messagePipeline,
-        {
-          $group: {
-            _id: {
-              date: {
-                $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone },
+          $facet: {
+            messageDays: [
+              {
+                $group: {
+                  _id: {
+                    $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone },
+                  },
+                  messages: { $sum: 1 },
+                  totalTokens: { $sum: { $ifNull: ['$tokenCount', 0] } },
+                },
               },
-              user: '$user',
-            },
+              { $project: { _id: 0, date: '$_id', messages: 1, totalTokens: 1 } },
+              { $sort: { date: 1 } },
+            ],
+            userCount: [{ $group: { _id: '$user' } }, { $count: 'total' }],
+            dailyUsers: [
+              {
+                $group: {
+                  _id: {
+                    date: {
+                      $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone },
+                    },
+                    user: '$user',
+                  },
+                },
+              },
+              { $group: { _id: '$_id.date', users: { $sum: 1 } } },
+              { $project: { _id: 0, date: '$_id', users: 1 } },
+              { $sort: { date: 1 } },
+            ],
+            topMessageUsers: [
+              { $group: { _id: '$user', messages: { $sum: 1 } } },
+              { $sort: { messages: -1, _id: 1 } },
+              { $limit: 8 },
+            ],
+            ...(config.metrics.engagement
+              ? {
+                  engagementRows: [
+                    {
+                      $group: {
+                        _id: { user: '$user', conversationId: '$conversationId' },
+                        questions: { $sum: 1 },
+                      },
+                    },
+                    {
+                      $group: {
+                        _id: '$_id.user',
+                        conversations: { $sum: 1 },
+                        questions: { $sum: '$questions' },
+                        singleQuestionConversations: {
+                          $sum: { $cond: [{ $eq: ['$questions', 1] }, 1, 0] },
+                        },
+                      },
+                    },
+                    {
+                      $group: {
+                        _id: null,
+                        activeUsers: { $sum: 1 },
+                        activeConversations: { $sum: '$conversations' },
+                        questions: { $sum: '$questions' },
+                        singleQuestionConversations: { $sum: '$singleQuestionConversations' },
+                        one: { $sum: { $cond: [{ $eq: ['$conversations', 1] }, 1, 0] } },
+                        twoToFive: {
+                          $sum: {
+                            $cond: [
+                              {
+                                $and: [
+                                  { $gte: ['$conversations', 2] },
+                                  { $lte: ['$conversations', 5] },
+                                ],
+                              },
+                              1,
+                              0,
+                            ],
+                          },
+                        },
+                        sixToTen: {
+                          $sum: {
+                            $cond: [
+                              {
+                                $and: [
+                                  { $gte: ['$conversations', 6] },
+                                  { $lte: ['$conversations', 10] },
+                                ],
+                              },
+                              1,
+                              0,
+                            ],
+                          },
+                        },
+                        elevenToTwenty: {
+                          $sum: {
+                            $cond: [
+                              {
+                                $and: [
+                                  { $gte: ['$conversations', 11] },
+                                  { $lte: ['$conversations', 20] },
+                                ],
+                              },
+                              1,
+                              0,
+                            ],
+                          },
+                        },
+                        twentyOnePlus: {
+                          $sum: { $cond: [{ $gte: ['$conversations', 21] }, 1, 0] },
+                        },
+                      },
+                    },
+                  ],
+                }
+              : {}),
           },
         },
-        { $group: { _id: '$_id.date', users: { $sum: 1 } } },
-        { $project: { _id: 0, date: '$_id', users: 1 } },
-        { $sort: { date: 1 } },
-      ]),
-      Message.aggregate<MessageSummary>([
-        ...messagePipeline,
-        { $group: { _id: '$user', messages: { $sum: 1 } } },
-        { $sort: { messages: -1, _id: 1 } },
-        { $limit: 8 },
       ]),
       Message.aggregate<ChurnedUserActivity>([
         ...messageScope(
@@ -473,68 +565,14 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
         { $sort: { lastSeen: -1, _id: 1 } },
         { $limit: churnedUserLimit },
       ]),
-      config.metrics.engagement
-        ? Message.aggregate<EngagementTotals>([
-            ...messageScope({ ...messageMatch, isCreatedByUser: true }, agentIds, options.tenantId),
-            {
-              $group: {
-                _id: { user: '$user', conversationId: '$conversationId' },
-                questions: { $sum: 1 },
-              },
-            },
-            {
-              $group: {
-                _id: '$_id.user',
-                conversations: { $sum: 1 },
-                questions: { $sum: '$questions' },
-                singleQuestionConversations: {
-                  $sum: { $cond: [{ $eq: ['$questions', 1] }, 1, 0] },
-                },
-              },
-            },
-            {
-              $group: {
-                _id: null,
-                activeUsers: { $sum: 1 },
-                activeConversations: { $sum: '$conversations' },
-                questions: { $sum: '$questions' },
-                singleQuestionConversations: { $sum: '$singleQuestionConversations' },
-                one: { $sum: { $cond: [{ $eq: ['$conversations', 1] }, 1, 0] } },
-                twoToFive: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $gte: ['$conversations', 2] }, { $lte: ['$conversations', 5] }] },
-                      1,
-                      0,
-                    ],
-                  },
-                },
-                sixToTen: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $gte: ['$conversations', 6] }, { $lte: ['$conversations', 10] }] },
-                      1,
-                      0,
-                    ],
-                  },
-                },
-                elevenToTwenty: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [{ $gte: ['$conversations', 11] }, { $lte: ['$conversations', 20] }],
-                      },
-                      1,
-                      0,
-                    ],
-                  },
-                },
-                twentyOnePlus: { $sum: { $cond: [{ $gte: ['$conversations', 21] }, 1, 0] } },
-              },
-            },
-          ])
-        : Promise.resolve([] as EngagementTotals[]),
     ]);
+    const {
+      messageDays = [],
+      userCount = [],
+      dailyUsers = [],
+      topMessageUsers = [],
+      engagementRows = [],
+    } = messageFacetRows[0] ?? {};
 
     const latestConversationOwners = latestRows
       .filter(
@@ -594,6 +632,7 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
               },
               agentIds,
               options.tenantId,
+              true,
             ),
             { $sort: { createdAt: 1, _id: 1 } },
             {

@@ -71,6 +71,21 @@ async function seedConversation(
       text: 'PRIVATE_QUESTION',
     })),
   );
+  await mongoose.models.Message.collection.insertMany(
+    Array.from({ length: questions }, (_, index) => ({
+      conversationId: id,
+      messageId: `${id}-reply-${index}`,
+      parentMessageId: `${id}-${index}`,
+      user: owner,
+      isCreatedByUser: false,
+      createdAt: date,
+      tenantId: 'tenant-a',
+      model:
+        (overrides as { initial_agent_id?: string; agent_id?: string }).initial_agent_id ??
+        (overrides as { agent_id?: string }).agent_id ??
+        'agent-a',
+    })),
+  );
 }
 
 it('counts questions in active chats with matching scope and ownership, including older chats', async () => {
