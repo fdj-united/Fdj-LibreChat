@@ -62,6 +62,7 @@ type MessageFacets = {
   dailyUsers: DailyUsers[];
   topMessageUsers: MessageSummary[];
   engagementRows?: EngagementTotals[];
+  churnedUserRows: ChurnedUserActivity[];
 };
 
 type FirstMessage = { _id: ConversationOwner; text: string };
@@ -372,7 +373,13 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
       createdAt: { $gte: from, $lte: to },
     };
     const conversationPipeline = conversationScope(conversationMatch, agentIds);
-    const messagePipeline = messageScope(messageMatch, agentIds, options.tenantId);
+    // Resolve linked questions once for both period metrics and the churn lookback.
+    const messagePipeline = messageScope(
+      { ...messageMatch, createdAt: { $gte: churnedActivityFrom, $lte: to } },
+      agentIds,
+      options.tenantId,
+    );
+    const inPeriod: PipelineStage.Match = { $match: { createdAt: { $gte: from, $lte: to } } };
 
     const requestedSearch = options.search?.trim().slice(0, INSIGHTS_SEARCH_MAX_LENGTH) ?? '';
     const search = requestedSearch.length >= INSIGHTS_SEARCH_MIN_LENGTH ? requestedSearch : '';
@@ -418,187 +425,182 @@ export function createInsightsMethods(mongoose: typeof import('mongoose')): Insi
         ]
       : conversationPipeline;
 
-    const [
-      conversationDays,
-      latestRows,
-      searchedConversationCount,
-      messageFacetRows,
-      churnedUserRows,
-    ] = await Promise.all([
-      Conversation.aggregate<ConversationDay>([
-        ...conversationPipeline,
-        {
-          $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone } },
-            conversations: { $sum: 1 },
-          },
-        },
-        { $project: { _id: 0, date: '$_id', conversations: 1 } },
-        { $sort: { date: 1 } },
-      ]),
-      Conversation.aggregate<RecentConversation>([
-        ...searchedConversationPipeline,
-        { $sort: { createdAt: -1, _id: -1 } },
-        { $skip: (page - 1) * pageSize },
-        { $limit: pageSize },
-        {
-          $project: {
-            _id: 0,
-            conversationId: 1,
-            agentId: '$insightsAgentId',
-            date: '$createdAt',
-            userId: '$user',
-          },
-        },
-      ]),
-      searchRegex
-        ? Conversation.aggregate<CountResult>([
-            ...searchedConversationPipeline,
-            { $count: 'total' },
-          ])
-        : Promise.resolve([] as CountResult[]),
-      Message.aggregate<MessageFacets>([
-        ...messagePipeline,
-        {
-          $facet: {
-            messageDays: [
-              {
-                $group: {
-                  _id: {
-                    $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone },
-                  },
-                  messages: { $sum: 1 },
-                  totalTokens: { $sum: { $ifNull: ['$tokenCount', 0] } },
-                },
+    const [conversationDays, latestRows, searchedConversationCount, messageFacetRows] =
+      await Promise.all([
+        Conversation.aggregate<ConversationDay>([
+          ...conversationPipeline,
+          {
+            $group: {
+              _id: {
+                $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone },
               },
-              { $project: { _id: 0, date: '$_id', messages: 1, totalTokens: 1 } },
-              { $sort: { date: 1 } },
-            ],
-            userCount: [{ $group: { _id: '$user' } }, { $count: 'total' }],
-            dailyUsers: [
-              {
-                $group: {
-                  _id: {
-                    date: {
+              conversations: { $sum: 1 },
+            },
+          },
+          { $project: { _id: 0, date: '$_id', conversations: 1 } },
+          { $sort: { date: 1 } },
+        ]),
+        Conversation.aggregate<RecentConversation>([
+          ...searchedConversationPipeline,
+          { $sort: { createdAt: -1, _id: -1 } },
+          { $skip: (page - 1) * pageSize },
+          { $limit: pageSize },
+          {
+            $project: {
+              _id: 0,
+              conversationId: 1,
+              agentId: '$insightsAgentId',
+              date: '$createdAt',
+              userId: '$user',
+            },
+          },
+        ]),
+        searchRegex
+          ? Conversation.aggregate<CountResult>([
+              ...searchedConversationPipeline,
+              { $count: 'total' },
+            ])
+          : Promise.resolve([] as CountResult[]),
+        Message.aggregate<MessageFacets>([
+          ...messagePipeline,
+          {
+            $facet: {
+              messageDays: [
+                inPeriod,
+                {
+                  $group: {
+                    _id: {
                       $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: timeZone },
                     },
-                    user: '$user',
+                    messages: { $sum: 1 },
+                    totalTokens: { $sum: { $ifNull: ['$tokenCount', 0] } },
                   },
                 },
-              },
-              { $group: { _id: '$_id.date', users: { $sum: 1 } } },
-              { $project: { _id: 0, date: '$_id', users: 1 } },
-              { $sort: { date: 1 } },
-            ],
-            topMessageUsers: [
-              { $group: { _id: '$user', messages: { $sum: 1 } } },
-              { $sort: { messages: -1, _id: 1 } },
-              { $limit: 8 },
-            ],
-            ...(config.metrics.engagement
-              ? {
-                  engagementRows: [
-                    {
-                      $group: {
-                        _id: { user: '$user', conversationId: '$conversationId' },
-                        questions: { $sum: 1 },
-                      },
-                    },
-                    {
-                      $group: {
-                        _id: '$_id.user',
-                        conversations: { $sum: 1 },
-                        questions: { $sum: '$questions' },
-                        singleQuestionConversations: {
-                          $sum: { $cond: [{ $eq: ['$questions', 1] }, 1, 0] },
+                { $project: { _id: 0, date: '$_id', messages: 1, totalTokens: 1 } },
+                { $sort: { date: 1 } },
+              ],
+              userCount: [inPeriod, { $group: { _id: '$user' } }, { $count: 'total' }],
+              dailyUsers: [
+                inPeriod,
+                {
+                  $group: {
+                    _id: {
+                      date: {
+                        $dateToString: {
+                          format: '%Y-%m-%d',
+                          date: '$createdAt',
+                          timezone: timeZone,
                         },
                       },
+                      user: '$user',
                     },
-                    {
-                      $group: {
-                        _id: null,
-                        activeUsers: { $sum: 1 },
-                        activeConversations: { $sum: '$conversations' },
-                        questions: { $sum: '$questions' },
-                        singleQuestionConversations: { $sum: '$singleQuestionConversations' },
-                        one: { $sum: { $cond: [{ $eq: ['$conversations', 1] }, 1, 0] } },
-                        twoToFive: {
-                          $sum: {
-                            $cond: [
-                              {
-                                $and: [
-                                  { $gte: ['$conversations', 2] },
-                                  { $lte: ['$conversations', 5] },
-                                ],
-                              },
-                              1,
-                              0,
-                            ],
-                          },
-                        },
-                        sixToTen: {
-                          $sum: {
-                            $cond: [
-                              {
-                                $and: [
-                                  { $gte: ['$conversations', 6] },
-                                  { $lte: ['$conversations', 10] },
-                                ],
-                              },
-                              1,
-                              0,
-                            ],
-                          },
-                        },
-                        elevenToTwenty: {
-                          $sum: {
-                            $cond: [
-                              {
-                                $and: [
-                                  { $gte: ['$conversations', 11] },
-                                  { $lte: ['$conversations', 20] },
-                                ],
-                              },
-                              1,
-                              0,
-                            ],
-                          },
-                        },
-                        twentyOnePlus: {
-                          $sum: { $cond: [{ $gte: ['$conversations', 21] }, 1, 0] },
+                  },
+                },
+                { $group: { _id: '$_id.date', users: { $sum: 1 } } },
+                { $project: { _id: 0, date: '$_id', users: 1 } },
+                { $sort: { date: 1 } },
+              ],
+              topMessageUsers: [
+                inPeriod,
+                { $group: { _id: '$user', messages: { $sum: 1 } } },
+                { $sort: { messages: -1, _id: 1 } },
+                { $limit: 8 },
+              ],
+              churnedUserRows: [
+                { $group: { _id: '$user', lastSeen: { $max: '$createdAt' } } },
+                { $match: { lastSeen: { $gte: churnedActivityFrom, $lte: churnedCutoff } } },
+                { $sort: { lastSeen: -1, _id: 1 } },
+                { $limit: churnedUserLimit },
+              ],
+              ...(config.metrics.engagement
+                ? {
+                    engagementRows: [
+                      inPeriod,
+                      {
+                        $group: {
+                          _id: { user: '$user', conversationId: '$conversationId' },
+                          questions: { $sum: 1 },
                         },
                       },
-                    },
-                  ],
-                }
-              : {}),
+                      {
+                        $group: {
+                          _id: '$_id.user',
+                          conversations: { $sum: 1 },
+                          questions: { $sum: '$questions' },
+                          singleQuestionConversations: {
+                            $sum: { $cond: [{ $eq: ['$questions', 1] }, 1, 0] },
+                          },
+                        },
+                      },
+                      {
+                        $group: {
+                          _id: null,
+                          activeUsers: { $sum: 1 },
+                          activeConversations: { $sum: '$conversations' },
+                          questions: { $sum: '$questions' },
+                          singleQuestionConversations: { $sum: '$singleQuestionConversations' },
+                          one: { $sum: { $cond: [{ $eq: ['$conversations', 1] }, 1, 0] } },
+                          twoToFive: {
+                            $sum: {
+                              $cond: [
+                                {
+                                  $and: [
+                                    { $gte: ['$conversations', 2] },
+                                    { $lte: ['$conversations', 5] },
+                                  ],
+                                },
+                                1,
+                                0,
+                              ],
+                            },
+                          },
+                          sixToTen: {
+                            $sum: {
+                              $cond: [
+                                {
+                                  $and: [
+                                    { $gte: ['$conversations', 6] },
+                                    { $lte: ['$conversations', 10] },
+                                  ],
+                                },
+                                1,
+                                0,
+                              ],
+                            },
+                          },
+                          elevenToTwenty: {
+                            $sum: {
+                              $cond: [
+                                {
+                                  $and: [
+                                    { $gte: ['$conversations', 11] },
+                                    { $lte: ['$conversations', 20] },
+                                  ],
+                                },
+                                1,
+                                0,
+                              ],
+                            },
+                          },
+                          twentyOnePlus: {
+                            $sum: { $cond: [{ $gte: ['$conversations', 21] }, 1, 0] },
+                          },
+                        },
+                      },
+                    ],
+                  }
+                : {}),
+            },
           },
-        },
-      ]),
-      Message.aggregate<ChurnedUserActivity>([
-        ...messageScope(
-          {
-            ...tenant,
-            isTemporary: { $ne: true },
-            isCreatedByUser: true,
-            user: { $nin: [null, ''] },
-            createdAt: { $gte: churnedActivityFrom, $lte: to },
-          },
-          agentIds,
-          options.tenantId,
-        ),
-        { $group: { _id: '$user', lastSeen: { $max: '$createdAt' } } },
-        { $match: { lastSeen: { $gte: churnedActivityFrom, $lte: churnedCutoff } } },
-        { $sort: { lastSeen: -1, _id: 1 } },
-        { $limit: churnedUserLimit },
-      ]),
-    ]);
+        ]),
+      ]);
     const {
       messageDays = [],
       userCount = [],
       dailyUsers = [],
       topMessageUsers = [],
       engagementRows = [],
+      churnedUserRows = [],
     } = messageFacetRows[0] ?? {};
 
     const latestConversationOwners = latestRows
