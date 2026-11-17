@@ -31,6 +31,7 @@ import { getRollingDateRange, getTodayDateRange } from './dateRange';
 import OpenSidebar from '~/components/Chat/Menus/OpenSidebar';
 import { LocalizedDateRangePicker } from '~/components/ui';
 import Charts, { EngagementMetrics } from './charts';
+import MetricGuide from './guide';
 import MetricInfo from './info';
 import { cn } from '~/utils';
 import Panel from './panel';
@@ -951,6 +952,7 @@ export default function InsightsView() {
           )}
           {data && (
             <>
+              <MetricGuide localize={localize} />
               {/** Use explicit responsive counts: one column on narrow screens,
                *  two through mid-range, and four at xl. This avoids auto-fit's
                *  three-plus-one orphan without making mobile cards too narrow. */}
