@@ -86,9 +86,12 @@ const mockDeleteDocuments = jest.fn();
 const mockGetDocument = jest.fn();
 const mockGetDocuments = jest.fn().mockResolvedValue({ results: [] });
 const mockWaitForTask = jest.fn().mockResolvedValue({ status: 'succeeded' });
+const mockGetSettings = jest.fn().mockResolvedValue({ filterableAttributes: [] });
+const mockUpdateSettings = jest.fn();
 const mockIndex = jest.fn().mockReturnValue({
   getRawInfo: jest.fn(),
-  updateSettings: jest.fn(),
+  getSettings: mockGetSettings,
+  updateSettings: mockUpdateSettings,
   addDocuments: mockAddDocuments,
   addDocumentsInBatches: mockAddDocumentsInBatches,
   updateDocuments: mockUpdateDocuments,
@@ -612,7 +615,7 @@ describe('Meilisearch Mongoose plugin', () => {
     expect(storedDoc?._meiliIndex).toBe(true);
   });
 
-  test('retries update-hook deletion before clearing an indexed marker', async () => {
+  test('enqueues the update-hook deletion once and clears the marker without waiting', async () => {
     const conversationModel = createConversationModel(
       mongoose,
     ) as unknown as SchemaWithMeiliMethods;
@@ -626,24 +629,20 @@ describe('Meilisearch Mongoose plugin', () => {
       endpoint: EModelEndpoint.agents,
     });
     await waitForMock(mockAddDocuments);
-    let indexed = false;
-    const acknowledgmentStart = Date.now();
-    while (!indexed && Date.now() - acknowledgmentStart <= 2000) {
-      indexed =
-        (
-          await conversationModel
-            .findOne({ conversationId })
-            .select('+_meiliIndex +_meiliIndexAttempted')
-        )?._meiliIndex === true;
-      await wait(10);
-    }
+    await waitForCondition(async () => {
+      const stored = await conversationModel
+        .findOne({ conversationId })
+        .select('+_meiliIndex +_meiliIndexAttempted');
+      return stored?._meiliIndex === true;
+    });
+    mockWaitForTask.mockClear();
+    mockDeleteDocument.mockClear();
+
+    /** The hidden flags must be loaded, otherwise the pre-save hook cannot tell the
+     * document was indexed and skips the Meili removal. */
     const conversation = await conversationModel
       .findOne({ conversationId })
       .select('+_meiliIndex +_meiliIndexAttempted');
-    expect(conversation?._meiliIndex).toBe(true);
-    expect(conversation?._meiliIndexAttempted).toBe(true);
-    mockWaitForTask.mockClear();
-
     conversation!.subagentThread = {
       rootConversationId: 'root-conversation',
       parentConversationId: 'parent-conversation',
@@ -653,25 +652,56 @@ describe('Meilisearch Mongoose plugin', () => {
       subagentKind: 'agent',
       depth: 1,
     };
-    mockWaitForTask.mockResolvedValueOnce({ status: 'failed' }).mockImplementationOnce(async () => {
-      await wait(50);
-      return { status: 'succeeded' };
-    });
     await conversation!.save();
-    await waitForMockCalls(mockWaitForTask, 2);
     await waitForCondition(async () => {
       const storedDoc = await conversationModel.collection.findOne({ conversationId });
       return storedDoc?._meiliIndex === undefined && storedDoc?._meiliIndexAttempted === undefined;
     });
     const storedDoc = await conversationModel.collection.findOne({ conversationId });
 
-    expect(mockDeleteDocument).toHaveBeenCalledTimes(2);
-    expect(mockWaitForTask).toHaveBeenCalledWith(2, {
-      timeOutMs: 10000,
-      intervalMs: 100,
-    });
+    /** The per-document path only enqueues: one deletion task, no polling, no resubmission. */
+    expect(mockDeleteDocument).toHaveBeenCalledTimes(1);
+    expect(mockWaitForTask).not.toHaveBeenCalled();
     expect(storedDoc?._meiliIndex).toBeUndefined();
     expect(storedDoc?._meiliIndexAttempted).toBeUndefined();
+  });
+
+  test('acknowledges a save once the add task is enqueued, without polling Meili', async () => {
+    const conversationModel = createConversationModel(
+      mongoose,
+    ) as unknown as SchemaWithMeiliMethods;
+    await conversationModel.deleteMany({});
+    const conversationId = new mongoose.Types.ObjectId().toString();
+    mockWaitForTask.mockClear();
+
+    await conversationModel.create({
+      conversationId,
+      user: new mongoose.Types.ObjectId().toString(),
+      title: 'Enqueued only',
+      endpoint: EModelEndpoint.agents,
+    });
+    await waitForCondition(async () => {
+      const stored = await conversationModel.collection.findOne({ conversationId });
+      return stored?._meiliIndex === true;
+    });
+
+    expect(mockAddDocuments).toHaveBeenCalledTimes(1);
+    expect(mockWaitForTask).not.toHaveBeenCalled();
+  });
+
+  test('skips the settings update when user is already filterable', async () => {
+    mockUpdateSettings.mockClear();
+    mockGetSettings.mockResolvedValueOnce({ filterableAttributes: ['user'] });
+    createConversationModel(mongoose);
+    await waitForMock(mockGetSettings);
+    await wait(20);
+    expect(mockUpdateSettings).not.toHaveBeenCalled();
+
+    mockUpdateSettings.mockClear();
+    mockGetSettings.mockResolvedValueOnce({ filterableAttributes: [] });
+    createConversationModel(mongoose);
+    await waitForMock(mockUpdateSettings);
+    expect(mockUpdateSettings).toHaveBeenCalledWith({ filterableAttributes: ['user'] });
   });
 
   test('retries cleanup when Meili deletion succeeds before the Mongo flag update fails', async () => {
@@ -1699,7 +1729,8 @@ describe('Meilisearch Mongoose plugin', () => {
       mockDeleteDocuments.mockClear();
       mockIndex.mockReturnValue({
         getRawInfo: jest.fn(),
-        updateSettings: jest.fn(),
+        getSettings: mockGetSettings,
+        updateSettings: mockUpdateSettings,
         addDocuments: mockAddDocuments,
         addDocumentsInBatches: mockAddDocumentsInBatches,
         updateDocuments: mockUpdateDocuments,
