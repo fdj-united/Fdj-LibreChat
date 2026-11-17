@@ -18,20 +18,54 @@ const fixtures = {
       ),
   },
   messages: {
-    insertOne: (document: Record<string, unknown>) =>
-      mongoose.models.Message.collection.insertOne({
-        ...(document.isCreatedByUser === false ? { model: 'agent-a' } : {}),
-        ...document,
-      }),
-    insertMany: (documents: Array<Record<string, unknown>>) =>
-      mongoose.models.Message.collection.insertMany(
-        documents.map((document) => ({
-          ...(document.isCreatedByUser === false ? { model: 'agent-a' } : {}),
-          ...document,
-        })),
-      ),
+    insertOne: (document: Record<string, unknown>) => insertLinkedMessages([document]),
+    insertMany: (documents: Array<Record<string, unknown>>) => insertLinkedMessages(documents),
   },
 };
+
+// General regression fixtures represent answered interactions; parity tests explicitly
+// seed unanswered and cross-agent cases without this convenience helper.
+async function insertLinkedMessages(documents: Array<Record<string, unknown>>) {
+  const rows: Array<Record<string, unknown>> = documents.map((document) => ({
+    ...(document.isCreatedByUser === false ? { model: 'agent-a' } : {}),
+    ...document,
+  }));
+  for (const row of rows.filter((message) => message.isCreatedByUser === false)) {
+    const parent = rows
+      .filter(
+        (message) =>
+          message.isCreatedByUser === true &&
+          message.conversationId === row.conversationId &&
+          message.user === row.user &&
+          message.tenantId === row.tenantId &&
+          Number(message.createdAt) <= Number(row.createdAt),
+      )
+      .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))[0];
+    if (parent && !row.parentMessageId) row.parentMessageId = parent.messageId;
+  }
+  const generated = rows
+    .filter(
+      (message) =>
+        message.isCreatedByUser === true &&
+        !rows.some(
+          (reply) =>
+            reply.isCreatedByUser === false &&
+            reply.parentMessageId === message.messageId &&
+            reply.user === message.user &&
+            reply.tenantId === message.tenantId,
+        ),
+    )
+    .map((message) => ({
+      ...message,
+      messageId: `fixture-answer-${message.messageId}`,
+      parentMessageId: message.messageId,
+      isCreatedByUser: false,
+      model: 'agent-a',
+      tokenCount: 0,
+      text: '',
+    }));
+  return mongoose.models.Message.collection.insertMany([...rows, ...generated]);
+}
 
 function createScopedInsightsMethods() {
   const methods = createInsightsMethods(mongoose);
@@ -66,7 +100,7 @@ beforeEach(async () => {
 });
 
 describe('Insights methods', () => {
-  it('counts active users from prompts and all messages for top users within the tenant', async () => {
+  it('counts answered user messages for active and top users within the tenant', async () => {
     const now = new Date();
     const activeAt = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const oldConversationAt = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
@@ -179,23 +213,23 @@ describe('Insights methods', () => {
       expect.objectContaining({
         totalUsers: 2,
         totalConversations: 1,
-        totalMessages: 4,
+        totalMessages: 2,
         totalTokens: 40,
       }),
     );
     expect(result.daily).toContainEqual(
-      expect.objectContaining({ conversations: 1, users: 2, messages: 4, totalTokens: 40 }),
+      expect.objectContaining({ conversations: 1, users: 2, messages: 2, totalTokens: 40 }),
     );
     expect(result.topUsers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           userId: activeUserId.toString(),
-          messages: 2,
+          messages: 1,
           conversations: 1,
         }),
         expect.objectContaining({
           userId: newUserId.toString(),
-          messages: 2,
+          messages: 1,
           conversations: 1,
         }),
       ]),
@@ -468,14 +502,14 @@ describe('Insights methods', () => {
     expect(byUser.get(firstUserId.toString())).toEqual(
       expect.objectContaining({
         firstMessage: 'First owner private prompt',
-        messages: 2,
+        messages: 1,
         totalTokens: 30,
       }),
     );
     expect(byUser.get(secondUserId.toString())).toEqual(
       expect.objectContaining({
         firstMessage: 'Second owner private prompt',
-        messages: 2,
+        messages: 1,
         totalTokens: 70,
       }),
     );
@@ -608,11 +642,11 @@ describe('Insights methods', () => {
     });
 
     expect(agentAInsights.summary).toEqual(
-      expect.objectContaining({ totalConversations: 2, totalMessages: 1, totalTokens: 5 }),
+      expect.objectContaining({ totalConversations: 2, totalMessages: 0, totalTokens: 0 }),
     );
     expect(agentAInsights.agents).toEqual(selectedAgents);
     expect(agentBInsights.summary).toEqual(
-      expect.objectContaining({ totalConversations: 0, totalMessages: 1, totalTokens: 7 }),
+      expect.objectContaining({ totalConversations: 0, totalMessages: 1, totalTokens: 12 }),
     );
   });
 
@@ -701,8 +735,8 @@ describe('Insights methods', () => {
       expect.objectContaining({
         conversationId: 'historical-conversation',
         firstMessage: 'Historical prompt',
-        messages: 2,
-        totalTokens: 30,
+        messages: 1,
+        totalTokens: 60,
       }),
     ]);
   });
@@ -939,7 +973,7 @@ describe('Insights methods', () => {
     expect(crossTenant.latest).toEqual(expect.objectContaining({ conversations: [], pages: 1 }));
   });
 
-  it('uses focused DocumentDB-compatible aggregations during searches', async () => {
+  it('keeps conversation searches focused and shares one replied-message aggregation', async () => {
     const conversationAggregateSpy = jest.spyOn(mongoose.models.Conversation, 'aggregate');
     const messageAggregateSpy = jest.spyOn(mongoose.models.Message, 'aggregate');
 
@@ -962,10 +996,12 @@ describe('Insights methods', () => {
       const conversationPipelines = conversationAggregateSpy.mock.calls.map(
         ([pipeline]) => pipeline as AggregationStage[],
       );
-      const allStages = [
-        ...conversationPipelines.flat(),
-        ...messageAggregateSpy.mock.calls.flatMap(([pipeline]) => pipeline as AggregationStage[]),
-      ];
+      const allStages = conversationPipelines.flat();
+      expect(
+        messageAggregateSpy.mock.calls.filter(([pipeline]) =>
+          pipeline.some((stage) => '$facet' in stage),
+        ),
+      ).toHaveLength(1);
       const searchedPipelines = conversationPipelines.filter((pipeline) =>
         pipeline.some((stage) => stage.$lookup),
       );

@@ -50,6 +50,16 @@ it('omits private message text from both the database read and response', async 
     text: 'private content must not be returned',
     createdAt,
   });
+  await mongoose.models.Message.collection.insertOne({
+    messageId: 'privacy-reply',
+    parentMessageId: 'private-prompt',
+    conversationId: 'privacy-chat',
+    tenantId: 'tenant-a',
+    user,
+    isCreatedByUser: false,
+    model: 'agent-a',
+    createdAt,
+  });
   const spy = jest.spyOn(mongoose.models.Message, 'aggregate');
   const getInsights = createInsightsMethods(mongoose).getInsights;
   const options = {

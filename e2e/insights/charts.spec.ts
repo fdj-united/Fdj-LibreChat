@@ -56,6 +56,7 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
           });
           messages.push({
             messageId: `${conversationId}-a-${q}`,
+            parentMessageId: `${conversationId}-q-${q}`,
             conversationId,
             user,
             isCreatedByUser: false,
@@ -89,6 +90,18 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
       text: 'PRIVATE_INSIGHTS_PREVIEW',
       tokenCount: 15,
     });
+    messages.push({
+      messageId: 'historical-answer',
+      parentMessageId: 'historical-question',
+      conversationId: 'historical-preview',
+      user: identity._id.toString(),
+      isCreatedByUser: false,
+      model: 'agent-chart-alpha',
+      createdAt: historicalDate,
+      isTemporary: false,
+      text: 'Synthetic answer',
+      tokenCount: 30,
+    });
     await db.collection('conversations').insertMany(conversations);
     await db.collection('messages').insertMany(messages);
   });
@@ -102,6 +115,7 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
   expect(result.summary.totalConversations).toBe(total);
   expect(result.engagement?.activeConversations).toBe(total);
   expect(result.engagement?.activeUsers).toBe(15);
+  expect(result.summary.totalMessages).toBe(result.engagement?.questions);
   expect(result.engagement?.activityDistribution.map((row) => row.users)).toEqual([3, 3, 3, 3, 3]);
   expect(result).not.toHaveProperty('breakdowns');
   expect(JSON.stringify(result)).not.toContain('PRIVATE_INSIGHTS_PREVIEW');
@@ -122,12 +136,38 @@ test('owner dashboard enforces privacy and displays compact scoped engagement', 
   const dailyBox = await daily.boundingBox();
   expect(dailyBox!.width).toBeLessThan(720);
   expect((await daily.getByRole('img').boundingBox())!.height).toBeLessThan(200);
+  const guide = page.getByRole('button', { name: 'How activity is counted', exact: true });
+  await expect(guide).toHaveAttribute('aria-expanded', 'false');
+  await guide.press('Enter');
+  await expect(guide).toHaveAttribute('aria-expanded', 'true');
+  await expect(
+    page.getByText('Example: Ask once, then edit and resubmit', { exact: false }),
+  ).toBeVisible();
+  await page.getByText('Counts follow your selected agents and dates.', { exact: false }).click();
+  await page.screenshot({
+    path: testInfo.outputPath('owner-dashboard-definitions.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await guide.press('Enter');
+  await expect(guide).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('heading', { name: 'Adoption', exact: true }).click();
+  await guide.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath('owner-dashboard-desktop.png'),
     fullPage: true,
     animations: 'disabled',
   });
-  await page.getByRole('button', { name: 'About Single-question rate', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await guide.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({
+    path: testInfo.outputPath('owner-dashboard-guide-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await page.setViewportSize({ width: 1440, height: 1150 });
+  await page.getByRole('button', { name: 'About Single-message rate', exact: true }).click();
   await expect(page.getByText('Share of active conversations', { exact: false })).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath('owner-dashboard-information.png'),
