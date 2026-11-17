@@ -122,6 +122,28 @@ it('counts a user message once, sums selected replies, and does not shift it to 
   expect(JSON.stringify(first)).not.toContain('PRIVATE');
 });
 
+it('treats missing or nonnumeric recorded token counts as zero', async () => {
+  await chat('legacy-tokens');
+  await question('q', 'legacy-tokens', 1, { tokenCount: 'unknown' });
+  await reply('a', 'q', 'legacy-tokens', 1, { tokenCount: null });
+  expect((await get(1, 2)).summary).toMatchObject({ totalMessages: 1, totalTokens: 0 });
+});
+
+it('counts separately submitted edits even when their question text is identical', async () => {
+  await chat('edited');
+  await question('original', 'edited', 1, { text: 'Same question' });
+  await reply('first-answer', 'original', 'edited');
+  await question('resubmitted', 'edited', 1, { text: 'Same question' });
+  await reply('second-answer', 'resubmitted', 'edited');
+  const result = await get(1, 2);
+  expect(result.summary.totalMessages).toBe(2);
+  expect(result.engagement).toMatchObject({
+    activeConversations: 1,
+    questions: 2,
+    singleQuestionConversations: 0,
+  });
+});
+
 it('counts one creation in X and only the follow-up message in Y', async () => {
   await chat('follow-up');
   await question('qx', 'follow-up');

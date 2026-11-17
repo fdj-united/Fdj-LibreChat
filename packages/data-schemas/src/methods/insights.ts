@@ -203,9 +203,9 @@ function conversationScope(match: Record<string, unknown>, agentIds: string[]): 
   ];
 }
 
-/** One saved user message, attributed through a selected agent's direct reply.
- * Reply timestamps do not move the interaction out of the user's period.
- * Conversation-indexed lookups avoid requiring a parentMessageId index.
+/** One saved user message, attributed through selected agents' direct replies.
+ * Start from agent-indexed replies, then resolve the indexed messageId parent.
+ * Reply timestamps never restrict the user's reporting period.
  */
 function messageScope(
   match: Record<string, unknown>,
@@ -214,25 +214,83 @@ function messageScope(
   includeText = false,
 ): PipelineStage[] {
   return [
-    { $match: { ...match, isCreatedByUser: true, messageId: { $type: 'string', $ne: '' } } },
     {
-      $project: {
-        messageId: 1,
-        conversationId: 1,
-        user: 1,
-        createdAt: 1,
-        tokenCount: 1,
-        ...(includeText ? { text: 1 } : {}),
+      $match: {
+        ...tenantMatch(tenantId),
+        isCreatedByUser: false,
+        isTemporary: { $ne: true },
+        model: { $in: agentIds },
+        parentMessageId: { $type: 'string', $ne: '' },
+        user: match.user ?? { $nin: [null, ''] },
+        ...(match.conversationId ? { conversationId: match.conversationId } : {}),
       },
     },
-    { $sort: { createdAt: 1, _id: 1 } },
+    { $project: { parentMessageId: 1, conversationId: 1, user: 1, tokenCount: 1 } },
+    {
+      $lookup: {
+        from: 'messages',
+        localField: 'parentMessageId',
+        foreignField: 'messageId',
+        let: { owner: '$user', conversation: '$conversationId' },
+        pipeline: [
+          {
+            $match: {
+              ...match,
+              isCreatedByUser: true,
+              messageId: { $type: 'string', $ne: '' },
+              $expr: {
+                $and: [
+                  { $eq: ['$user', '$$owner'] },
+                  { $eq: ['$conversationId', '$$conversation'] },
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              messageId: 1,
+              conversationId: 1,
+              user: 1,
+              createdAt: 1,
+              tokenCount: 1,
+              ...(includeText ? { text: 1 } : {}),
+            },
+          },
+          { $sort: { createdAt: 1, _id: 1 } },
+          { $limit: 1 },
+        ],
+        as: 'insightsQuestion',
+      },
+    },
+    { $unwind: '$insightsQuestion' },
     {
       $group: {
-        _id: { user: '$user', conversationId: '$conversationId', messageId: '$messageId' },
-        message: { $first: '$$ROOT' },
+        _id: {
+          user: '$insightsQuestion.user',
+          conversationId: '$insightsQuestion.conversationId',
+          messageId: '$insightsQuestion.messageId',
+        },
+        question: { $first: '$insightsQuestion' },
+        replyTokens: { $sum: { $ifNull: ['$tokenCount', 0] } },
       },
     },
-    { $replaceRoot: { newRoot: '$message' } },
+    {
+      $replaceRoot: {
+        newRoot: {
+          $mergeObjects: [
+            '$question',
+            {
+              tokenCount: {
+                $add: [
+                  { $cond: [{ $isNumber: '$question.tokenCount' }, '$question.tokenCount', 0] },
+                  '$replyTokens',
+                ],
+              },
+            },
+          ],
+        },
+      },
+    },
     {
       $lookup: {
         from: 'conversations',
@@ -255,37 +313,6 @@ function messageScope(
       },
     },
     { $match: { 'insightsConversation.0': { $exists: true } } },
-    {
-      $lookup: {
-        from: 'messages',
-        localField: 'conversationId',
-        foreignField: 'conversationId',
-        let: { parent: '$messageId', owner: '$user' },
-        pipeline: [
-          {
-            $match: {
-              ...tenantMatch(tenantId),
-              isCreatedByUser: false,
-              isTemporary: { $ne: true },
-              model: { $in: agentIds },
-              $expr: {
-                $and: [{ $eq: ['$parentMessageId', '$$parent'] }, { $eq: ['$user', '$$owner'] }],
-              },
-            },
-          },
-          { $project: { _id: 0, tokenCount: 1 } },
-        ],
-        as: 'insightsReplies',
-      },
-    },
-    { $match: { 'insightsReplies.0': { $exists: true } } },
-    {
-      $set: {
-        tokenCount: {
-          $add: [{ $ifNull: ['$tokenCount', 0] }, { $sum: '$insightsReplies.tokenCount' }],
-        },
-      },
-    },
   ];
 }
 
